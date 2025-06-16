@@ -1,0 +1,38 @@
+{
+    "name": "ndrstmr/icap-flow",
+    "type": "library",
+    "description": "State-of-the-art, async-ready ICAP client for PHP.",
+    "license": "EUPL-1.2",
+    "authors": [
+        {
+            "name": "ndrstmr",
+            "homepage": "https://github.com/ndrstmr",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": ">=8.3"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.2",
+        "pestphp/pest": "^2.34",
+        "phpstan/phpstan": "^1.11"
+    },
+    "autoload": {
+        "psr-4": {
+            "Ndrstmr\\Icap\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ndrstmr\\Icap\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "stan": "phpstan analyse"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
