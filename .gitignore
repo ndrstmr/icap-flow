@@ -1,0 +1,15 @@
+Composer
+/vendor/
+Logs and dumps
+/logs/
+*.log
+Development
+.env
+.phpunit.cache/
+/build/
+IDE files
+.idea/
+.vscode/
+OS files
+.DS_Store
+Thumbs.db
