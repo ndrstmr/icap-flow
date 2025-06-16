@@ -1,2 +1,39 @@
 # icap-flow
 A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+.
+
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/ndrstmr/icap-flow/ci.yml?branch=main)
+![License](https://img.shields.io/github/license/ndrstmr/icap-flow)
+
+A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+.
+
+## Project Vision
+
+This library aims to be the de-facto standard solution for PHP developers needing ICAP connectivity, focusing on quality, performance, and an excellent developer experience. For more details, see our [mission charter](docs/agent.md).
+
+## Installation
+
+```bash
+composer require ndrstmr/icap-flow
+```
+
+## Basic Usage
+
+(This API is currently under development and subject to change.)
+
+```php
+$icap = IcapClient::forServer('127.0.0.1', 1344);
+
+$response = $icap->withTimeout(10)
+                 ->scanFile('/path/to/your/file.txt');
+
+echo 'ICAP Status: ' . $response->getStatusCode();
+```
+
+## Contributing
+
+Contributions are welcome! Please refer to the project's mission and development guidelines.
+
+## License
+
+This project is licensed under the EUPL-1.2 License. See the LICENSE file for details.
+
