@@ -14,8 +14,11 @@ uses(AsyncTestCase::class);
 it('orchestrates dependencies when calling options()', function () {
     $config = new Config('icap.example');
 
+    /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
     $formatter = m::mock(RequestFormatterInterface::class);
+    /** @var TransportInterface&\Mockery\MockInterface $transport */
     $transport = m::mock(TransportInterface::class);
+    /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
     $formatter->shouldReceive('format')
@@ -32,6 +35,7 @@ it('orchestrates dependencies when calling options()', function () {
 
     $client = new IcapClient($config, $transport, $formatter, $parser);
 
+    /** @var \Ndrstmr\Icap\Tests\AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client, $responseObj) {
         $future = $client->options('/service');
         $res = $future->await();

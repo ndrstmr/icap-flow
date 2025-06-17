@@ -12,8 +12,11 @@ use Ndrstmr\Icap\Transport\TransportInterface;
 it('delegates calls to the async client and blocks for results', function () {
     $config = new Config('icap.example');
 
+    /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
     $formatter = m::mock(RequestFormatterInterface::class);
+    /** @var TransportInterface&\Mockery\MockInterface $transport */
     $transport = m::mock(TransportInterface::class);
+    /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
     $formatter->shouldReceive('format')->once()->andReturn('RAW');
