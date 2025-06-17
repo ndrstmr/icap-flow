@@ -14,10 +14,15 @@ uses(AsyncTestCase::class);
 it('orchestrates dependencies when calling options()', function () {
     $config = new Config('icap.example');
 
-    /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
-    $formatter = m::mock(RequestFormatterInterface::class);
-    /** @var TransportInterface&\Mockery\MockInterface $transport */
-    $transport = m::mock(TransportInterface::class);
+    $formatExp = $formatter->shouldReceive('format')
+    assert($formatExp instanceof \Mockery\ExpectationInterface);
+    $formatExp->once();
+    $transportExp = $transport->shouldReceive('request')->with($config, 'RAW')
+    assert($transportExp instanceof \Mockery\ExpectationInterface);
+    $transportExp->once();
+    $parserExp = $parser->shouldReceive('parse')->with('RESP')->andReturn($responseObj);
+    assert($parserExp instanceof \Mockery\ExpectationInterface);
+    $parserExp->once();
     /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 

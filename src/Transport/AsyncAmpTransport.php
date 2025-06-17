@@ -10,7 +10,7 @@ use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 
-use function Amp\async;
+        return async(function () use ($config, $rawRequest): string {
 
 final class AsyncAmpTransport implements TransportInterface
 {
