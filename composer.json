@@ -1,43 +1,46 @@
 {
-    "name": "ndrstmr/icap-flow",
-    "type": "library",
-    "description": "State-of-the-art, async-ready ICAP client for PHP.",
-    "license": "EUPL-1.2",
-    "authors": [
-        {
-            "name": "ndrstmr",
-            "homepage": "https://github.com/ndrstmr",
-            "role": "Developer"
-        }
-    ],
-    "require": {
-        "php": ">=8.3",
-        "amphp/socket": "^2.3"
-    },
-    "require-dev": {
-        "mockery/mockery": "^1.6",
-        "pestphp/pest": "^3.8",
-        "phpstan/phpstan": "^1.11",
-        "phpunit/phpunit": "^11.2"
-    },
-    "autoload": {
-        "psr-4": {
-            "Ndrstmr\\Icap\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Ndrstmr\\Icap\\Tests\\": "tests/"
-        }
-    },
-    "scripts": {
-        "test": "pest",
-        "stan": "phpstan analyse"
-    },
-    "config": {
-        "sort-packages": true,
-        "allow-plugins": {
-            "pestphp/pest-plugin": true
-        }
+  "name": "ndrstmr/icap-flow",
+  "type": "library",
+  "description": "State-of-the-art, async-ready ICAP client for PHP.",
+  "license": "EUPL-1.2",
+  "authors": [
+    {
+      "name": "ndrstmr",
+      "homepage": "https://github.com/ndrstmr",
+      "role": "Developer"
     }
+  ],
+  "require": {
+    "php": ">=8.3",
+    "amphp/socket": "^2.3"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.75",
+    "mockery/mockery": "^1.6",
+    "pestphp/pest": "^3.8",
+    "phpstan/phpstan": "^1.11",
+    "phpunit/phpunit": "^11.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "Ndrstmr\\Icap\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Ndrstmr\\Icap\\Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "pest",
+    "stan": "phpstan analyse",
+    "cs-check": "php-cs-fixer fix --dry-run --diff",
+    "cs-fix": "php-cs-fixer fix"
+  },
+  "config": {
+    "sort-packages": true,
+    "allow-plugins": {
+      "pestphp/pest-plugin": true
+    }
+  }
 }
