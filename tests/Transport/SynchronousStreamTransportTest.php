@@ -14,5 +14,5 @@ it('throws connection exception on failure', function () {
     $t = new SynchronousStreamTransport();
     $config = new Config('256.256.256.256', 9999); // invalid host
 
-    expect(fn() => $t->request($config, ""))->toThrow(IcapConnectionException::class);
+    expect(fn() => $t->request($config, "")->await())->toThrow(IcapConnectionException::class);
 });

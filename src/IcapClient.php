@@ -31,7 +31,7 @@ class IcapClient
     public function request(IcapRequest $request): IcapResponse
     {
         $raw = $this->formatter->format($request);
-        $responseString = $this->transport->request($this->config, $raw);
+        $responseString = $this->transport->request($this->config, $raw)->await();
         return $this->parser->parse($responseString);
     }
 

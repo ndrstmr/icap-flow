@@ -9,6 +9,7 @@ abstract class AsyncTestCase extends TestCase
 {
     protected function runAsyncTest(callable $test): void
     {
-        EventLoop::run($test);
+        EventLoop::queue($test);
+        EventLoop::run();
     }
 }
