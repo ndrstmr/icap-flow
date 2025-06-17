@@ -8,5 +8,8 @@ use Ndrstmr\Icap\Config;
 
 interface TransportInterface
 {
-    public function request(Config $config, string $rawRequest): string;
+    /**
+     * @return \Amp\Future<string>
+     */
+    public function request(Config $config, string $rawRequest): \Amp\Future;
 }

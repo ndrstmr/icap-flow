@@ -9,7 +9,7 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 class SynchronousStreamTransport implements TransportInterface
 {
-    public function request(Config $config, string $rawRequest): string
+    public function request(Config $config, string $rawRequest): \Amp\Future
     {
         $errno = 0;
         $errstr = '';
@@ -23,6 +23,6 @@ class SynchronousStreamTransport implements TransportInterface
         $response = stream_get_contents($stream);
         fclose($stream);
 
-        return $response !== false ? $response : '';
+        return \Amp\Future::complete($response !== false ? $response : '');
     }
 }

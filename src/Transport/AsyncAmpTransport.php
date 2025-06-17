@@ -5,23 +5,29 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Transport;
 
 use Amp\Socket; // for connect etc
+use Amp\Socket\ConnectContext;
+use Amp\TimeoutCancellation;
 use function Amp\async;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 final class AsyncAmpTransport implements TransportInterface
 {
-    public function request(Config $config, string $rawRequest): string
+    public function request(Config $config, string $rawRequest): \Amp\Future
     {
         return async(function () use ($config, $rawRequest) {
             $socket = null;
             $connectionUrl = sprintf('tcp://%s:%d', $config->host, $config->port);
+            $connectContext = (new ConnectContext())
+                ->withConnectTimeout($config->getSocketTimeout());
+            $cancellation = new TimeoutCancellation($config->getStreamTimeout());
+
             try {
-                $socket = Socket\connect($connectionUrl);
+                $socket = Socket\connect($connectionUrl, $connectContext, $cancellation);
                 $socket->write($rawRequest);
 
                 $response = '';
-                while (null !== ($chunk = $socket->read())) {
+                while (null !== ($chunk = $socket->read($cancellation))) {
                     $response .= $chunk;
                 }
 
@@ -37,6 +43,6 @@ final class AsyncAmpTransport implements TransportInterface
                     $socket->close();
                 }
             }
-        })->await();
+        });
     }
 }
