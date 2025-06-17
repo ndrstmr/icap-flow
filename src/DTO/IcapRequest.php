@@ -9,7 +9,7 @@ final readonly class IcapRequest
     /** @var array<string, string[]> */
     public array $headers;
 
-    /**
+        $this->headers = array_map(fn ($v) => (array)$v, $headers);
      * @param array<string, string|string[]> $headers
      */
     public function __construct(
