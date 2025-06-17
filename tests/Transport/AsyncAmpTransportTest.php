@@ -18,6 +18,6 @@ it('throws connection exception on invalid host', function () {
     $config = new Config('127.0.0.1', 1); // unlikely to be open
 
     $this->runAsyncTest(function () use ($t, $config) {
-        expect(fn() => $t->request($config, '')->await())->toThrow(IcapConnectionException::class);
+        expect(fn () => $t->request($config, '')->await())->toThrow(IcapConnectionException::class);
     });
 });
