@@ -9,13 +9,20 @@ final readonly class IcapRequest
     /** @var array<string, string[]> */
     public array $headers;
 
+    /**
+     * @param array<string, string|string[]> $headers
+     */
     public function __construct(
         public string $method,
         public string $uri = '/',
         array $headers = [],
         public mixed $body = ''
     ) {
+<<<<<<< codex/extend-ci-pipeline-with-code-style-and-security-checks
         $this->headers = array_map(fn ($v) => (array)$v, $headers);
+=======
+        $this->headers = array_map(fn ($v) => (array) $v, $headers);
+>>>>>>> main
     }
 
     /**
