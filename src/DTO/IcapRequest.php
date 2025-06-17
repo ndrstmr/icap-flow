@@ -15,7 +15,7 @@ final readonly class IcapRequest
         array $headers = [],
         public mixed $body = ''
     ) {
-        $this->headers = array_map(fn($v) => (array)$v, $headers);
+        $this->headers = array_map(fn ($v) => (array)$v, $headers);
     }
 
     /**

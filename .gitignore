@@ -13,3 +13,4 @@ IDE files
 OS files
 .DS_Store
 Thumbs.db
+.php-cs-fixer.cache
