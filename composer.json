@@ -11,7 +11,8 @@
         }
     ],
     "require": {
-        "php": ">=8.3"
+        "php": ">=8.3",
+        "amphp/socket": "^2.3"
     },
     "require-dev": {
         "mockery/mockery": "^1.6",
