@@ -11,8 +11,9 @@ final readonly class IcapRequest
 
     public function __construct(
         public string $method,
+        public string $uri = '/',
         array $headers = [],
-        public string $body = ''
+        public mixed $body = ''
     ) {
         $this->headers = array_map(fn($v) => (array)$v, $headers);
     }
@@ -27,6 +28,7 @@ final readonly class IcapRequest
 
         return new self(
             $this->method,
+            $this->uri,
             $headers,
             $this->body,
         );
