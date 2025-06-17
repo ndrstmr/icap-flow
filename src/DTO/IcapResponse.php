@@ -14,7 +14,7 @@ final readonly class IcapResponse
         array $headers = [],
         public string $body = ''
     ) {
-        $this->headers = array_map(fn($v) => (array)$v, $headers);
+        $this->headers = array_map(fn ($v) => (array) $v, $headers);
     }
 
     /**
@@ -23,7 +23,7 @@ final readonly class IcapResponse
     public function withHeader(string $name, string|array $value): self
     {
         $headers = $this->headers;
-        $headers[$name] = (array)$value;
+        $headers[$name] = (array) $value;
 
         return new self(
             $this->statusCode,
