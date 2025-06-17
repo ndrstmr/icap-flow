@@ -9,6 +9,9 @@ final readonly class IcapResponse
     /** @var array<string, string[]> */
     public array $headers;
 
+    /**
+     * @param array<string, string|string[]> $headers
+     */
     public function __construct(
         public int $statusCode,
         array $headers = [],
