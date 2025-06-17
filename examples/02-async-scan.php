@@ -23,11 +23,11 @@ EventLoop::run(function () {
         );
 
         echo "Scanning file $eicarFile asynchronously...\n";
-        $response = $client->scanFile('/service', $eicarFile);
-        
+        $future = $client->scanFile('/service', $eicarFile);
+        $response = \Amp\Future\await($future);
 
-        echo "ICAP Status Code (async): " . $response->getStatusCode() . "\n";
-        print_r($response->getHeaders());
+        echo "ICAP Status Code (async): " . $response->statusCode . "\n";
+        print_r($response->headers);
     } catch (\Exception $e) {
         echo "An error occurred: " . $e->getMessage() . "\n";
     }
