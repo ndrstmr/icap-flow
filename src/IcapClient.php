@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap;
 
+use Amp\Future;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Transport\TransportInterface;
@@ -28,21 +29,26 @@ class IcapClient
         return new self(new Config($host, $port), new SynchronousStreamTransport(), new RequestFormatter(), new ResponseParser());
     }
 
-    public function request(IcapRequest $request): IcapResponse
+    public function request(IcapRequest $request): Future
     {
-        $raw = $this->formatter->format($request);
-        $responseString = $this->transport->request($this->config, $raw)->await();
-        return $this->parser->parse($responseString);
+        return \Amp\async(function () use ($request) {
+            $raw = $this->formatter->format($request);
+            $responseString = \Amp\Future\await(
+                $this->transport->request($this->config, $raw)
+            );
+
+            return $this->parser->parse($responseString);
+        });
     }
 
-    public function options(string $service): IcapResponse
+    public function options(string $service): Future
     {
         $uri = sprintf('icap://%s%s', $this->config->host, $service);
         $request = new IcapRequest('OPTIONS', $uri);
         return $this->request($request);
     }
 
-    public function scanFile(string $service, string $filePath): IcapResponse
+    public function scanFile(string $service, string $filePath): Future
     {
         $stream = fopen($filePath, 'r');
         if ($stream === false) {

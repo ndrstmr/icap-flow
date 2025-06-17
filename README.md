@@ -18,15 +18,33 @@ composer require ndrstmr/icap-flow
 
 ## Basic Usage
 
-(This API is currently under development and subject to change.)
+For most projects, the `SynchronousIcapClient` offers a very simple, blocking API.
 
 ```php
+$async = IcapClient::forServer('127.0.0.1', 1344);
+$icap  = new SynchronousIcapClient($async);
+
+$response = $icap->scanFile('/service', '/path/to/your/file.txt');
+
+echo 'ICAP Status: ' . $response->statusCode;
+```
+
+## Advanced Usage: Asynchronous Requests
+
+To take advantage of non-blocking I/O, interact with the `IcapClient` directly
+within an event loop:
+
+```php
+use Revolt\EventLoop;
+
 $icap = IcapClient::forServer('127.0.0.1', 1344);
 
-$response = $icap->withTimeout(10)
-                 ->scanFile('/path/to/your/file.txt');
+EventLoop::run(function () use ($icap) {
+    $future = $icap->scanFile('/service', '/path/to/your/file.txt');
+    $response = \Amp\Future\await($future);
 
-echo 'ICAP Status: ' . $response->getStatusCode();
+    echo 'ICAP Status: ' . $response->statusCode . PHP_EOL;
+});
 ```
 
 ## Contributing
