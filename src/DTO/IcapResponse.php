@@ -14,7 +14,7 @@ final readonly class IcapResponse
         array $headers = [],
         public string $body = ''
     ) {
-        $this->headers = array_map(fn($v) => (array)$v, $headers);
+        $this->headers = array_map(fn ($v) => (array)$v, $headers);
     }
 
     /**
