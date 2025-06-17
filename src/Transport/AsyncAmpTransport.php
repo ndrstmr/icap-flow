@@ -4,14 +4,13 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Transport;
 
-use Amp\Socket; // for connect etc
+use Amp\Socket;
 use Amp\Socket\ConnectContext;
 use Amp\TimeoutCancellation;
+use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 use function Amp\async;
-
-        return async(function () use ($config, $rawRequest): string {
 
 final class AsyncAmpTransport implements TransportInterface
 {

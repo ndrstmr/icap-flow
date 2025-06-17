@@ -29,7 +29,7 @@ class IcapClient
         return new self(new Config($host, $port), new SynchronousStreamTransport(), new RequestFormatter(), new ResponseParser());
     }
 
-        return \Amp\async(function () use ($request): IcapResponse {
+    /**
      * @return Future<IcapResponse>
      */
     public function request(IcapRequest $request): Future

@@ -9,8 +9,10 @@ final readonly class IcapResponse
     /** @var array<string, string[]> */
     public array $headers;
 
-        $this->headers = array_map(fn ($v) => (array)$v, $headers);
-     * @param array<string, string|string[]> $headers
+    /**
+     * @param int $statusCode HTTP status code, e.g. 200, 204, 500
+     * @param array<string, string[]> $headers Response headers
+     * @param string $body Response body content
      */
     public function __construct(
         public int $statusCode,
