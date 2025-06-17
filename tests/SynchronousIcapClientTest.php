@@ -19,11 +19,21 @@ it('delegates calls to the async client and blocks for results', function () {
     /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
-    $formatter->shouldReceive('format')->once()->andReturn('RAW');
-    $transport->shouldReceive('request')->once()->with($config, 'RAW')
-        ->andReturn(\Amp\Future::complete('RESP'));
+    $formatter->shouldReceive('format')
+        ->andReturn('RAW')
+        ->once();
+
+    $transport->shouldReceive('request')
+        ->with($config, 'RAW')
+        ->andReturn(\Amp\Future::complete('RESP'))
+        ->once();
+
     $responseObj = new IcapResponse(200);
-    $parser->shouldReceive('parse')->once()->with('RESP')->andReturn($responseObj);
+
+    $parser->shouldReceive('parse')
+        ->with('RESP')
+        ->andReturn($responseObj)
+        ->once();
 
     $async = new IcapClient($config, $transport, $formatter, $parser);
     $client = new SynchronousIcapClient($async);

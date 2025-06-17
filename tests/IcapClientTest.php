@@ -22,16 +22,23 @@ it('orchestrates dependencies when calling options()', function () {
     $parser = m::mock(ResponseParserInterface::class);
 
     $formatter->shouldReceive('format')
-        ->once()
         ->withArgs(function ($req) {
             return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
         })
-        ->andReturn('RAW');
+        ->andReturn('RAW')
+        ->once();
 
-    $transport->shouldReceive('request')->once()->with($config, 'RAW')
-        ->andReturn(\Amp\Future::complete('RESP'));
+    $transport->shouldReceive('request')
+        ->with($config, 'RAW')
+        ->andReturn(\Amp\Future::complete('RESP'))
+        ->once();
+    
     $responseObj = new IcapResponse(200);
-    $parser->shouldReceive('parse')->once()->with('RESP')->andReturn($responseObj);
+
+    $parser->shouldReceive('parse')
+        ->with('RESP')
+        ->andReturn($responseObj)
+        ->once();
 
     $client = new IcapClient($config, $transport, $formatter, $parser);
 

@@ -6,8 +6,6 @@ use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
-uses(AsyncTestCase::class);
-
 it('implements TransportInterface', function () {
     $t = new AsyncAmpTransport();
     expect($t)->toBeInstanceOf(TransportInterface::class);
