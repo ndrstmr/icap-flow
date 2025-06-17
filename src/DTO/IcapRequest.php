@@ -18,11 +18,7 @@ final readonly class IcapRequest
         array $headers = [],
         public mixed $body = ''
     ) {
-<<<<<<< codex/extend-ci-pipeline-with-code-style-and-security-checks
-        $this->headers = array_map(fn ($v) => (array)$v, $headers);
-=======
         $this->headers = array_map(fn ($v) => (array) $v, $headers);
->>>>>>> main
     }
 
     /**
