@@ -32,7 +32,7 @@ it('orchestrates dependencies when calling options()', function () {
         ->with($config, 'RAW')
         ->andReturn(\Amp\Future::complete('RESP'))
         ->once();
-    
+
     $responseObj = new IcapResponse(200);
 
     $parser->shouldReceive('parse')
