@@ -19,16 +19,16 @@ final class SynchronousIcapClient
 
     public function request(IcapRequest $request): IcapResponse
     {
-        return Future::await($this->asyncClient->request($request));
+        return $this->asyncClient->request($request)->await();
     }
 
     public function options(string $service): IcapResponse
     {
-        return Future::await($this->asyncClient->options($service));
+        return $this->asyncClient->options($service)->await();
     }
 
     public function scanFile(string $service, string $filePath): IcapResponse
     {
-        return Future::await($this->asyncClient->scanFile($service, $filePath));
+        return $this->asyncClient->scanFile($service, $filePath)->await();
     }
 }

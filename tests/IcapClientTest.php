@@ -34,7 +34,7 @@ it('orchestrates dependencies when calling options()', function () {
 
     $this->runAsyncTest(function () use ($client, $responseObj) {
         $future = $client->options('/service');
-        $res = \Amp\Future\await($future);
+        $res = $future->await();
         expect($res)->toBe($responseObj);
     });
 

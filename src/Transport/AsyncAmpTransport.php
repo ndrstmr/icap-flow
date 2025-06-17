@@ -14,6 +14,9 @@ use function Amp\async;
 
 final class AsyncAmpTransport implements TransportInterface
 {
+    /**
+     * @return \Amp\Future<string>
+     */
     public function request(Config $config, string $rawRequest): \Amp\Future
     {
         return async(function () use ($config, $rawRequest) {

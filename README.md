@@ -41,7 +41,7 @@ $icap = IcapClient::forServer('127.0.0.1', 1344);
 
 EventLoop::run(function () use ($icap) {
     $future = $icap->scanFile('/service', '/path/to/your/file.txt');
-    $response = \Amp\Future\await($future);
+    $response = $future->await();
 
     echo 'ICAP Status: ' . $response->statusCode . PHP_EOL;
 });

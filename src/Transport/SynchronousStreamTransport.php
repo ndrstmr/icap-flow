@@ -9,6 +9,9 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 class SynchronousStreamTransport implements TransportInterface
 {
+    /**
+     * @return \Amp\Future<string>
+     */
     public function request(Config $config, string $rawRequest): \Amp\Future
     {
         $errno = 0;
