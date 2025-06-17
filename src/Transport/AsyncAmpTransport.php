@@ -7,9 +7,10 @@ namespace Ndrstmr\Icap\Transport;
 use Amp\Socket; // for connect etc
 use Amp\Socket\ConnectContext;
 use Amp\TimeoutCancellation;
-use function Amp\async;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+
+use function Amp\async;
 
 final class AsyncAmpTransport implements TransportInterface
 {
