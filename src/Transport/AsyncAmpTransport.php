@@ -12,6 +12,9 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 use function Amp\async;
 
+/**
+ * Asynchronous transport implementation using amphp/socket.
+ */
 final class AsyncAmpTransport implements TransportInterface
 {
     /**
