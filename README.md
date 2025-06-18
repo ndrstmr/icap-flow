@@ -1,12 +1,15 @@
-# icap-flow
+<p align="center">
+  <img src="docs/assets/IcapFlow-logo.svg" width="200" alt="IcapFlow Logo">
+</p>
 
-<!-- Badges -->
-[![Build Status](https://img.shields.io/github/actions/workflow/status/ndrstmr/icap-flow/ci.yml?branch=main)](https://github.com/ndrstmr/icap-flow/actions)
-[![Latest Stable Version](https://img.shields.io/packagist/v/ndrstmr/icap-flow?label=stable)](https://packagist.org/packages/ndrstmr/icap-flow)
+[![Latest Stable Version](https://img.shields.io/packagist/v/ndrstmr/icap-flow)](https://packagist.org/packages/ndrstmr/icap-flow)
 [![Total Downloads](https://img.shields.io/packagist/dt/ndrstmr/icap-flow)](https://packagist.org/packages/ndrstmr/icap-flow)
-[![License](https://img.shields.io/github/license/ndrstmr/icap-flow)](LICENSE)
-[![PHP Version](https://img.shields.io/packagist/php-v/ndrstmr/icap-flow)](https://www.php.net/)
-[![Static Analysis](https://img.shields.io/badge/static%20analysis-level%207-brightgreen)](phpstan.neon)
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ndrstmr/icap-flow/ci.yml?branch=main)](https://github.com/ndrstmr/icap-flow/actions)
+[![Code Coverage](https://img.shields.io/badge/Code%20Coverage-View%20Report-blue.svg)](https://ndrstmr.github.io/icap-flow/)
+[![PHPStan Level](https://img.shields.io/badge/PHPStan-level%209-brightgreen)](https://phpstan.org/)
+[![License](https://img.shields.io/github/license/ndrstmr/icap-flow)](https://github.com/ndrstmr/icap-flow/blob/main/LICENSE)
+
+# icap-flow
 
 A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+.
 

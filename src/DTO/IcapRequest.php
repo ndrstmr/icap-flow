@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\DTO;
 
+/**
+ * Immutable data object representing an ICAP request.
+ */
 final readonly class IcapRequest
 {
     /** @var array<string, string[]> */

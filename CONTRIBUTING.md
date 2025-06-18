@@ -1,9 +1,13 @@
 # Contributing Guide
 
+We welcome community contributions and bug reports. Please read the instructions
+below before opening an issue or submitting a pull request.
+
 ## How to Report a Bug
 
 1. Open an issue on GitHub describing the problem in as much detail as possible.
-2. Include information about your PHP version and operating system.
+2. Provide a short code snippet that reproduces the issue if possible.
+3. Include information about your PHP version and operating system.
 
 ## How to Suggest a Feature
 
@@ -15,7 +19,7 @@
 1. Fork the repository and create a branch for your changes.
 2. Implement your code and run `composer test`.
 3. Apply the coding style with `composer cs-fix`.
-4. Open a pull request against the `main` branch.
+4. Open a pull request against the `main` branch and reference any related issues.
 
 ## Coding Standards
 
