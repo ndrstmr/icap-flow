@@ -1,23 +1,23 @@
 # Contributing Guide
 
-## Wie man einen Bug meldet
+## How to Report a Bug
 
-1. Eröffnen Sie ein Issue auf GitHub und beschreiben Sie das Problem so detailliert wie möglich.
-2. Fügen Sie Informationen zur verwendeten PHP-Version und zum Betriebssystem hinzu.
+1. Open an issue on GitHub describing the problem in as much detail as possible.
+2. Include information about your PHP version and operating system.
 
-## Wie man ein Feature vorschlägt
+## How to Suggest a Feature
 
-1. Eröffnen Sie ein Issue auf GitHub und skizzieren Sie Ihre Idee.
-2. Beschreiben Sie den Nutzen für andere Anwender.
+1. Open an issue on GitHub outlining your idea.
+2. Describe the benefit for other users.
 
-## Pull Request Prozess
+## Pull Request Process
 
-1. Forken Sie das Repository und erstellen Sie einen Branch für Ihre Änderungen.
-2. Implementieren Sie Ihren Code und führen Sie `composer test` aus.
-3. Wenden Sie den Code-Stil mit `composer cs-fix` an.
-4. Erstellen Sie einen Pull Request gegen den `main`-Branch.
+1. Fork the repository and create a branch for your changes.
+2. Implement your code and run `composer test`.
+3. Apply the coding style with `composer cs-fix`.
+4. Open a pull request against the `main` branch.
 
 ## Coding Standards
 
-Der Quellcode folgt dem [PSR-12](https://www.php-fig.org/psr/psr-12/) Standard.
+The source code follows the [PSR-12](https://www.php-fig.org/psr/psr-12/) standard.
 

@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2025-06-18
 ### Added
-- Synchronous and asynchronous transport implementations.
-- Strategy pattern for preview handling and extendable logic.
-- Factory methods for simple client instantiation.
-- Comprehensive test suite and CI pipeline.
+- Core `IcapClient` with asynchronous API returning `Amp\Future` values.
+- `SynchronousIcapClient` wrapper for blocking usage.
+- Immutable `IcapRequest` and `IcapResponse` DTOs with helper methods.
+- `Config` object to configure host, port and timeout settings.
+- `RequestFormatter` and `ResponseParser` to convert between objects and raw strings.
+- `TransportInterface` with `AsyncAmpTransport` and `SynchronousStreamTransport` implementations.
+- Strategy pattern for preview handling with a default implementation.
+- Factory helpers (`create()` / `forServer()`) for quick client setup.
+- Convenience methods to scan files with optional preview support.
+- Comprehensive test suite, static analysis and CI pipeline.
 
