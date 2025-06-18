@@ -7,6 +7,8 @@ namespace Ndrstmr\Icap;
 use Amp\Future;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\DTO\ScanResult;
+use Ndrstmr\Icap\Exception\IcapResponseException;
 use Ndrstmr\Icap\Transport\TransportInterface;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
@@ -67,16 +69,18 @@ class IcapClient
      * Send a raw ICAP request.
      *
      * @param IcapRequest $request
-     * @return Future<IcapResponse>
+     * @return Future<ScanResult>
      */
     public function request(IcapRequest $request): Future
     {
-        /** @var Future<IcapResponse> $future */
-        $future = \Amp\async(function () use ($request): IcapResponse {
+        /** @var Future<ScanResult> $future */
+        $future = \Amp\async(function () use ($request): ScanResult {
             $raw = $this->formatter->format($request);
             $responseString = $this->transport->request($this->config, $raw)->await();
 
-            return $this->parser->parse($responseString);
+            $response = $this->parser->parse($responseString);
+
+            return $this->interpretResponse($response, $this->config);
         });
 
         return $future;
@@ -86,7 +90,7 @@ class IcapClient
      * Issue an OPTIONS request to the given service.
      *
      * @param string $service
-     * @return Future<IcapResponse>
+     * @return Future<ScanResult>
      */
     public function options(string $service): Future
     {
@@ -100,7 +104,7 @@ class IcapClient
      *
      * @param string $service
      * @param string $filePath
-     * @return Future<IcapResponse>
+     * @return Future<ScanResult>
      * @throws \RuntimeException When the file cannot be opened
      */
     public function scanFile(string $service, string $filePath): Future
@@ -120,13 +124,13 @@ class IcapClient
      * @param string $service
      * @param string $filePath
      * @param int    $previewSize
-     * @return Future<IcapResponse>
+     * @return Future<ScanResult>
      * @throws \RuntimeException When the file cannot be read
      */
     public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): Future
     {
-        /** @var Future<IcapResponse> $future */
-        $future = \Amp\async(function () use ($service, $filePath, $previewSize): IcapResponse {
+        /** @var Future<ScanResult> $future */
+        $future = \Amp\async(function () use ($service, $filePath, $previewSize): ScanResult {
             $content = file_get_contents($filePath);
             if ($content === false) {
                 throw new \RuntimeException('Unable to read file');
@@ -136,9 +140,8 @@ class IcapClient
 
             $previewBody = substr($content, 0, $previewSize);
             $previewReq = new IcapRequest('RESPMOD', $uri, ['Preview' => [(string) $previewSize]], $previewBody);
-            $previewResponse = $this->request($previewReq)->await();
-
-            $decision = $this->previewStrategy->handlePreviewResponse($previewResponse);
+            $previewResult = $this->request($previewReq)->await();
+            $decision = $this->previewStrategy->handlePreviewResponse($previewResult->getOriginalResponse());
 
             if ($decision === PreviewDecision::CONTINUE_SENDING) {
                 $remaining = substr($content, $previewSize);
@@ -146,9 +149,33 @@ class IcapClient
                 return $this->request($finalReq)->await();
             }
 
-            return $previewResponse;
+            return $previewResult;
         });
 
         return $future;
+    }
+
+    private function interpretResponse(IcapResponse $response, Config $config): ScanResult
+    {
+        if ($response->statusCode === 204) {
+            return new ScanResult(false, null, $response);
+        }
+
+        if ($response->statusCode === 200) {
+            $header = $config->getVirusFoundHeader();
+            $virus = $response->headers[$header][0] ?? null;
+
+            if ($virus !== null) {
+                return new ScanResult(true, $virus, $response);
+            }
+
+            return new ScanResult(false, null, $response);
+        }
+
+        if ($response->statusCode === 100) {
+            return new ScanResult(false, null, $response);
+        }
+
+        throw new IcapResponseException('Unexpected ICAP status: ' . $response->statusCode, $response->statusCode);
     }
 }

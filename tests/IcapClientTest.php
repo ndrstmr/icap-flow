@@ -4,6 +4,7 @@ use Mockery as m;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParserInterface;
@@ -49,7 +50,9 @@ it('orchestrates dependencies when calling options()', function () {
     $this->runAsyncTest(function () use ($client, $responseObj) {
         $future = $client->options('/service');
         $res = $future->await();
-        expect($res)->toBe($responseObj);
+        expect($res)->toBeInstanceOf(ScanResult::class)
+            ->and($res->getOriginalResponse())->toBe($responseObj)
+            ->and($res->isInfected())->toBeFalse();
     });
 
     m::close();
@@ -95,7 +98,9 @@ it('invokes custom preview strategy when scanning with preview', function () {
     $this->runAsyncTest(function () use ($client, $tmp, $previewResponse) {
         $future = $client->scanFileWithPreview('/service', $tmp, 1);
         $res = $future->await();
-        expect($res)->toBe($previewResponse);
+        expect($res)->toBeInstanceOf(ScanResult::class)
+            ->and($res->getOriginalResponse())->toBe($previewResponse)
+            ->and($res->isInfected())->toBeFalse();
     });
 
     unlink($tmp);
@@ -166,7 +171,8 @@ it('correctly handles abort infected preview decision', function () {
     $this->runAsyncTest(function () use ($client, $tmp, $previewResponse) {
         $future = $client->scanFileWithPreview('/service', $tmp, 1);
         $res = $future->await();
-        expect($res)->toBe($previewResponse);
+        expect($res)->toBeInstanceOf(ScanResult::class)
+            ->and($res->getOriginalResponse())->toBe($previewResponse);
     });
 
     unlink($tmp);
@@ -241,7 +247,8 @@ it('correctly handles file size equal to preview size', function () {
     $this->runAsyncTest(function () use ($client, $tmp, $previewSize, $finalRes) {
         $future = $client->scanFileWithPreview('/service', $tmp, $previewSize);
         $res = $future->await();
-        expect($res)->toBe($finalRes);
+        expect($res)->toBeInstanceOf(ScanResult::class)
+            ->and($res->getOriginalResponse())->toBe($finalRes);
     });
 
     unlink($tmp);

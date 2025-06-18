@@ -24,10 +24,11 @@ EventLoop::run(function () {
 
         echo "Scanning file $eicarFile asynchronously...\n";
         $future = $client->scanFile('/service', $eicarFile);
-        $response = $future->await();
+        $result = $future->await();
 
-        echo "ICAP Status Code (async): " . $response->statusCode . "\n";
-        print_r($response->headers);
+        echo $result->isInfected()
+            ? 'Virus: ' . $result->getVirusName() . "\n"
+            : "File is clean\n";
     } catch (\Exception $e) {
         echo "An error occurred: " . $e->getMessage() . "\n";
     }

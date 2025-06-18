@@ -28,6 +28,8 @@ $client = new IcapClient(
 );
 
 $future = $client->scanFileWithPreview('/service', __DIR__ . '/../eicar.com');
-$response = $future->await();
+$result = $future->await();
 
-echo 'ICAP Status: ' . $response->statusCode . PHP_EOL;
+echo $result->isInfected()
+    ? 'Virus: ' . $result->getVirusName() . PHP_EOL
+    : 'Clean' . PHP_EOL;
