@@ -21,26 +21,23 @@ it('orchestrates dependencies when calling options()', function () {
     /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
-    // Formatter expectations
+    /** @var \Mockery\ExpectationInterface $formatterExp */
     $formatterExp = $formatter->shouldReceive('format');
-    assert($formatterExp instanceof \Mockery\ExpectationInterface);
     $formatterExp->withArgs(function ($req) {
         return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
     });
     $formatterExp->andReturn('RAW');
     $formatterExp->once();
 
-    // Transport expectations
+    /** @var \Mockery\ExpectationInterface $transportExp */
     $transportExp = $transport->shouldReceive('request');
-    assert($transportExp instanceof \Mockery\ExpectationInterface);
     $transportExp->with($config, 'RAW');
     $transportExp->andReturn(\Amp\Future::complete('RESP'));
     $transportExp->once();
 
-    // Parser expectations
     $responseObj = new IcapResponse(200);
+    /** @var \Mockery\ExpectationInterface $parserExp */
     $parserExp = $parser->shouldReceive('parse');
-    assert($parserExp instanceof \Mockery\ExpectationInterface);
     $parserExp->with('RESP');
     $parserExp->andReturn($responseObj);
     $parserExp->once();
