@@ -40,6 +40,9 @@ final readonly class Config
         return $this->streamTimeout;
     }
 
+    /**
+     * Return a new instance with a different virus header.
+     */
     public function withVirusFoundHeader(string $headerName): self
     {
         return new self(
@@ -51,6 +54,9 @@ final readonly class Config
         );
     }
 
+    /**
+     * Header used by the ICAP server to report infections.
+     */
     public function getVirusFoundHeader(): string
     {
         return $this->virusFoundHeader;

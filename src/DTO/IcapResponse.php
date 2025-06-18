@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\DTO;
 
+/**
+ * Immutable DTO representing an ICAP response.
+ */
 final readonly class IcapResponse
 {
     /** @var array<string, string[]> */
