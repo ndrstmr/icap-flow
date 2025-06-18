@@ -6,7 +6,7 @@ namespace Ndrstmr\Icap;
 
 use Amp\Future;
 use Ndrstmr\Icap\DTO\IcapRequest;
-use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\RequestFormatter;
@@ -47,7 +47,7 @@ final class SynchronousIcapClient
     /**
      * @param IcapRequest $request
      */
-    public function request(IcapRequest $request): IcapResponse
+    public function request(IcapRequest $request): ScanResult
     {
         return $this->asyncClient->request($request)->await();
     }
@@ -55,7 +55,7 @@ final class SynchronousIcapClient
     /**
      * @param string $service
      */
-    public function options(string $service): IcapResponse
+    public function options(string $service): ScanResult
     {
         return $this->asyncClient->options($service)->await();
     }
@@ -63,7 +63,7 @@ final class SynchronousIcapClient
     /**
      * @throws \RuntimeException
      */
-    public function scanFile(string $service, string $filePath): IcapResponse
+    public function scanFile(string $service, string $filePath): ScanResult
     {
         return $this->asyncClient->scanFile($service, $filePath)->await();
     }
@@ -71,7 +71,7 @@ final class SynchronousIcapClient
     /**
      * @throws \RuntimeException
      */
-    public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): IcapResponse
+    public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): ScanResult
     {
         return $this->asyncClient->scanFileWithPreview($service, $filePath, $previewSize)->await();
     }

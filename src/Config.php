@@ -20,6 +20,7 @@ final readonly class Config
         public int $port = 1344,
         private float $socketTimeout = 10.0,
         private float $streamTimeout = 10.0,
+        private string $virusFoundHeader = 'X-Virus-Name',
     ) {
     }
 
@@ -37,5 +38,21 @@ final readonly class Config
     public function getStreamTimeout(): float
     {
         return $this->streamTimeout;
+    }
+
+    public function withVirusFoundHeader(string $headerName): self
+    {
+        return new self(
+            $this->host,
+            $this->port,
+            $this->socketTimeout,
+            $this->streamTimeout,
+            $headerName,
+        );
+    }
+
+    public function getVirusFoundHeader(): string
+    {
+        return $this->virusFoundHeader;
     }
 }

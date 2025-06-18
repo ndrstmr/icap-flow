@@ -22,7 +22,8 @@ if (!file_exists($eicarFile)) {
 }
 
 echo "Scanning file $eicarFile synchronously...\n";
-$response = $client->scanFile('/service', $eicarFile);
+$result = $client->scanFile('/service', $eicarFile);
 
-echo "ICAP Status Code: " . $response->statusCode . PHP_EOL;
-print_r($response->headers);
+echo $result->isInfected()
+    ? 'Virus found: ' . $result->getVirusName() . PHP_EOL
+    : "File is clean\n";

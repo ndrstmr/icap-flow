@@ -3,6 +3,7 @@
 use Mockery as m;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\SynchronousIcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
@@ -46,7 +47,8 @@ it('delegates calls to the async client and blocks for results', function () {
 
     $res = $client->options('/service');
 
-    expect($res)->toBe($responseObj);
+    expect($res)->toBeInstanceOf(ScanResult::class)
+        ->and($res->getOriginalResponse())->toBe($responseObj);
 
     m::close();
 });
@@ -65,7 +67,8 @@ it('scanFile delegates correctly to async client', function () {
 
     $res = $client->scanFile('/service', '/tmp/file');
 
-    expect($res)->toBe($response);
+    expect($res)->toBeInstanceOf(ScanResult::class)
+        ->and($res->getOriginalResponse())->toBe($response);
 
     m::close();
 });
@@ -85,7 +88,8 @@ it('request delegates correctly to async client', function () {
 
     $res = $client->request($req);
 
-    expect($res)->toBe($response);
+    expect($res)->toBeInstanceOf(ScanResult::class)
+        ->and($res->getOriginalResponse())->toBe($response);
 
     m::close();
 });

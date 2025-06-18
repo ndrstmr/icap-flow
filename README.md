@@ -27,9 +27,11 @@ For most projects, the `SynchronousIcapClient` offers a very simple, blocking AP
 ```php
 $icap = SynchronousIcapClient::create();
 
-$response = $icap->scanFile('/service', '/path/to/your/file.txt');
+$result = $icap->scanFile('/service', '/path/to/your/file.txt');
 
-echo 'ICAP Status: ' . $response->statusCode;
+echo $result->isInfected()
+    ? 'Virus found: ' . $result->getVirusName()
+    : 'File is clean';
 ```
 
 ## Advanced Usage: Asynchronous Requests
@@ -44,9 +46,11 @@ $icap = IcapClient::create();
 
 EventLoop::run(function () use ($icap) {
     $future = $icap->scanFile('/service', '/path/to/your/file.txt');
-    $response = $future->await();
+    $result = $future->await();
 
-    echo 'ICAP Status: ' . $response->statusCode . PHP_EOL;
+    echo $result->isInfected()
+        ? 'Virus: ' . $result->getVirusName() . PHP_EOL
+        : 'File is clean' . PHP_EOL;
 });
 ```
 
@@ -62,6 +66,8 @@ $config = new Config(
     port: 1344,
     socketTimeout: 5.0,
     streamTimeout: 30.0,
+    // Header used by the ICAP server to report infections
+    virusFoundHeader: 'X-Virus-Name',
 );
 ```
 

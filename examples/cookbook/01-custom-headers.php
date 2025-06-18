@@ -10,6 +10,6 @@ $icap = SynchronousIcapClient::create();
 $request = (new IcapRequest('RESPMOD', 'icap://127.0.0.1/service'))
     ->withHeader('X-Client-IP', '203.0.113.5');
 
-$response = $icap->request($request);
+$result = $icap->request($request);
 
-print_r($response->headers);
+print_r($result->getOriginalResponse()->headers);
