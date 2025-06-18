@@ -50,3 +50,65 @@ it('delegates calls to the async client and blocks for results', function () {
 
     m::close();
 });
+
+it('scanFile delegates correctly to async client', function () {
+    /** @var IcapClient&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClient::class);
+    $response = new IcapResponse(201);
+    /** @var \Mockery\Expectation $exp */
+    $exp = $async->shouldReceive('scanFile');
+    $exp->with('/service', '/tmp/file');
+    $exp->once();
+    $exp->andReturn(\Amp\Future::complete($response));
+
+    $client = new SynchronousIcapClient($async);
+
+    $res = $client->scanFile('/service', '/tmp/file');
+
+    expect($res)->toBe($response);
+
+    m::close();
+});
+
+it('request delegates correctly to async client', function () {
+    /** @var IcapClient&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClient::class);
+    $req = new \Ndrstmr\Icap\DTO\IcapRequest('OPTIONS', 'icap://icap.example');
+    $response = new IcapResponse(200);
+    /** @var \Mockery\Expectation $exp */
+    $exp = $async->shouldReceive('request');
+    $exp->with($req);
+    $exp->once();
+    $exp->andReturn(\Amp\Future::complete($response));
+
+    $client = new SynchronousIcapClient($async);
+
+    $res = $client->request($req);
+
+    expect($res)->toBe($response);
+
+    m::close();
+});
+
+it('it handles and rethrows exceptions from async client', function () {
+    /** @var IcapClient&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClient::class);
+    $exception = new \Ndrstmr\Icap\Exception\IcapConnectionException('fail');
+    /** @var \Mockery\Expectation $exp */
+    $exp = $async->shouldReceive('scanFile');
+    $exp->with('/service', '/tmp/file');
+    $exp->once();
+    $exp->andReturn(\Amp\Future::error($exception));
+
+    $client = new SynchronousIcapClient($async);
+
+    expect(fn () => $client->scanFile('/service', '/tmp/file'))
+        ->toThrow(\Ndrstmr\Icap\Exception\IcapConnectionException::class);
+
+    m::close();
+});
+
+it('static create factory returns a usable client', function () {
+    $client = SynchronousIcapClient::create();
+    expect($client)->toBeInstanceOf(SynchronousIcapClient::class);
+});
