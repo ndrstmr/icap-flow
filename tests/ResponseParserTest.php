@@ -17,3 +17,14 @@ it('parses a basic ICAP response', function () {
         ->and($res->headers['Encapsulated'])->toEqual(['null-body=0'])
         ->and($res->body)->toBe('hello world');
 });
+
+it('throws exception on malformed status line', function () {
+    $raw = "HTTP/1.0 200 OK\r\n\r\n";
+    $parser = new ResponseParser();
+    expect(fn () => $parser->parse($raw))->toThrow(\Ndrstmr\Icap\Exception\IcapResponseException::class);
+});
+
+it('throws exception on invalid response string', function () {
+    $parser = new ResponseParser();
+    expect(fn () => $parser->parse(''))->toThrow(\Ndrstmr\Icap\Exception\IcapResponseException::class);
+});
