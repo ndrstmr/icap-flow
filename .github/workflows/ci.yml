@@ -1,16 +1,21 @@
-name: IcapFlow CI & Quality Checks
+name: IcapFlow CI, Quality & Deployment
 
+# Trigger für den Workflow
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
-  test:
+  # Job 1: Führt alle Qualitäts-Checks und Tests aus
+  quality-and-tests:
     name: PHP ${{ matrix.php-version }} Quality Checks
     runs-on: ubuntu-latest
     strategy:
+      # Teste immer gegen mehrere PHP-Versionen
       matrix:
         php-version: ['8.3']
 
@@ -23,12 +28,12 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
           extensions: sockets
-          coverage: none
+          coverage: pcov
 
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
 
-      - name: Audit Composer dependencies for vulnerabilities
+      - name: Audit Composer dependencies
         run: composer audit
 
       - name: Check code style (PSR-12)
@@ -37,6 +42,45 @@ jobs:
       - name: Run static analysis
         run: composer stan
 
-      - name: Run tests
-        run: composer test
-        
+      - name: Run tests and generate coverage report
+        # Führt Tests aus und generiert den Report im Hintergrund
+        run: composer test -- --coverage
+
+      # Speichere den Coverage-Report als Artefakt, damit der nächste Job ihn verwenden kann
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-php-${{ matrix.php-version }}
+          path: build/coverage-html/
+
+  # Job 2: Veröffentlicht den Coverage-Report (nur nach Erfolg von Job 1)
+  deploy-coverage:
+    name: Deploy Coverage Report
+    # Dieser Job ist abhängig vom Erfolg des vorherigen Jobs
+    needs: quality-and-tests
+    # WICHTIG: Führe diesen Job NUR bei einem Push auf den main-Branch aus, nicht bei Pull Requests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    # Erforderliche Berechtigung, um auf den gh-pages Branch zu pushen
+    permissions:
+      contents: write
+
+    steps:
+      # Lade den Report herunter, der im vorherigen Job erstellt wurde
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          # Wir nehmen nur den Report von der neuesten PHP-Version, da sie identisch sein sollten
+          name: coverage-report-php-8.3
+
+      # Deploye den heruntergeladenen Ordner nach GitHub Pages
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Der Ordnername nach dem Download ist einfach der Artefaktname,
+          # wir müssen den Inhalt direkt veröffentlichen.
+          publish_dir: ./
+          publish_branch: gh-pages
+          force_orphan: true
