@@ -1,79 +1,79 @@
 # Mission: State-of-the-Art PHP ICAP Client
 
 * Agent: OpenAI Codex
-* Datum: 17. Juni 2025
-* Status: Aktiv
+* Date: 17 June 2025
+* Status: Active
 
-## 1. Leitbild & Vision (Mission Statement & Vision)
+## 1. Mission Statement & Vision
 
-Leitbild: Entwicklung einer PHP-Bibliothek für das ICAP-Protokoll, die in Bezug auf Design, Performance, Sicherheit und Developer Experience (DX) neue Maßstäbe im PHP-Ökosystem setzt.
-Vision: Diese Bibliothek wird die de-facto-Standardlösung für PHP-Entwickler, die eine ICAP-Anbindung benötigen. Sie soll als Referenzimplementierung für moderne, testbare und robuste Bibliotheks-Architektur dienen.
+Mission: Build a PHP library for the ICAP protocol that sets new standards for design, performance, security and developer experience within the PHP ecosystem.
+Vision: The library should become the de-facto standard for PHP developers needing ICAP connectivity and serve as a reference for modern, testable and robust library architecture.
 
-## 2. Kernanforderungen & Qualitätsziele (Core Requirements & Quality Goals)
+## 2. Core Requirements & Quality Goals
 
-### Funktionale Anforderungen
+### Functional Requirements
 
- *Vollständige Unterstützung für ICAP REQMOD, RESPMOD und OPTIONS.
- *Effiziente Verarbeitung von Payloads, insbesondere von großen Dateien, durch konsequentes Streaming.
- *Unterstützung für "Connection: keep-alive" zur Wiederverwendung von Verbindungen.
- *Unterstützung für den "Preview" Modus des ICAP-Protokolls.
+* Full support for ICAP REQMOD, RESPMOD and OPTIONS.
+* Efficient streaming of payloads, especially large files.
+* Support for `Connection: keep-alive` to reuse connections.
+* Support for the ICAP "Preview" mode.
 
-### Qualitätsziele (Nicht-funktional)
+### Quality Goals (Non-functional)
 
-* Modernste PHP-Nutzung: Einsatz von PHP 8.3+ Features (Readonly Properties, Enums, Fibers etc.), wo sinnvoll.
-* Asynchronität als Kern-Feature: Die Architektur muss von Grund auf so gestaltet sein, dass sie sowohl synchron als auch asynchron (non-blocking I/O) betrieben werden kann, ohne die öffentliche API zu brechen.
-* Strikte PSR-Konformität: PSR-4 (Autoloading) und PSR-12 (Coding Style) sind mandatory. Konzeptuelle Anlehnung an PSR-7 (HTTP Message) und PSR-18 (HTTP Client) für eine intuitive API.
-* Maximale Testbarkeit: Entwicklung nach einem TDD/BDD-Ansatz mit dem Ziel einer Testabdeckung von ~100%. Jeder Teil der Logik muss isoliert testbar sein.
-* Statische Analyse auf höchstem Niveau: Das Projekt muss PHPStan auf dem strengsten Level (Level 9) fehlerfrei bestehen.
-* Exzellente Developer Experience (DX): Die Nutzung der Bibliothek soll durch eine flüssige ("fluent"), logische und selbsterklärende API Freude bereiten. Objekte sollen, wo immer möglich, immutable sein.
-* Sicherheit by Design: Alle potenziellen Eingaben müssen kontextbezogen validiert und verarbeitet werden, um Sicherheitslücken proaktiv zu verhindern.
+* Make use of modern PHP 8.3+ features (readonly properties, enums, fibers, etc.) where appropriate.
+* Asynchrony as a core feature: the design must allow both synchronous and asynchronous (non-blocking I/O) usage without breaking the public API.
+* Strict PSR compliance: PSR-4 autoloading and PSR-12 coding style are mandatory. The API conceptually follows PSR-7 (HTTP messages) and PSR-18 (HTTP client).
+* Maximum testability: follow a TDD/BDD approach aiming for ~100% coverage. Every piece of logic must be testable in isolation.
+* Highest level of static analysis: the project must pass PHPStan at level 9.
+* Excellent developer experience: a fluent, logical and self-explanatory API. Objects should be immutable wherever possible.
+* Security by design: all potential input must be validated and handled in context to proactively prevent vulnerabilities.
 
-## 3. Architektur-Blueprint (Architectural Blueprint)
+## 3. Architectural Blueprint
 
-Die Architektur wird nach dem "Grouped by Concern"-Muster aufgebaut, um eine maximale Trennung der Verantwortlichkeiten zu gewährleisten:
+The architecture is organized using a "grouped by concern" approach to ensure clear separation of responsibilities:
 
-* Transport-Schicht (Die Abstraktion der Kommunikation):
-  * TransportInterface: Definiert einen einfachen Vertrag für die Netzwerkkommunikation (request(IcapRequest): Promise<IcapResponse>|IcapResponse).
-  * SynchronousStreamTransport: Eine Implementierung, die auf den nativen stream_socket_client-Funktionen von PHP basiert und blockierend arbeitet.
-  * AsyncRevoltTransport: Eine zweite, non-blocking Implementierung, die auf der revolt/socket-Bibliothek aufbaut und Fibers für eine asynchrone Ausführung nutzt.
-* Nachrichten-Abstraktion (PSR-7 inspiriert):
-  * IcapRequest / IcapResponse (DTOs): Diese Objekte werden immutable sein. Jede Änderung (z.B. das Hinzufügen eines Headers) erzeugt eine neue Instanz. Sie kapseln Header, Body (als PSR-7 StreamInterface) und andere Metadaten.
-* Protokoll-Handler (Die "Worker"):
-  * RequestFormatterInterface / RequestFormatter: Erstellt aus einem IcapRequest-Objekt einen StreamInterface-lesbaren ICAP-Request-String.
-  * ResponseParserInterface / ResponseParser: Erstellt aus einem StreamInterface ein IcapResponse-Objekt.
-* Die Fassade (Der öffentliche Client):
-  * IcapClient: Die Hauptklasse, mit der Entwickler interagieren. Sie empfängt eine TransportInterface-Implementierung per Dependency Injection.
-  * Die API wird "fluent" gestaltet, z.B. IcapClient::forServer('...')->withTimeout(10)->scanFile('...').
-* Konfiguration:
-  * Ein immutables Config-DTO wird verwendet, um alle Einstellungen (Host, Port, Timeouts, TLS-Optionen) zu bündeln und an die Komponenten weiterzugeben.
+* Transport layer (communication abstraction):
+  * `TransportInterface`: defines a simple contract for network communication (`request(IcapRequest): Promise<IcapResponse>|IcapResponse`).
+  * `SynchronousStreamTransport`: implementation based on PHP's native `stream_socket_client` functions and operating in blocking mode.
+  * `AsyncAmpTransport`: a non-blocking implementation built on the amphp/socket library using fibers for asynchronous execution.
+* Message abstraction (inspired by PSR-7):
+  * `IcapRequest` / `IcapResponse` DTOs are immutable. Any modification (such as adding a header) returns a new instance. They encapsulate headers, body (as PSR-7 `StreamInterface`) and metadata.
+* Protocol handlers (the "workers"):
+  * `RequestFormatterInterface` / `RequestFormatter`: create an ICAP request string from an `IcapRequest` object.
+  * `ResponseParserInterface` / `ResponseParser`: parse a `StreamInterface` into an `IcapResponse` object.
+* The facade (public client):
+  * `IcapClient`: the main class developers interact with, receiving a `TransportInterface` implementation via dependency injection.
+  * The API is fluent, e.g. `IcapClient::forServer('...')->withTimeout(10)->scanFile('...')`.
+* Configuration:
+  * An immutable `Config` DTO bundles all settings (host, port, timeouts, TLS options) and passes them to the components.
 
-## 4. Technologie-Stack & Werkzeuge (Tech Stack & Tooling)
+## 4. Tech Stack & Tooling
 
 * PHP: >= 8.3
-* Abhängigkeitsmanagement: Composer 2
+* Dependency management: Composer 2
 * Testing: Pest & PHPUnit
-* Statische Analyse: PHPStan (Level 9), Psalm
-* Code-Stil: php-cs-fixer oder ecs mit einer PSR-12-Regelbasis.
-* Asynchronität: revolt/event-loop, revolt/socket
-* CI/CD: GitHub Actions Pipeline für Tests, Linting und statische Analyse bei jedem Push.
+* Static analysis: PHPStan (level 9), Psalm
+* Coding style: php-cs-fixer or ECS with a PSR-12 rule set
+* Asynchrony: amphp/event-loop, amphp/socket
+* CI/CD: GitHub Actions pipeline for tests, linting and static analysis on each push
 
-## 5. Vorgehensweise & Meilensteine (Methodology & Milestones)
+## 5. Methodology & Milestones
 
-Die Entwicklung folgt einem strikten Test-Driven Development (TDD)-Ansatz:
+Development follows a strict Test-Driven Development approach:
 
-* M0: Setup: Projekt-Grundgerüst mit Composer, PHPUnit/Pest, PHPStan und CI-Pipeline aufsetzen.
-* M1: Core-Abstraktionen: Interfaces (TransportInterface), DTOs (IcapRequest/Response) und Config-Objekt definieren.
-* M2: Synchrone Implementierung: SynchronousStreamTransport und die Protokoll-Handler entwickeln. Erste lauffähige Version des IcapClient.
-* M3: Asynchrone Implementierung: Entwicklung des AsyncRevoltTransport und Sicherstellung der Kompatibilität.
-* M4: Finalisierung & DX: API-Feinschliff, umfassende Dokumentation (API-Referenz, Anwendungsbeispiele) und Fehlerbehandlung.
-* M5: Release: Veröffentlichung auf Packagist als Version 1.0.0.
+* M0: Setup – create the project skeleton with Composer, PHPUnit/Pest, PHPStan and CI pipeline.
+* M1: Core abstractions – define interfaces (`TransportInterface`), DTOs (`IcapRequest`/`IcapResponse`) and the `Config` object.
+* M2: Synchronous implementation – build `SynchronousStreamTransport` and the protocol handlers. First working version of `IcapClient`.
+* M3: Asynchronous implementation – develop `AsyncAmpTransport` and ensure compatibility.
+* M4: Finalization & DX – polish the API, provide comprehensive documentation (API reference, usage examples) and handle errors.
+* M5: Release – publish version 1.0.0 on Packagist.
 
 ## 6. Definition of Done (DoD)
 
-Die Mission gilt als erfüllt, wenn:
+The mission is complete when:
 
-* Alle funktionalen Anforderungen implementiert sind.
-* Die Testabdeckung bei >98% liegt.
-* Die statische Analyse auf höchstem Level fehlerfrei ist.
-* Eine umfassende Dokumentation für Endnutzer und Mitwirkende vorliegt.
-* Das Paket erfolgreich auf Packagist veröffentlicht wurde und installierbar ist.
+* All functional requirements are implemented.
+* Test coverage exceeds 98%.
+* Static analysis passes at the highest level.
+* Comprehensive documentation for end users and contributors is available.
+* The package has been successfully released on Packagist and is installable.

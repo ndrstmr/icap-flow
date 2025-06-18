@@ -50,9 +50,9 @@ EventLoop::run(function () use ($icap) {
 });
 ```
 
-## Konfiguration
+## Configuration
 
-Passen Sie die Verbindungseinstellungen mit dem `Config`-DTO an:
+Adjust the connection settings using the `Config` DTO:
 
 ```php
 use Ndrstmr\Icap\Config;
@@ -65,24 +65,23 @@ $config = new Config(
 );
 ```
 
-Dieses Objekt kann an die Factory-Methoden der Clients übergeben werden.
+This object can be passed to the client factory methods.
 
-## Erweiterbarkeit (Cookbook)
+## Extensibility (Cookbook)
 
-Die Behandlung von Preview-Antworten erfolgt über das Strategy Pattern. Eigene
-Strategien implementieren das `PreviewStrategyInterface` und können beim
-Client hinterlegt werden. Ausführliche Beispiele finden Sie im Verzeichnis
-[`examples/cookbook/`](examples/cookbook/).
+Preview handling uses the Strategy pattern. Custom strategies implement
+`PreviewStrategyInterface` and can be registered on the client. Detailed
+examples can be found in the [`examples/cookbook/`](examples/cookbook/) directory.
 
-## Für Entwickler
+## For Developers
 
-Tests führen Sie mit dem folgenden Befehl aus:
+Run the test suite with the following command:
 
 ```bash
 composer test
 ```
 
-Weitere Hinweise zum Ablauf von Pull Requests finden Sie in der
+Further details about the pull request workflow can be found in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
@@ -91,5 +90,5 @@ This project is licensed under the EUPL-1.2 License. See the LICENSE file for de
 
 ## Changelog
 
-Eine Liste aller Veränderungen finden Sie in der [CHANGELOG.md](CHANGELOG.md).
+A list of all changes can be found in [CHANGELOG.md](CHANGELOG.md).
 
