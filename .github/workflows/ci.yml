@@ -23,7 +23,7 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
           extensions: sockets
-          coverage: none
+          coverage: xdebug
 
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
@@ -40,3 +40,5 @@ jobs:
       - name: Run tests
         run: composer test
 
+      - name: Run tests with coverage
+        run: composer test -- --coverage-clover build/logs/clover.xml
