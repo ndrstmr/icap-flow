@@ -35,8 +35,8 @@ jobs:
         run: composer install --prefer-dist --no-progress --no-dev
 
       # 4. Tests ausführen und den HTML-Report generieren
-      - name: Run tests and generate coverage report
-        run: composer test -- --coverage
+      - name: Run test
+        run: composer test
 
       # 5. Den generierten Report auf den gh-pages Branch deployen
       - name: Deploy to GitHub Pages
