@@ -21,8 +21,7 @@ composer require ndrstmr/icap-flow
 For most projects, the `SynchronousIcapClient` offers a very simple, blocking API.
 
 ```php
-$async = IcapClient::forServer('127.0.0.1', 1344);
-$icap  = new SynchronousIcapClient($async);
+$icap = SynchronousIcapClient::create();
 
 $response = $icap->scanFile('/service', '/path/to/your/file.txt');
 
@@ -37,7 +36,7 @@ within an event loop:
 ```php
 use Revolt\EventLoop;
 
-$icap = IcapClient::forServer('127.0.0.1', 1344);
+$icap = IcapClient::create();
 
 EventLoop::run(function () use ($icap) {
     $future = $icap->scanFile('/service', '/path/to/your/file.txt');
