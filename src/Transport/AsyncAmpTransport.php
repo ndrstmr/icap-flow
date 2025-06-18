@@ -22,7 +22,8 @@ final class AsyncAmpTransport implements TransportInterface
      */
     public function request(Config $config, string $rawRequest): \Amp\Future
     {
-        return async(function () use ($config, $rawRequest) {
+        /** @var \Amp\Future<string> $future */
+        $future = async(function () use ($config, $rawRequest): string {
             $socket = null;
             $connectionUrl = sprintf('tcp://%s:%d', $config->host, $config->port);
             $connectContext = (new ConnectContext())
@@ -51,5 +52,7 @@ final class AsyncAmpTransport implements TransportInterface
                 }
             }
         });
+
+        return $future;
     }
 }

@@ -48,7 +48,7 @@ class RequestFormatter implements RequestFormatterInterface
                 $body .= $len . "\r\n" . $chunk . "\r\n";
             }
             $body .= "0\r\n\r\n";
-        } elseif ($request->body !== '') {
+        } elseif (is_string($request->body) && $request->body !== '') {
             $body = $request->body;
         }
 
