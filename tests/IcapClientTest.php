@@ -21,6 +21,7 @@ it('orchestrates dependencies when calling options()', function () {
     /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
+    // Formatter expectations
     $formatterExp = $formatter->shouldReceive('format');
     assert($formatterExp instanceof \Mockery\ExpectationInterface);
     $formatterExp->withArgs(function ($req) {
@@ -29,20 +30,22 @@ it('orchestrates dependencies when calling options()', function () {
     $formatterExp->andReturn('RAW');
     $formatterExp->once();
 
+    // Transport expectations
     $transportExp = $transport->shouldReceive('request');
     assert($transportExp instanceof \Mockery\ExpectationInterface);
     $transportExp->with($config, 'RAW');
     $transportExp->andReturn(\Amp\Future::complete('RESP'));
     $transportExp->once();
 
+    // Parser expectations
     $responseObj = new IcapResponse(200);
-
     $parserExp = $parser->shouldReceive('parse');
     assert($parserExp instanceof \Mockery\ExpectationInterface);
     $parserExp->with('RESP');
     $parserExp->andReturn($responseObj);
     $parserExp->once();
 
+    // Client and test execution
     $client = new IcapClient($config, $transport, $formatter, $parser);
 
     /** @var \Ndrstmr\Icap\Tests\AsyncTestCase $this */
