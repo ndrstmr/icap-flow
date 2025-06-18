@@ -71,12 +71,15 @@ class IcapClient
      */
     public function request(IcapRequest $request): Future
     {
-        return \Amp\async(function () use ($request) {
+        /** @var Future<IcapResponse> $future */
+        $future = \Amp\async(function () use ($request): IcapResponse {
             $raw = $this->formatter->format($request);
             $responseString = $this->transport->request($this->config, $raw)->await();
 
             return $this->parser->parse($responseString);
         });
+
+        return $future;
     }
 
     /**
@@ -122,7 +125,8 @@ class IcapClient
      */
     public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): Future
     {
-        return \Amp\async(function () use ($service, $filePath, $previewSize) {
+        /** @var Future<IcapResponse> $future */
+        $future = \Amp\async(function () use ($service, $filePath, $previewSize): IcapResponse {
             $content = file_get_contents($filePath);
             if ($content === false) {
                 throw new \RuntimeException('Unable to read file');
@@ -144,5 +148,7 @@ class IcapClient
 
             return $previewResponse;
         });
+
+        return $future;
     }
 }
