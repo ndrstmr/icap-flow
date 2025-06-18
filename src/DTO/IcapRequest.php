@@ -13,7 +13,7 @@ final readonly class IcapRequest
      * @param string $method HTTP method, e.g. 'GET', 'POST', 'OPTIONS'
      * @param string $uri Request URI, e.g. 'icap://example.com/service'
      * @param array<string, string[]> $headers Request headers
-     * @param mixed $body Request body content, can be a string or stream resource
+     * @param resource|string $body Request body content, can be a string or stream resource
      */
     public function __construct(
         public string $method,
