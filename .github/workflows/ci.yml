@@ -1,0 +1,42 @@
+name: IcapFlow CI & Quality Checks
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php-version }} Quality Checks
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.3']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: sockets
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Audit Composer dependencies for vulnerabilities
+        run: composer audit
+
+      - name: Check code style (PSR-12)
+        run: composer cs-check
+
+      - name: Run static analysis
+        run: composer stan
+
+      - name: Run tests
+        run: composer test
+

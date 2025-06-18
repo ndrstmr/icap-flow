@@ -20,6 +20,11 @@ it('formats a basic OPTIONS request', function () {
 
 it('formats a request with stream body using chunked encoding', function () {
     $stream = fopen('php://temp', 'r+');
+    if ($stream === false) {
+        throw new RuntimeException('Unable to open temp stream');
+    }
+    expect($stream)->not->toBeFalse();
+
     fwrite($stream, 'hello world');
     rewind($stream);
 

@@ -14,27 +14,41 @@ uses(AsyncTestCase::class);
 it('orchestrates dependencies when calling options()', function () {
     $config = new Config('icap.example');
 
+    /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
     $formatter = m::mock(RequestFormatterInterface::class);
+    /** @var TransportInterface&\Mockery\MockInterface $transport */
     $transport = m::mock(TransportInterface::class);
+    /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
-    $formatter->shouldReceive('format')
-        ->once()
-        ->withArgs(function ($req) {
-            return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
-        })
-        ->andReturn('RAW');
+    /** @var \Mockery\Expectation $formatterExp */
+    $formatterExp = $formatter->shouldReceive('format');
+    $formatterExp->withArgs(function ($req) {
+        return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
+    });
+    $formatterExp->andReturn('RAW');
+    $formatterExp->once();
 
-    $transport->shouldReceive('request')->once()->with($config, 'RAW')
-        ->andReturn(\Amp\Future::complete('RESP'));
+    /** @var \Mockery\Expectation $transportExp */
+    $transportExp = $transport->shouldReceive('request');
+    $transportExp->with($config, 'RAW');
+    $transportExp->andReturn(\Amp\Future::complete('RESP'));
+    $transportExp->once();
+
     $responseObj = new IcapResponse(200);
-    $parser->shouldReceive('parse')->once()->with('RESP')->andReturn($responseObj);
+    /** @var \Mockery\Expectation $parserExp */
+    $parserExp = $parser->shouldReceive('parse');
+    $parserExp->with('RESP');
+    $parserExp->andReturn($responseObj);
+    $parserExp->once();
 
+    // Client and test execution
     $client = new IcapClient($config, $transport, $formatter, $parser);
 
+    /** @var \Ndrstmr\Icap\Tests\AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client, $responseObj) {
         $future = $client->options('/service');
-        $res = \Amp\Future\await($future);
+        $res = $future->await();
         expect($res)->toBe($responseObj);
     });
 

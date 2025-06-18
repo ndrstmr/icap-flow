@@ -7,7 +7,7 @@ use Revolt\EventLoop;
 
 abstract class AsyncTestCase extends TestCase
 {
-    protected function runAsyncTest(callable $test): void
+    public function runAsyncTest(\Closure $test): void
     {
         EventLoop::queue($test);
         EventLoop::run();

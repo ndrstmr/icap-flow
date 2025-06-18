@@ -48,8 +48,8 @@ class ResponseParser implements ResponseParserInterface
                 if ($len === 0) {
                     break;
                 }
-                $decoded .= substr($body, 0, $len);
-                $body = substr($body, $len + 2); // skip chunk and CRLF
+                $decoded .= substr($body, 0, (int)$len);
+                $body = substr($body, (int)$len + 2); // skip chunk and CRLF
             }
             $body = $decoded;
         }

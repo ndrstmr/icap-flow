@@ -24,7 +24,7 @@ EventLoop::run(function () {
 
         echo "Scanning file $eicarFile asynchronously...\n";
         $future = $client->scanFile('/service', $eicarFile);
-        $response = \Amp\Future\await($future);
+        $response = $future->await();
 
         echo "ICAP Status Code (async): " . $response->statusCode . "\n";
         print_r($response->headers);
