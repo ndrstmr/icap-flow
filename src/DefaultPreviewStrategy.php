@@ -7,8 +7,14 @@ namespace Ndrstmr\Icap;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapResponseException;
 
+/**
+ * Default strategy for interpreting preview responses.
+ */
 class DefaultPreviewStrategy implements PreviewStrategyInterface
 {
+    /**
+     * Decide whether to continue sending the body after a preview response.
+     */
     public function handlePreviewResponse(IcapResponse $previewResponse): PreviewDecision
     {
         return match ($previewResponse->statusCode) {

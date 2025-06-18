@@ -17,8 +17,18 @@ use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\PreviewStrategyInterface;
 use Ndrstmr\Icap\DefaultPreviewStrategy;
 
+/**
+ * Core asynchronous ICAP client used by the synchronous wrapper.
+ */
 class IcapClient
 {
+    /**
+     * @param Config                       $config          Connection configuration
+     * @param TransportInterface            $transport       Transport implementation
+     * @param RequestFormatterInterface     $formatter       Formats outgoing requests
+     * @param ResponseParserInterface       $parser          Parses incoming responses
+     * @param PreviewStrategyInterface|null $previewStrategy Strategy for preview handling
+     */
     public function __construct(
         private Config $config,
         private TransportInterface $transport,
@@ -31,11 +41,17 @@ class IcapClient
 
     private PreviewStrategyInterface $previewStrategy;
 
+    /**
+     * Convenience factory for synchronous environments.
+     */
     public static function forServer(string $host, int $port = 1344): self
     {
         return new self(new Config($host, $port), new SynchronousStreamTransport(), new RequestFormatter(), new ResponseParser());
     }
 
+    /**
+     * Factory using the default async transport.
+     */
     public static function create(): self
     {
         return new self(
@@ -48,6 +64,9 @@ class IcapClient
     }
 
     /**
+     * Send a raw ICAP request.
+     *
+     * @param IcapRequest $request
      * @return Future<IcapResponse>
      */
     public function request(IcapRequest $request): Future
@@ -61,6 +80,9 @@ class IcapClient
     }
 
     /**
+     * Issue an OPTIONS request to the given service.
+     *
+     * @param string $service
      * @return Future<IcapResponse>
      */
     public function options(string $service): Future
@@ -71,7 +93,12 @@ class IcapClient
     }
 
     /**
+     * Scan a local file via RESPMOD.
+     *
+     * @param string $service
+     * @param string $filePath
      * @return Future<IcapResponse>
+     * @throws \RuntimeException When the file cannot be opened
      */
     public function scanFile(string $service, string $filePath): Future
     {
@@ -85,7 +112,13 @@ class IcapClient
     }
 
     /**
+     * Scan a file using preview mode.
+     *
+     * @param string $service
+     * @param string $filePath
+     * @param int    $previewSize
      * @return Future<IcapResponse>
+     * @throws \RuntimeException When the file cannot be read
      */
     public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): Future
     {

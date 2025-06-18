@@ -1,8 +1,12 @@
 # icap-flow
-A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+.
 
-![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/ndrstmr/icap-flow/ci.yml?branch=main)
-![License](https://img.shields.io/github/license/ndrstmr/icap-flow)
+<!-- Badges -->
+[![Build Status](https://img.shields.io/github/actions/workflow/status/ndrstmr/icap-flow/ci.yml?branch=main)](https://github.com/ndrstmr/icap-flow/actions)
+[![Latest Stable Version](https://img.shields.io/packagist/v/ndrstmr/icap-flow?label=stable)](https://packagist.org/packages/ndrstmr/icap-flow)
+[![Total Downloads](https://img.shields.io/packagist/dt/ndrstmr/icap-flow)](https://packagist.org/packages/ndrstmr/icap-flow)
+[![License](https://img.shields.io/github/license/ndrstmr/icap-flow)](LICENSE)
+[![PHP Version](https://img.shields.io/packagist/php-v/ndrstmr/icap-flow)](https://www.php.net/)
+[![Static Analysis](https://img.shields.io/badge/static%20analysis-level%207-brightgreen)](phpstan.neon)
 
 A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+.
 
@@ -46,11 +50,46 @@ EventLoop::run(function () use ($icap) {
 });
 ```
 
-## Contributing
+## Konfiguration
 
-Contributions are welcome! Please refer to the project's mission and development guidelines.
+Passen Sie die Verbindungseinstellungen mit dem `Config`-DTO an:
+
+```php
+use Ndrstmr\Icap\Config;
+
+$config = new Config(
+    host: 'icap.example.com',
+    port: 1344,
+    socketTimeout: 5.0,
+    streamTimeout: 30.0,
+);
+```
+
+Dieses Objekt kann an die Factory-Methoden der Clients übergeben werden.
+
+## Erweiterbarkeit (Cookbook)
+
+Die Behandlung von Preview-Antworten erfolgt über das Strategy Pattern. Eigene
+Strategien implementieren das `PreviewStrategyInterface` und können beim
+Client hinterlegt werden. Ausführliche Beispiele finden Sie im Verzeichnis
+[`examples/cookbook/`](examples/cookbook/).
+
+## Für Entwickler
+
+Tests führen Sie mit dem folgenden Befehl aus:
+
+```bash
+composer test
+```
+
+Weitere Hinweise zum Ablauf von Pull Requests finden Sie in der
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
 This project is licensed under the EUPL-1.2 License. See the LICENSE file for details.
+
+## Changelog
+
+Eine Liste aller Veränderungen finden Sie in der [CHANGELOG.md](CHANGELOG.md).
 

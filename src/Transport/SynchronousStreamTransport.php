@@ -7,6 +7,9 @@ namespace Ndrstmr\Icap\Transport;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 
+/**
+ * Simple blocking transport using PHP stream sockets.
+ */
 class SynchronousStreamTransport implements TransportInterface
 {
     /**
