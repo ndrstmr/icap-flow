@@ -21,24 +21,27 @@ it('orchestrates dependencies when calling options()', function () {
     /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
-    $formatter->shouldReceive('format')
-        ->withArgs(function ($req) {
-            return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
-        })
-        ->andReturn('RAW')
-        ->once();
+    $formatterExp = $formatter->shouldReceive('format');
+    assert($formatterExp instanceof \Mockery\ExpectationInterface);
+    $formatterExp->withArgs(function ($req) {
+        return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
+    });
+    $formatterExp->andReturn('RAW');
+    $formatterExp->once();
 
-    $transport->shouldReceive('request')
-        ->with($config, 'RAW')
-        ->andReturn(\Amp\Future::complete('RESP'))
-        ->once();
+    $transportExp = $transport->shouldReceive('request');
+    assert($transportExp instanceof \Mockery\ExpectationInterface);
+    $transportExp->with($config, 'RAW');
+    $transportExp->andReturn(\Amp\Future::complete('RESP'));
+    $transportExp->once();
 
     $responseObj = new IcapResponse(200);
 
-    $parser->shouldReceive('parse')
-        ->with('RESP')
-        ->andReturn($responseObj)
-        ->once();
+    $parserExp = $parser->shouldReceive('parse');
+    assert($parserExp instanceof \Mockery\ExpectationInterface);
+    $parserExp->with('RESP');
+    $parserExp->andReturn($responseObj);
+    $parserExp->once();
 
     $client = new IcapClient($config, $transport, $formatter, $parser);
 
