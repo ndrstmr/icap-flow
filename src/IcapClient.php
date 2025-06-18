@@ -172,6 +172,10 @@ class IcapClient
             return new ScanResult(false, null, $response);
         }
 
+        if ($response->statusCode === 100) {
+            return new ScanResult(false, null, $response);
+        }
+
         throw new IcapResponseException('Unexpected ICAP status: ' . $response->statusCode, $response->statusCode);
     }
 }

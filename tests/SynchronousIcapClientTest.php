@@ -57,18 +57,18 @@ it('scanFile delegates correctly to async client', function () {
     /** @var IcapClient&\Mockery\MockInterface $async */
     $async = m::mock(IcapClient::class);
     $response = new IcapResponse(201);
+    $result = new ScanResult(false, null, $response);
     /** @var \Mockery\Expectation $exp */
     $exp = $async->shouldReceive('scanFile');
     $exp->with('/service', '/tmp/file');
     $exp->once();
-    $exp->andReturn(\Amp\Future::complete($response));
+    $exp->andReturn(\Amp\Future::complete($result));
 
     $client = new SynchronousIcapClient($async);
 
     $res = $client->scanFile('/service', '/tmp/file');
 
-    expect($res)->toBeInstanceOf(ScanResult::class)
-        ->and($res->getOriginalResponse())->toBe($response);
+    expect($res)->toBe($result);
 
     m::close();
 });
@@ -78,18 +78,18 @@ it('request delegates correctly to async client', function () {
     $async = m::mock(IcapClient::class);
     $req = new \Ndrstmr\Icap\DTO\IcapRequest('OPTIONS', 'icap://icap.example');
     $response = new IcapResponse(200);
+    $result = new ScanResult(false, null, $response);
     /** @var \Mockery\Expectation $exp */
     $exp = $async->shouldReceive('request');
     $exp->with($req);
     $exp->once();
-    $exp->andReturn(\Amp\Future::complete($response));
+    $exp->andReturn(\Amp\Future::complete($result));
 
     $client = new SynchronousIcapClient($async);
 
     $res = $client->request($req);
 
-    expect($res)->toBeInstanceOf(ScanResult::class)
-        ->and($res->getOriginalResponse())->toBe($response);
+    expect($res)->toBe($result);
 
     m::close();
 });
