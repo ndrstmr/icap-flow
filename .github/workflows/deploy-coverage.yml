@@ -2,9 +2,7 @@ name: IcapFlow CI & Quality Checks
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: main
 
 jobs:
   test:
@@ -23,20 +21,18 @@ jobs:
         with:
           php-version: ${{ matrix.php-version }}
           extensions: sockets
-          coverage: none
+          coverage: pcov
 
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
 
-      - name: Audit Composer dependencies for vulnerabilities
-        run: composer audit
+      - name: Run tests and generate coverage report
+        run: composer test -- --coverage
 
-      - name: Check code style (PSR-12)
-        run: composer cs-check
-
-      - name: Run static analysis
-        run: composer stan
-
-      - name: Run tests
-        run: composer test
-        
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build/coverage-html
+          publish_branch: gh-pages
+          force_orphan: true
