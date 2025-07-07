@@ -17,7 +17,7 @@ jobs:
     strategy:
       # Teste immer gegen mehrere PHP-Versionen
       matrix:
-        php-version: ['8.3']
+        php-version: ['8.2', '8.3']
 
     steps:
       - name: Checkout code
@@ -71,7 +71,7 @@ jobs:
       - name: Download coverage artifact
         uses: actions/download-artifact@v4
         with:
-          # Wir nehmen nur den Report von der neuesten PHP-Version, da sie identisch sein sollten
+          # Wir nehmen nur den Report von PHP 8.3, da die Reports identisch sein sollten
           name: coverage-report-php-8.3
 
       # Deploye den heruntergeladenen Ordner nach GitHub Pages
