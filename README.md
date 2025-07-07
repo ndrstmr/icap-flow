@@ -11,7 +11,7 @@
 
 # icap-flow
 
-A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+.
+A modern, robust, and async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.2+.
 
 ## Project Vision
 
