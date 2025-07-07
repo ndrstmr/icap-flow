@@ -20,7 +20,7 @@ Vision: The library should become the de-facto standard for PHP developers needi
 
 ### Quality Goals (Non-functional)
 
-* Make use of modern PHP 8.3+ features (readonly properties, enums, fibers, etc.) where appropriate.
+* Make use of modern PHP 8.2+ features (readonly properties, enums, fibers, etc.) where appropriate.
 * Asynchrony as a core feature: the design must allow both synchronous and asynchronous (non-blocking I/O) usage without breaking the public API.
 * Strict PSR compliance: PSR-4 autoloading and PSR-12 coding style are mandatory. The API conceptually follows PSR-7 (HTTP messages) and PSR-18 (HTTP client).
 * Maximum testability: follow a TDD/BDD approach aiming for ~100% coverage. Every piece of logic must be testable in isolation.
@@ -49,7 +49,7 @@ The architecture is organized using a "grouped by concern" approach to ensure cl
 
 ## 4. Tech Stack & Tooling
 
-* PHP: >= 8.3
+* PHP: >= 8.2
 * Dependency management: Composer 2
 * Testing: Pest & PHPUnit
 * Static analysis: PHPStan (level 9), Psalm
