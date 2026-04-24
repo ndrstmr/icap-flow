@@ -1,0 +1,33 @@
+# Integration-test fixture for icap-flow.
+#
+# A single ClamAV+ICAP service is sufficient for all smoke scenarios
+# we currently have — OPTIONS round-trip, EICAR detection, clean-file
+# verdict. More specialised fixtures (pure c-icap SrvEcho, Squid,
+# vendor-specific stacks) can be added under separate compose
+# profiles in a follow-up.
+#
+# Usage:
+#   docker compose up -d
+#   ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
+#   ICAP_ECHO_SERVICE=/avscan \
+#   ICAP_CLAMAV_SERVICE=/avscan \
+#       composer test:integration
+#
+# The image is pinned to an exact minor tag. `docker compose pull`
+# locally picks up newer tags; CI stays on the pin so the test run is
+# reproducible across time.
+
+services:
+  icap-clamav:
+    image: mnemoshare/clamav-icap:0.14.5
+    container_name: icap-flow-clamav
+    ports:
+      - "1344:1344"
+    # First boot downloads the ClamAV signature database (~200 MB);
+    # allow several minutes before marking the container unhealthy.
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -lnt | grep -q :1344 || netstat -lnt 2>/dev/null | grep -q :1344"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+      start_period: 180s

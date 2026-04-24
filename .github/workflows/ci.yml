@@ -1,6 +1,5 @@
 name: IcapFlow CI, Quality & Deployment
 
-# Trigger für den Workflow
 on:
   push:
     branches:
@@ -10,14 +9,15 @@ on:
       - main
 
 jobs:
-  # Job 1: Führt alle Qualitäts-Checks und Tests aus
+  # Unit tests + static analysis + coverage, run against every
+  # supported PHP version.
   quality-and-tests:
     name: PHP ${{ matrix.php-version }} Quality Checks
     runs-on: ubuntu-latest
     strategy:
-      # Teste immer gegen mehrere PHP-Versionen
       matrix:
         php-version: ['8.4', '8.5']
+      fail-fast: false
 
     steps:
       - name: Checkout code
@@ -42,45 +42,115 @@ jobs:
       - name: Run static analysis
         run: composer stan
 
-      - name: Run tests and generate coverage report
-        # Führt Tests aus und generiert den Report im Hintergrund
+      - name: Run unit tests with coverage
         run: composer test -- --coverage
 
-      # Speichere den Coverage-Report als Artefakt, damit der nächste Job ihn verwenden kann
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report-php-${{ matrix.php-version }}
           path: build/coverage-html/
 
-  # Job 2: Veröffentlicht den Coverage-Report (nur nach Erfolg von Job 1)
+  # Integration tests against a real c-icap + ClamAV stack spun up via
+  # docker-compose. Runs only on PHP 8.4 (the integration contract is
+  # version-agnostic) to keep CI cost bounded.
+  integration:
+    name: Integration tests (c-icap + ClamAV)
+    runs-on: ubuntu-latest
+    needs: quality-and-tests
+    # Don't fail the whole workflow if the public image for c-icap or
+    # ClamAV is flaky — we'll know from the step status.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: sockets
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Start ICAP services
+        run: docker compose up -d
+
+      - name: Wait for icap-clamav readiness
+        # A plain `nc -z` is not enough: the mnemoshare image opens
+        # the TCP port early (freshclam bootstrap) but the actual
+        # c-icap daemon only answers ICAP once the ClamAV signature
+        # database has finished downloading — which takes 30–120 s
+        # on a fresh image. Poll with a real OPTIONS probe and
+        # require `ICAP/1.0` to appear in the response.
+        run: |
+          for i in $(seq 1 60); do
+            response=$(printf 'OPTIONS icap://127.0.0.1/avscan ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
+              | timeout 3 nc 127.0.0.1 1344 2>/dev/null | head -1)
+            if echo "$response" | grep -q 'ICAP/1'; then
+              echo "icap-clamav ready after ${i} attempts — $response"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "icap-clamav did not answer ICAP within ~5 min" >&2
+          docker compose logs icap-clamav | tail -100
+          exit 1
+
+      - name: Run integration tests (ClamAV)
+        env:
+          ICAP_HOST: 127.0.0.1
+          ICAP_PORT: 1344
+          ICAP_ECHO_SERVICE: /avscan
+          ICAP_CLAMAV_SERVICE: /avscan
+        # --display-all-issues + --display-skipped print the full
+        # assertion diffs that Pest normally hides behind a summary
+        # line; --debug replaces the progress bar with event output.
+        # The integration job stays continue-on-error while we
+        # reverse-engineer the ICAP server contract.
+        run: composer test:integration -- --display-all-issues --display-skipped --debug
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          echo "::group::icap-clamav service logs"
+          docker compose logs icap-clamav | tail -200
+          echo "::endgroup::"
+          echo "::group::ICAP OPTIONS probe"
+          printf 'OPTIONS icap://127.0.0.1/avscan ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
+            | timeout 5 nc -v 127.0.0.1 1344 | head -50 || true
+          echo "::endgroup::"
+
+      - name: Shut services down
+        if: always()
+        run: docker compose down -v
+
+  # NOTE: The mutation-testing CI job was removed from this PR. Pest 3
+  # mutation CLI surface wouldn't stabilise in the scope of M4; it
+  # returns in a dedicated follow-up once the flag matrix +
+  # coverage-driver boot-up are fully worked out. The
+  # `composer mutation` script stays usable locally.
+
   deploy-coverage:
     name: Deploy Coverage Report
-    # Dieser Job ist abhängig vom Erfolg des vorherigen Jobs
     needs: quality-and-tests
-    # WICHTIG: Führe diesen Job NUR bei einem Push auf den main-Branch aus, nicht bei Pull Requests
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
-    # Erforderliche Berechtigung, um auf den gh-pages Branch zu pushen
     permissions:
       contents: write
 
     steps:
-      # Lade den Report herunter, der im vorherigen Job erstellt wurde
       - name: Download coverage artifact
         uses: actions/download-artifact@v4
         with:
-          # Wir nehmen nur den Report von der neuesten PHP-Version, da sie identisch sein sollten
           name: coverage-report-php-8.5
 
-      # Deploye den heruntergeladenen Ordner nach GitHub Pages
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Der Ordnername nach dem Download ist einfach der Artefaktname,
-          # wir müssen den Inhalt direkt veröffentlichen.
           publish_dir: ./
           publish_branch: gh-pages
           force_orphan: true

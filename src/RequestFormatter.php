@@ -138,6 +138,15 @@ final class RequestFormatter implements RequestFormatterInterface
         if (!isset($headers['Host'])) {
             $headers['Host'] = [$host];
         }
+        // Until the transport layer learns to detect end-of-response
+        // from the Encapsulated header (scheduled with keep-alive
+        // pooling in M3 follow-up), default to Connection: close so
+        // the server closes the socket after answering and our read
+        // loop sees EOF instead of waiting for the stream timeout.
+        // RFC 3507 §5.5 explicitly permits Connection: close.
+        if (!isset($headers['Connection'])) {
+            $headers['Connection'] = ['close'];
+        }
         // Encapsulated is computed by the formatter — any user-supplied
         // value would contradict the actual byte layout.
         $headers['Encapsulated'] = [$encapsulated];

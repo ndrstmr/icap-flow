@@ -6,3 +6,17 @@ parameters:
     paths:
         - src
         - tests
+    ignoreErrors:
+        # Pest's Expectation class is marked @internal, but calling it
+        # from tests is the whole point. Pest 3 + PHPStan 2 surfaces
+        # this as method.internalClass; silence it specifically.
+        -
+            identifier: method.internalClass
+            path: tests/*
+            message: '#Pest\\Mixins\\Expectation#'
+        # Pest's chained expect(...)->toThrow(...) occasionally looks
+        # like a terminating call to PHPStan 2 — false positives for
+        # statements that follow.
+        -
+            identifier: deadCode.unreachable
+            path: tests/*
