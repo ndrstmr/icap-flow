@@ -20,6 +20,8 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Transport;
 
+use Amp\Cancellation;
+use Amp\CompositeCancellation;
 use Amp\Socket;
 use Amp\Socket\ConnectContext;
 use Amp\TimeoutCancellation;
@@ -36,6 +38,11 @@ use function Amp\async;
  * carries a {@see \Amp\Socket\ClientTlsContext}; otherwise connects
  * plain tcp://. The response is bounded by Config::maxResponseSize to
  * keep a hostile server from exhausting the client's memory.
+ *
+ * The optional user-supplied {@see Cancellation} is combined with the
+ * transport's internal {@see TimeoutCancellation} via a
+ * {@see CompositeCancellation}; whichever fires first aborts the
+ * read/write loop with `Amp\CancelledException`.
  */
 final class AsyncAmpTransport implements TransportInterface
 {
@@ -44,10 +51,10 @@ final class AsyncAmpTransport implements TransportInterface
      * @return \Amp\Future<string>
      */
     #[\Override]
-    public function request(Config $config, iterable $rawRequest): \Amp\Future
+    public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): \Amp\Future
     {
         /** @var \Amp\Future<string> $future */
-        $future = async(function () use ($config, $rawRequest): string {
+        $future = async(function () use ($config, $rawRequest, $cancellation): string {
             $socket = null;
             $tls = $config->getTlsContext();
             $connectionUrl = sprintf('tcp://%s:%d', $config->host, $config->port);
@@ -56,7 +63,10 @@ final class AsyncAmpTransport implements TransportInterface
             if ($tls !== null) {
                 $connectContext = $connectContext->withTlsContext($tls);
             }
-            $cancellation = new TimeoutCancellation($config->getStreamTimeout());
+            $timeoutCancellation = new TimeoutCancellation($config->getStreamTimeout());
+            $cancellation = $cancellation === null
+                ? $timeoutCancellation
+                : new CompositeCancellation($cancellation, $timeoutCancellation);
 
             try {
                 if ($tls !== null) {
