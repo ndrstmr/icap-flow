@@ -114,33 +114,11 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # Mutation testing via Pest's native pest-plugin-mutate. The gate
-  # numbers come from composer.json's mutation script. Flagged
-  # continue-on-error so MSI jitter doesn't block merges while the
-  # integration suite (which would lift covered-MSI) is still being
-  # built out.
-  mutation:
-    name: Mutation testing (Pest)
-    runs-on: ubuntu-latest
-    needs: quality-and-tests
-    continue-on-error: true
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP 8.4
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          extensions: sockets
-          coverage: pcov
-
-      - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
-
-      - name: Run Pest mutation suite
-        run: composer mutation
+  # NOTE: The mutation-testing CI job was removed from this PR. Pest 3
+  # mutation CLI surface wouldn't stabilise in the scope of M4; it
+  # returns in a dedicated follow-up once the flag matrix +
+  # coverage-driver boot-up are fully worked out. The
+  # `composer mutation` script stays usable locally.
 
   deploy-coverage:
     name: Deploy Coverage Report
