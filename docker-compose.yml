@@ -9,8 +9,8 @@
 # Usage:
 #   docker compose up -d
 #   ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
-#   ICAP_ECHO_SERVICE=/squidclamav \
-#   ICAP_CLAMAV_SERVICE=/squidclamav \
+#   ICAP_ECHO_SERVICE=/avscan \
+#   ICAP_CLAMAV_SERVICE=/avscan \
 #       composer test:integration
 #
 # The image is pinned to an exact minor tag. `docker compose pull`

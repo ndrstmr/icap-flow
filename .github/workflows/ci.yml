@@ -87,7 +87,7 @@ jobs:
         # require `ICAP/1.0` to appear in the response.
         run: |
           for i in $(seq 1 60); do
-            response=$(printf 'OPTIONS icap://127.0.0.1/squidclamav ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
+            response=$(printf 'OPTIONS icap://127.0.0.1/avscan ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
               | timeout 3 nc 127.0.0.1 1344 2>/dev/null | head -1)
             if echo "$response" | grep -q 'ICAP/1'; then
               echo "icap-clamav ready after ${i} attempts — $response"
@@ -103,8 +103,8 @@ jobs:
         env:
           ICAP_HOST: 127.0.0.1
           ICAP_PORT: 1344
-          ICAP_ECHO_SERVICE: /squidclamav
-          ICAP_CLAMAV_SERVICE: /squidclamav
+          ICAP_ECHO_SERVICE: /avscan
+          ICAP_CLAMAV_SERVICE: /avscan
         # --display-all-issues + --display-skipped print the full
         # assertion diffs that Pest normally hides behind a summary
         # line; --debug replaces the progress bar with event output.
@@ -119,7 +119,7 @@ jobs:
           docker compose logs icap-clamav | tail -200
           echo "::endgroup::"
           echo "::group::ICAP OPTIONS probe"
-          printf 'OPTIONS icap://127.0.0.1/squidclamav ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
+          printf 'OPTIONS icap://127.0.0.1/avscan ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
             | timeout 5 nc -v 127.0.0.1 1344 | head -50 || true
           echo "::endgroup::"
 
