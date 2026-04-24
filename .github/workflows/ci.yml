@@ -114,12 +114,13 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # Mutation testing — informational for now, ratchet the gate in
-  # composer.json as the test suite grows. Flagged continue-on-error
-  # so flakes don't block merges while we're still building the
-  # integration baseline.
+  # Mutation testing via Pest's native pest-plugin-mutate. The gate
+  # numbers come from composer.json's mutation script. Flagged
+  # continue-on-error so MSI jitter doesn't block merges while the
+  # integration suite (which would lift covered-MSI) is still being
+  # built out.
   mutation:
-    name: Mutation testing (Infection)
+    name: Mutation testing (Pest)
     runs-on: ubuntu-latest
     needs: quality-and-tests
     continue-on-error: true
@@ -138,15 +139,8 @@ jobs:
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress
 
-      - name: Run Infection
+      - name: Run Pest mutation suite
         run: composer mutation
-
-      - name: Upload Infection log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: infection-log
-          path: build/infection.log
 
   deploy-coverage:
     name: Deploy Coverage Report
