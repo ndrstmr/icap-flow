@@ -90,16 +90,35 @@ final class ResponseParser implements ResponseParserInterface
     }
 
     /**
+     * Parse a flat list of header lines into a {@code name => list<value>}
+     * map. Honours RFC 7230 §3.2.4 obsolete line folding: a line that
+     * starts with HTAB or SP is treated as a continuation of the
+     * previous header value (joined with a single space). c-icap uses
+     * this folding form for the multi-line `X-Violations-Found` header
+     * defined in RFC 3507 §6.4.
+     *
      * @param  list<string>            $lines
      * @return array<string, string[]>
      */
     private function parseHeaderBlock(array $lines): array
     {
+        /** @var array<string, string[]> $headers */
         $headers = [];
+        $lastName = null;
+
         foreach ($lines as $line) {
             if ($line === '') {
                 continue;
             }
+
+            // Continuation line — append to the previous header's last
+            // value with a single SP, the canonical "unfolded" form.
+            if ($lastName !== null && ($line[0] === " " || $line[0] === "\t")) {
+                $lastIdx = count($headers[$lastName]) - 1;
+                $headers[$lastName][$lastIdx] .= ' ' . trim($line);
+                continue;
+            }
+
             $colon = strpos($line, ':');
             if ($colon === false) {
                 throw new IcapMalformedResponseException('Malformed header line: ' . $line);
@@ -107,6 +126,7 @@ final class ResponseParser implements ResponseParserInterface
             $name = trim(substr($line, 0, $colon));
             $value = trim(substr($line, $colon + 1));
             $headers[$name][] = $value;
+            $lastName = $name;
         }
 
         return $headers;
