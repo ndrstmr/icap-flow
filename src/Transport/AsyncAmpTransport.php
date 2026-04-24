@@ -18,10 +18,11 @@ use function Amp\async;
 final class AsyncAmpTransport implements TransportInterface
 {
     /**
+     * @param iterable<string> $rawRequest
      * @return \Amp\Future<string>
      */
     #[\Override]
-    public function request(Config $config, string $rawRequest): \Amp\Future
+    public function request(Config $config, iterable $rawRequest): \Amp\Future
     {
         /** @var \Amp\Future<string> $future */
         $future = async(function () use ($config, $rawRequest): string {
@@ -33,7 +34,11 @@ final class AsyncAmpTransport implements TransportInterface
 
             try {
                 $socket = Socket\connect($connectionUrl, $connectContext, $cancellation);
-                $socket->write($rawRequest);
+                foreach ($rawRequest as $chunk) {
+                    if ($chunk !== '') {
+                        $socket->write($chunk);
+                    }
+                }
 
                 $response = '';
                 while (null !== ($chunk = $socket->read($cancellation))) {

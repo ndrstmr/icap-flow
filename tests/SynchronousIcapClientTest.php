@@ -26,12 +26,12 @@ it('delegates calls to the async client and blocks for results', function () {
     $formatterExp->withArgs(function ($req) {
         return $req instanceof \Ndrstmr\Icap\DTO\IcapRequest && $req->method === 'OPTIONS' && str_contains($req->uri, '/service');
     });
-    $formatterExp->andReturn('RAW');
+    $formatterExp->andReturn(['HEAD']);
     $formatterExp->once();
 
     /** @var \Mockery\Expectation $transportExp */
     $transportExp = $transport->shouldReceive('request');
-    $transportExp->with($config, 'RAW');
+    $transportExp->withArgs(fn ($cfg, $chunks) => $cfg === $config && is_iterable($chunks));
     $transportExp->andReturn(\Amp\Future::complete('RESP'));
     $transportExp->once();
 
