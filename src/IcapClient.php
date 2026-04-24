@@ -9,7 +9,10 @@ use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
+use Ndrstmr\Icap\Exception\IcapClientException;
+use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapResponseException;
+use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
@@ -36,11 +39,12 @@ final class IcapClient implements IcapClientInterface
      */
     public static function forServer(string $host, int $port = 1344): self
     {
+        $config = new Config($host, $port);
         return new self(
-            new Config($host, $port),
+            $config,
             new SynchronousStreamTransport(),
             new RequestFormatter(),
-            new ResponseParser(),
+            self::parserFor($config),
         );
     }
 
@@ -49,12 +53,21 @@ final class IcapClient implements IcapClientInterface
      */
     public static function create(): self
     {
+        $config = new Config('127.0.0.1');
         return new self(
-            new Config('127.0.0.1'),
+            $config,
             new AsyncAmpTransport(),
             new RequestFormatter(),
-            new ResponseParser(),
+            self::parserFor($config),
             new DefaultPreviewStrategy(),
+        );
+    }
+
+    private static function parserFor(Config $config): ResponseParser
+    {
+        return new ResponseParser(
+            maxHeaderCount: $config->getMaxHeaderCount(),
+            maxHeaderLineLength: $config->getMaxHeaderLineLength(),
         );
     }
 
@@ -63,12 +76,28 @@ final class IcapClient implements IcapClientInterface
     {
         /** @var Future<ScanResult> $future */
         $future = \Amp\async(function () use ($request): ScanResult {
+            $response = $this->executeRaw($request)->await();
+            return $this->interpretResponse($response, $this->config);
+        });
+
+        return $future;
+    }
+
+    /**
+     * Send the ICAP request and return the parsed {@see IcapResponse}
+     * without the fail-secure status-code interpretation pass. Used by
+     * the preview flow, where 100 Continue is a legitimate intermediate
+     * response. External callers should prefer {@see request()}.
+     *
+     * @return Future<IcapResponse>
+     */
+    public function executeRaw(IcapRequest $request): Future
+    {
+        /** @var Future<IcapResponse> $future */
+        $future = \Amp\async(function () use ($request): IcapResponse {
             $chunks = $this->formatter->format($request);
             $responseString = $this->transport->request($this->config, $chunks)->await();
-
-            $response = $this->parser->parse($responseString);
-
-            return $this->interpretResponse($response, $this->config);
+            return $this->parser->parse($responseString);
         });
 
         return $future;
@@ -153,7 +182,7 @@ final class IcapClient implements IcapClientInterface
 
             $previewIsComplete = $fileSize <= $previewSize;
 
-            $previewResponse = new HttpResponse(
+            $previewEnvelope = new HttpResponse(
                 statusCode: 200,
                 headers: [
                     'Content-Type'   => ['application/octet-stream'],
@@ -169,24 +198,36 @@ final class IcapClient implements IcapClientInterface
                     'Preview' => [(string) $previewSize],
                     'Allow'   => ['204'],
                 ],
-                encapsulatedResponse: $previewResponse,
+                encapsulatedResponse: $previewEnvelope,
                 previewIsComplete: $previewIsComplete,
             );
 
-            $previewResult = $this->request($previewRequest)->await();
+            // Preview round: bypass interpretResponse() so a legitimate
+            // 100 Continue from the server doesn't trip the fail-secure
+            // guard that only applies outside preview context.
+            $previewIcapResponse = $this->executeRaw($previewRequest)->await();
 
             if ($previewIsComplete) {
                 fclose($stream);
-                return $previewResult;
+                return $this->interpretResponse($previewIcapResponse, $this->config);
             }
 
-            $decision = $this->previewStrategy->handlePreviewResponse(
-                $previewResult->getOriginalResponse(),
-            );
+            $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
 
             if ($decision !== PreviewDecision::CONTINUE_SENDING) {
                 fclose($stream);
-                return $previewResult;
+                // The strategy has made the final call. Build a
+                // ScanResult directly from its verdict rather than
+                // running interpretResponse() over the preview-stage
+                // status code (which is 100 in a typical abort path
+                // and would otherwise trip the fail-secure guard).
+                return new ScanResult(
+                    isInfected: $decision === PreviewDecision::ABORT_INFECTED,
+                    virusName: $decision === PreviewDecision::ABORT_INFECTED
+                        ? $this->extractVirusName($previewIcapResponse, $this->config)
+                        : null,
+                    originalResponse: $previewIcapResponse,
+                );
             }
 
             // The server wants the rest. Stream the full file in a fresh
@@ -221,6 +262,7 @@ final class IcapClient implements IcapClientInterface
 
     private function buildServiceUri(string $service): string
     {
+        $this->validateServicePath($service);
         $host = $this->config->host;
         if ($this->config->port !== 1344) {
             $host .= ':' . $this->config->port;
@@ -228,27 +270,83 @@ final class IcapClient implements IcapClientInterface
         return sprintf('icap://%s%s', $host, $service);
     }
 
+    /**
+     * Guard $service against header/URI injection. Finding H of the
+     * consolidated review: user-controlled service paths can sneak
+     * CR/LF into the request line and inject additional ICAP headers
+     * before any wire byte has been written.
+     *
+     * RFC 3507 §4.2 allows only the abs_path production for the
+     * service; we enforce a conservative subset (no controls, no
+     * whitespace, no NUL) which is sufficient for every known ICAP
+     * server while leaving segment separators like '/' untouched.
+     */
+    private function validateServicePath(string $service): void
+    {
+        if (preg_match('/[\x00-\x20\x7F]/', $service) === 1) {
+            throw new \InvalidArgumentException(
+                'Service path contains control characters, whitespace or NUL; refusing to build ICAP URI: ' . var_export($service, true),
+            );
+        }
+    }
+
+    /**
+     * Map an ICAP response to a {@see ScanResult} or raise a typed
+     * exception. Status-code handling follows RFC 3507 §4.3.3 and the
+     * de-facto vendor conventions (§7 of the consolidated review).
+     *
+     * Security note (finding G): 100 Continue is NOT a finish state
+     * and MUST NOT be mapped to a clean scan. Outside a preview the
+     * 100 is a protocol error; inside a preview the caller handles it
+     * via the {@see PreviewStrategyInterface} before this method sees
+     * the response.
+     */
     private function interpretResponse(IcapResponse $response, Config $config): ScanResult
     {
-        if ($response->statusCode === 204) {
+        $code = $response->statusCode;
+
+        if ($code === 204) {
             return new ScanResult(false, null, $response);
         }
 
-        if ($response->statusCode === 200) {
-            $header = $config->getVirusFoundHeader();
-            $virus = $response->headers[$header][0] ?? null;
-
+        if ($code === 200 || $code === 206) {
+            // 206 Partial Content — some vendors return this when the
+            // encapsulated response was modified but not fully rewritten
+            // (RFC 3507 §4.3.3). Virus signalling is the same as 200.
+            $virus = $this->extractVirusName($response, $config);
             if ($virus !== null) {
                 return new ScanResult(true, $virus, $response);
             }
-
             return new ScanResult(false, null, $response);
         }
 
-        if ($response->statusCode === 100) {
-            return new ScanResult(false, null, $response);
+        if ($code === 100) {
+            throw new IcapProtocolException(
+                'ICAP 100 Continue is only valid during a preview exchange; received outside preview flow.',
+                $code,
+            );
         }
 
-        throw new IcapResponseException('Unexpected ICAP status: ' . $response->statusCode, $response->statusCode);
+        if ($code >= 400 && $code < 500) {
+            throw new IcapClientException(
+                sprintf('ICAP client error (%d) — request rejected by server.', $code),
+                $code,
+            );
+        }
+
+        if ($code >= 500 && $code < 600) {
+            throw new IcapServerException(
+                sprintf('ICAP server error (%d) — server failed to service the request.', $code),
+                $code,
+            );
+        }
+
+        throw new IcapResponseException('Unexpected ICAP status: ' . $code, $code);
+    }
+
+    private function extractVirusName(IcapResponse $response, Config $config): ?string
+    {
+        $header = $config->getVirusFoundHeader();
+        return $response->headers[$header][0] ?? null;
     }
 }
