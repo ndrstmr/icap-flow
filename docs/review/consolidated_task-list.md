@@ -1,5 +1,7 @@
 # Konsolidierte Task-Liste — v2.0.0 RFC-Compliance & Hardening
 
+> **Status (24.04.2026):** M0 (#36) ✅, M1 (#37) ✅, M2 (#38) ✅, M3-Core (#39) ✅, M4 (#40) ✅. M5 in Arbeit (dieser PR). M3-Follow-ups (Cancellation, OPTIONS-Cache, 503-Retry, Keep-Alive-Pooling) sind als dedizierte Folge-PRs nach v2.0.0 vorgemerkt. **Alle P0-Findings A–N sind geschlossen** — der Integration-Lauf gegen `mnemoshare/clamav-icap` (c-icap 0.6.3 + ClamAV) erkennt EICAR und attestiert Clean-Files korrekt.
+
 **Ziel:** `ndrstmr/icap-flow` zum quasi-Standard PHP-ICAP-Client ausbauen — RFC-3507-konform, fail-secure, streaming-sicher, Symfony-ready.
 
 **Basis:** Synthese der drei unabhängigen Due-Diligence-Reviews in `docs/review/` (Claude, Codex, Jules), verifiziert am aktuellen `src/`-Stand bei commit `ec16785`.
@@ -133,16 +135,16 @@
 ## Milestone M5 — Governance & Doku
 
 **Aufwand:** 1 PT
-**PR:** `docs(v2): SECURITY.md, SPDX headers, migration guide, DE README`
+**PR:** `docs(v2): SECURITY.md, SPDX headers, migration guide, AI disclaimer`
 
-- [ ] **M5.1** `SECURITY.md` (Disclosure-Prozess, contact)
-- [ ] **M5.2** SPDX-Header (`SPDX-License-Identifier: EUPL-1.2`) via `.php-cs-fixer.dist.php`-Regel in allen `src/`- und `tests/`-Dateien
-- [ ] **M5.3** `README.md` ehrlich machen: Versprechen aus `docs/agent.md` entweder einlösen oder dort streichen
-- [ ] **M5.4** `README.de.md` — deutsche Fassung für Public-Sector-Adoption
-- [ ] **M5.5** `docs/migration-v1-to-v2.md` — Breaking-Change-Guide
-- [ ] **M5.6** `CHANGELOG.md` v2.0.0-Entry
-- [ ] **M5.7** Cookbook-Fix: `examples/cookbook/02-custom-preview-strategy.php:16` — 304 ist kein ICAP-Status
-- [ ] **M5.8** v2.0.0-Tag
+- [x] **M5.1** `SECURITY.md` mit Disclosure-Prozess + AI-Origin-Disclaimer
+- [x] **M5.2** SPDX-Header (`SPDX-License-Identifier: EUPL-1.2`) via `.php-cs-fixer.dist.php`-Regel auf allen `src/` + `tests/` Dateien
+- [x] **M5.3** `README.md` ehrlich gemacht: prominenter AI-Origin-Disclaimer + Production-Caveat oben, v2-API-Beispiele, `docs/agent.md` als Historical-Document gekennzeichnet
+- [x] **M5.4** `docs/migration-v1-to-v2.md` — Breaking-Change-Guide
+- [x] **M5.5** `CHANGELOG.md` v2.0.0-Entry, v1.0.0 als deprecated markiert
+- [x] **M5.6** Cookbook-Files (`examples/01-sync-scan.php`, `02-async-scan.php`, `cookbook/01..03.php`) auf v2-API umgeschrieben — Multi-Vendor-Header, `executeRaw`-Pattern, Exception-Taxonomie
+- [ ] **M5.7** v2.0.0-Tag (separater Commit nach M5-Merge, kein Inhalt im PR)
+- [ ] **M5.8** `README.de.md` — deutsche Fassung für Public-Sector-Adoption (verschoben in M5-Follow-up; nicht release-blocking)
 
 ---
 

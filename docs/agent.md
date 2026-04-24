@@ -2,7 +2,12 @@
 
 * Agent: OpenAI Codex
 * Date: 17 June 2025
-* Status: Active
+* Status: **Historical — v1.0 charter only.** v2.0 was a substantial redesign driven by three independent due-diligence audits; see [`review/`](review/) for the verified findings and [`migration-v1-to-v2.md`](migration-v1-to-v2.md) for what changed.
+
+> [!NOTE]
+> This document is the original charter that drove the v1.0.0 release. Several of its claims (PSR-7 `StreamInterface` body, Psalm, PHP 8.3 minimum, "Test coverage exceeds 98 %") were aspirational and did not match the v1 implementation, which is part of why the v2 redesign was needed. Kept as provenance — for the current state of the library refer to the top-level [`README.md`](../README.md) and [`CHANGELOG.md`](../CHANGELOG.md).
+
+---
 
 ## 1. Mission Statement & Vision
 
