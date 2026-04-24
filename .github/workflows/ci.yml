@@ -94,11 +94,22 @@ jobs:
           ICAP_PORT: 1344
           ICAP_ECHO_SERVICE: /squidclamav
           ICAP_CLAMAV_SERVICE: /squidclamav
-        run: composer test:integration
+        # --verbose surfaces the Pest output that tells us WHICH
+        # assertion failed; the integration job is still
+        # continue-on-error so a failure doesn't block the merge
+        # while the server contract is being reverse-engineered.
+        run: composer test:integration -- --verbose
 
       - name: Dump service logs on failure
         if: failure()
-        run: docker compose logs
+        run: |
+          echo "::group::icap-clamav service logs"
+          docker compose logs icap-clamav | tail -200
+          echo "::endgroup::"
+          echo "::group::ICAP OPTIONS probe"
+          printf 'OPTIONS icap://127.0.0.1/squidclamav ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
+            | timeout 5 nc -v 127.0.0.1 1344 | head -50 || true
+          echo "::endgroup::"
 
       - name: Shut services down
         if: always()
