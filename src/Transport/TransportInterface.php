@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Transport;
 
+use Amp\Cancellation;
 use Ndrstmr\Icap\Config;
 
 /**
@@ -28,6 +29,12 @@ use Ndrstmr\Icap\Config;
  * The raw request is supplied as an iterable of byte chunks so large
  * encapsulated HTTP bodies are streamed onto the socket without being
  * concatenated in memory.
+ *
+ * The optional {@see Cancellation} parameter lets a caller abort a
+ * request in flight (combined with the transport's internal timeout
+ * cancellation derived from Config::getStreamTimeout()). Implementations
+ * MUST honour the cancellation by aborting the read and write loops
+ * with `Amp\CancelledException`.
  */
 interface TransportInterface
 {
@@ -36,5 +43,5 @@ interface TransportInterface
      *
      * @return \Amp\Future<string>
      */
-    public function request(Config $config, iterable $rawRequest): \Amp\Future;
+    public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): \Amp\Future;
 }

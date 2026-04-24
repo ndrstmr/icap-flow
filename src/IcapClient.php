@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap;
 
+use Amp\Cancellation;
 use Amp\Future;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
@@ -93,10 +94,10 @@ final class IcapClient implements IcapClientInterface
     }
 
     #[\Override]
-    public function request(IcapRequest $request): Future
+    public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
         /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($request): ScanResult {
+        $future = \Amp\async(function () use ($request, $cancellation): ScanResult {
             $context = [
                 'method' => $request->method,
                 'uri'    => $request->uri,
@@ -107,7 +108,7 @@ final class IcapClient implements IcapClientInterface
 
             $response = null;
             try {
-                $response = $this->executeRaw($request)->await();
+                $response = $this->executeRaw($request, $cancellation)->await();
                 $result = $this->interpretResponse($response, $this->config);
             } catch (\Throwable $e) {
                 $this->logger->warning('ICAP request failed', $context + [
@@ -137,12 +138,12 @@ final class IcapClient implements IcapClientInterface
      *
      * @return Future<IcapResponse>
      */
-    public function executeRaw(IcapRequest $request): Future
+    public function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
         /** @var Future<IcapResponse> $future */
-        $future = \Amp\async(function () use ($request): IcapResponse {
+        $future = \Amp\async(function () use ($request, $cancellation): IcapResponse {
             $chunks = $this->formatter->format($request);
-            $responseString = $this->transport->request($this->config, $chunks)->await();
+            $responseString = $this->transport->request($this->config, $chunks, $cancellation)->await();
             return $this->parser->parse($responseString);
         });
 
@@ -150,11 +151,11 @@ final class IcapClient implements IcapClientInterface
     }
 
     #[\Override]
-    public function options(string $service): Future
+    public function options(string $service, ?Cancellation $cancellation = null): Future
     {
         $uri = $this->buildServiceUri($service);
         $request = new IcapRequest('OPTIONS', $uri);
-        return $this->request($request);
+        return $this->request($request, $cancellation);
     }
 
     /**
@@ -166,8 +167,12 @@ final class IcapClient implements IcapClientInterface
      * @throws \RuntimeException When the file cannot be opened
      */
     #[\Override]
-    public function scanFile(string $service, string $filePath, array $extraHeaders = []): Future
-    {
+    public function scanFile(
+        string $service,
+        string $filePath,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): Future {
         // Validate first so injection attempts never reach the socket.
         $this->validateIcapHeaders($extraHeaders);
         $uri = $this->buildServiceUri($service);
@@ -194,7 +199,7 @@ final class IcapClient implements IcapClientInterface
             encapsulatedResponse: $httpResponse,
         );
 
-        return $this->request($request);
+        return $this->request($request, $cancellation);
     }
 
     /**
@@ -212,6 +217,7 @@ final class IcapClient implements IcapClientInterface
         string $filePath,
         int $previewSize = 1024,
         array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
     ): Future {
         if ($previewSize < 1) {
             throw new \InvalidArgumentException('Preview size must be >= 1, got: ' . $previewSize);
@@ -220,7 +226,7 @@ final class IcapClient implements IcapClientInterface
 
         /** @var int<1, max> $previewSize */
         /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($service, $filePath, $previewSize, $extraHeaders): ScanResult {
+        $future = \Amp\async(function () use ($service, $filePath, $previewSize, $extraHeaders, $cancellation): ScanResult {
             $fileSize = filesize($filePath);
             if ($fileSize === false) {
                 throw new \RuntimeException('Unable to stat file: ' . $filePath);
@@ -266,7 +272,7 @@ final class IcapClient implements IcapClientInterface
             // Preview round: bypass interpretResponse() so a legitimate
             // 100 Continue from the server doesn't trip the fail-secure
             // guard that only applies outside preview context.
-            $previewIcapResponse = $this->executeRaw($previewRequest)->await();
+            $previewIcapResponse = $this->executeRaw($previewRequest, $cancellation)->await();
 
             if ($previewIsComplete) {
                 fclose($stream);
@@ -313,7 +319,7 @@ final class IcapClient implements IcapClientInterface
             );
 
             try {
-                return $this->request($fullRequest)->await();
+                return $this->request($fullRequest, $cancellation)->await();
             } finally {
                 fclose($stream);
             }

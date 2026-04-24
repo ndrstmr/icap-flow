@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Transport;
 
+use Amp\Cancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
@@ -46,13 +47,20 @@ final class SynchronousStreamTransport implements TransportInterface
      * @return \Amp\Future<string>
      */
     #[\Override]
-    public function request(Config $config, iterable $rawRequest): \Amp\Future
+    public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): \Amp\Future
     {
         if ($config->getTlsContext() !== null) {
             throw new IcapConnectionException(
                 'SynchronousStreamTransport does not support TLS; use AsyncAmpTransport for icaps://.',
             );
         }
+
+        // Cancellation is honoured opportunistically: we check it
+        // between read/write iterations. The blocking PHP stream API
+        // doesn't allow interrupting an in-flight syscall, so a hung
+        // server is still bounded only by stream_set_timeout(). The
+        // async transport gives true cancellation semantics.
+        $cancellation?->throwIfRequested();
 
         $errno = 0;
         $errstr = '';
@@ -74,6 +82,7 @@ final class SynchronousStreamTransport implements TransportInterface
             stream_set_timeout($stream, (int) $config->getStreamTimeout());
 
             foreach ($rawRequest as $chunk) {
+                $cancellation?->throwIfRequested();
                 if ($chunk !== '') {
                     fwrite($stream, $chunk);
                 }
@@ -83,6 +92,7 @@ final class SynchronousStreamTransport implements TransportInterface
             $response = '';
             $received = 0;
             while (!feof($stream)) {
+                $cancellation?->throwIfRequested();
                 $read = fread($stream, self::READ_CHUNK_SIZE);
                 if ($read === false || $read === '') {
                     break;

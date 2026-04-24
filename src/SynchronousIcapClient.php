@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap;
 
+use Amp\Cancellation;
 use Amp\Future;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\ScanResult;
@@ -60,29 +61,27 @@ final class SynchronousIcapClient
         return new self($asyncClient);
     }
 
-    /**
-     * @param IcapRequest $request
-     */
-    public function request(IcapRequest $request): ScanResult
+    public function request(IcapRequest $request, ?Cancellation $cancellation = null): ScanResult
     {
-        return $this->asyncClient->request($request)->await();
+        return $this->asyncClient->request($request, $cancellation)->await();
     }
 
-    /**
-     * @param string $service
-     */
-    public function options(string $service): ScanResult
+    public function options(string $service, ?Cancellation $cancellation = null): ScanResult
     {
-        return $this->asyncClient->options($service)->await();
+        return $this->asyncClient->options($service, $cancellation)->await();
     }
 
     /**
      * @param array<string, string|string[]> $extraHeaders
      * @throws \RuntimeException
      */
-    public function scanFile(string $service, string $filePath, array $extraHeaders = []): ScanResult
-    {
-        return $this->asyncClient->scanFile($service, $filePath, $extraHeaders)->await();
+    public function scanFile(
+        string $service,
+        string $filePath,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): ScanResult {
+        return $this->asyncClient->scanFile($service, $filePath, $extraHeaders, $cancellation)->await();
     }
 
     /**
@@ -94,7 +93,8 @@ final class SynchronousIcapClient
         string $filePath,
         int $previewSize = 1024,
         array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
     ): ScanResult {
-        return $this->asyncClient->scanFileWithPreview($service, $filePath, $previewSize, $extraHeaders)->await();
+        return $this->asyncClient->scanFileWithPreview($service, $filePath, $previewSize, $extraHeaders, $cancellation)->await();
     }
 }
