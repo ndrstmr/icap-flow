@@ -83,8 +83,18 @@ it('scans the EICAR test file against the ClamAV-backed service', function () {
     );
 
     try {
+        // c-icap reports infections in X-Violations-Found, not the
+        // ClamAV/Squid-style X-Virus-Name. Configure the multi-vendor
+        // virus-header list so the client recognises whichever header
+        // the server actually sends.
+        $config = (new Config($host, $port))->withVirusFoundHeaders([
+            'X-Virus-Name',
+            'X-Infection-Found',
+            'X-Violations-Found',
+            'X-Virus-ID',
+        ]);
         $client = new IcapClient(
-            new Config($host, $port),
+            $config,
             new \Ndrstmr\Icap\Transport\AsyncAmpTransport(),
             new \Ndrstmr\Icap\RequestFormatter(),
             new \Ndrstmr\Icap\ResponseParser(),
@@ -116,8 +126,14 @@ it('returns a clean verdict for a harmless text file', function () {
     file_put_contents($clean, "Lorem ipsum dolor sit amet.\n");
 
     try {
+        $config = (new Config($host, $port))->withVirusFoundHeaders([
+            'X-Virus-Name',
+            'X-Infection-Found',
+            'X-Violations-Found',
+            'X-Virus-ID',
+        ]);
         $client = new IcapClient(
-            new Config($host, $port),
+            $config,
             new \Ndrstmr\Icap\Transport\AsyncAmpTransport(),
             new \Ndrstmr\Icap\RequestFormatter(),
             new \Ndrstmr\Icap\ResponseParser(),
