@@ -16,6 +16,8 @@ use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 /**
  * Core asynchronous ICAP client used by the synchronous wrapper.
@@ -23,6 +25,7 @@ use Ndrstmr\Icap\Transport\TransportInterface;
 final class IcapClient implements IcapClientInterface
 {
     private PreviewStrategyInterface $previewStrategy;
+    private LoggerInterface $logger;
 
     public function __construct(
         private Config $config,
@@ -30,8 +33,10 @@ final class IcapClient implements IcapClientInterface
         private RequestFormatterInterface $formatter,
         private ResponseParserInterface $parser,
         ?PreviewStrategyInterface $previewStrategy = null,
+        ?LoggerInterface $logger = null,
     ) {
         $this->previewStrategy = $previewStrategy ?? new DefaultPreviewStrategy();
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
@@ -76,8 +81,33 @@ final class IcapClient implements IcapClientInterface
     {
         /** @var Future<ScanResult> $future */
         $future = \Amp\async(function () use ($request): ScanResult {
-            $response = $this->executeRaw($request)->await();
-            return $this->interpretResponse($response, $this->config);
+            $context = [
+                'method' => $request->method,
+                'uri'    => $request->uri,
+                'host'   => $this->config->host,
+                'port'   => $this->config->port,
+            ];
+            $this->logger->info('ICAP request started', $context);
+
+            $response = null;
+            try {
+                $response = $this->executeRaw($request)->await();
+                $result = $this->interpretResponse($response, $this->config);
+            } catch (\Throwable $e) {
+                $this->logger->warning('ICAP request failed', $context + [
+                    'statusCode' => $response?->statusCode,
+                    'exception'  => $e::class,
+                    'message'    => $e->getMessage(),
+                ]);
+                throw $e;
+            }
+
+            $this->logger->info('ICAP request completed', $context + [
+                'statusCode' => $response->statusCode,
+                'infected'   => $result->isInfected(),
+            ]);
+
+            return $result;
         });
 
         return $future;
@@ -120,8 +150,12 @@ final class IcapClient implements IcapClientInterface
      * @throws \RuntimeException When the file cannot be opened
      */
     #[\Override]
-    public function scanFile(string $service, string $filePath): Future
+    public function scanFile(string $service, string $filePath, array $extraHeaders = []): Future
     {
+        // Validate first so injection attempts never reach the socket.
+        $this->validateIcapHeaders($extraHeaders);
+        $uri = $this->buildServiceUri($service);
+
         $stream = fopen($filePath, 'rb');
         if ($stream === false) {
             throw new \RuntimeException('Unable to open file: ' . $filePath);
@@ -139,7 +173,8 @@ final class IcapClient implements IcapClientInterface
 
         $request = new IcapRequest(
             method: 'RESPMOD',
-            uri: $this->buildServiceUri($service),
+            uri: $uri,
+            headers: $extraHeaders,
             encapsulatedResponse: $httpResponse,
         );
 
@@ -156,15 +191,20 @@ final class IcapClient implements IcapClientInterface
      * @throws \RuntimeException When the file cannot be opened
      */
     #[\Override]
-    public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): Future
-    {
+    public function scanFileWithPreview(
+        string $service,
+        string $filePath,
+        int $previewSize = 1024,
+        array $extraHeaders = [],
+    ): Future {
         if ($previewSize < 1) {
             throw new \InvalidArgumentException('Preview size must be >= 1, got: ' . $previewSize);
         }
+        $this->validateIcapHeaders($extraHeaders);
 
         /** @var int<1, max> $previewSize */
         /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($service, $filePath, $previewSize): ScanResult {
+        $future = \Amp\async(function () use ($service, $filePath, $previewSize, $extraHeaders): ScanResult {
             $fileSize = filesize($filePath);
             if ($fileSize === false) {
                 throw new \RuntimeException('Unable to stat file: ' . $filePath);
@@ -191,13 +231,18 @@ final class IcapClient implements IcapClientInterface
                 body: $previewBytes,
             );
 
+            // Merge caller-supplied headers, but library-managed headers
+            // MUST win: letting the caller override Preview/Allow would
+            // put the protocol exchange into an inconsistent state.
+            $headers = $this->mergeHeaders($extraHeaders, [
+                'Preview' => [(string) $previewSize],
+                'Allow'   => ['204'],
+            ]);
+
             $previewRequest = new IcapRequest(
                 method: 'RESPMOD',
                 uri: $this->buildServiceUri($service),
-                headers: [
-                    'Preview' => [(string) $previewSize],
-                    'Allow'   => ['204'],
-                ],
+                headers: $headers,
                 encapsulatedResponse: $previewEnvelope,
                 previewIsComplete: $previewIsComplete,
             );
@@ -247,6 +292,7 @@ final class IcapClient implements IcapClientInterface
             $fullRequest = new IcapRequest(
                 method: 'RESPMOD',
                 uri: $this->buildServiceUri($service),
+                headers: $extraHeaders,
                 encapsulatedResponse: $fullResponse,
             );
 
@@ -346,7 +392,58 @@ final class IcapClient implements IcapClientInterface
 
     private function extractVirusName(IcapResponse $response, Config $config): ?string
     {
-        $header = $config->getVirusFoundHeader();
-        return $response->headers[$header][0] ?? null;
+        foreach ($config->getVirusFoundHeaders() as $header) {
+            if (isset($response->headers[$header][0])) {
+                return $response->headers[$header][0];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reject header names or values that contain CR/LF, NUL or would
+     * otherwise break the wire format. Finding H, applied to
+     * user-supplied ICAP headers in addition to the service path.
+     *
+     * @param array<string, string|string[]> $headers
+     */
+    private function validateIcapHeaders(array $headers): void
+    {
+        foreach ($headers as $name => $value) {
+            if (preg_match('/[\x00-\x1F\x7F:]/', $name) === 1) {
+                throw new \InvalidArgumentException(
+                    'ICAP header name contains control characters or separator: ' . var_export($name, true),
+                );
+            }
+            foreach ((array) $value as $v) {
+                if (preg_match('/[\x00\r\n]/', $v) === 1) {
+                    throw new \InvalidArgumentException(
+                        sprintf('ICAP header %s carries a value with CR/LF/NUL; refusing to send.', $name),
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Merge caller-supplied headers with library-managed headers. The
+     * library-managed map always wins, keeping protocol-critical
+     * headers (Preview, Allow, Encapsulated, Host) out of caller
+     * control.
+     *
+     * @param  array<string, string|string[]> $caller
+     * @param  array<string, string[]>        $managed
+     * @return array<string, string[]>
+     */
+    private function mergeHeaders(array $caller, array $managed): array
+    {
+        $merged = [];
+        foreach ($caller as $name => $value) {
+            $merged[$name] = (array) $value;
+        }
+        foreach ($managed as $name => $value) {
+            $merged[$name] = $value;
+        }
+        return $merged;
     }
 }

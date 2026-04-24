@@ -61,18 +61,24 @@ final class SynchronousIcapClient
     }
 
     /**
+     * @param array<string, string|string[]> $extraHeaders
      * @throws \RuntimeException
      */
-    public function scanFile(string $service, string $filePath): ScanResult
+    public function scanFile(string $service, string $filePath, array $extraHeaders = []): ScanResult
     {
-        return $this->asyncClient->scanFile($service, $filePath)->await();
+        return $this->asyncClient->scanFile($service, $filePath, $extraHeaders)->await();
     }
 
     /**
+     * @param array<string, string|string[]> $extraHeaders
      * @throws \RuntimeException
      */
-    public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): ScanResult
-    {
-        return $this->asyncClient->scanFileWithPreview($service, $filePath, $previewSize)->await();
+    public function scanFileWithPreview(
+        string $service,
+        string $filePath,
+        int $previewSize = 1024,
+        array $extraHeaders = [],
+    ): ScanResult {
+        return $this->asyncClient->scanFileWithPreview($service, $filePath, $previewSize, $extraHeaders)->await();
     }
 }

@@ -61,7 +61,7 @@ it('scanFile delegates correctly to async client', function () {
     $result = new ScanResult(false, null, $response);
     /** @var \Mockery\Expectation $exp */
     $exp = $async->shouldReceive('scanFile');
-    $exp->with('/service', '/tmp/file');
+    $exp->with('/service', '/tmp/file', []);
     $exp->once();
     $exp->andReturn(\Amp\Future::complete($result));
 
@@ -101,7 +101,7 @@ it('it handles and rethrows exceptions from async client', function () {
     $exception = new \Ndrstmr\Icap\Exception\IcapConnectionException('fail');
     /** @var \Mockery\Expectation $exp */
     $exp = $async->shouldReceive('scanFile');
-    $exp->with('/service', '/tmp/file');
+    $exp->with('/service', '/tmp/file', []);
     $exp->once();
     $exp->andReturn(\Amp\Future::error($exception));
 

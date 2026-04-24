@@ -22,7 +22,8 @@ final readonly class IcapRequest
     /**
      * @param string                  $method               ICAP method (OPTIONS, REQMOD, RESPMOD)
      * @param string                  $uri                  Fully-qualified ICAP URI, e.g. icap://host:1344/service
-     * @param array<string, string[]> $headers              ICAP headers (Host is filled in from $uri when missing)
+     * @param array<string, string|string[]> $headers       ICAP headers (Host is filled in from $uri when missing);
+     *                                                       scalar values are promoted to a one-element list
      * @param HttpRequest|null        $encapsulatedRequest  Encapsulated HTTP request (REQMOD)
      * @param HttpResponse|null       $encapsulatedResponse Encapsulated HTTP response (RESPMOD)
      * @param bool                    $previewIsComplete    When true, the body attached to the encapsulated HTTP
