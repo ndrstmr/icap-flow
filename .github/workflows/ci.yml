@@ -79,13 +79,24 @@ jobs:
         run: docker compose up -d
 
       - name: Wait for icap-clamav readiness
+        # A plain `nc -z` is not enough: the mnemoshare image opens
+        # the TCP port early (freshclam bootstrap) but the actual
+        # c-icap daemon only answers ICAP once the ClamAV signature
+        # database has finished downloading — which takes 30–120 s
+        # on a fresh image. Poll with a real OPTIONS probe and
+        # require `ICAP/1.0` to appear in the response.
         run: |
           for i in $(seq 1 60); do
-            if nc -z 127.0.0.1 1344; then echo "icap-clamav ready"; exit 0; fi
+            response=$(printf 'OPTIONS icap://127.0.0.1/squidclamav ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
+              | timeout 3 nc 127.0.0.1 1344 2>/dev/null | head -1)
+            if echo "$response" | grep -q 'ICAP/1'; then
+              echo "icap-clamav ready after ${i} attempts — $response"
+              exit 0
+            fi
             sleep 5
           done
-          echo "icap-clamav did not become ready in time" >&2
-          docker compose logs icap-clamav
+          echo "icap-clamav did not answer ICAP within ~5 min" >&2
+          docker compose logs icap-clamav | tail -100
           exit 1
 
       - name: Run integration tests (ClamAV)
