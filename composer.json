@@ -11,8 +11,9 @@
     }
   ],
   "require": {
-    "php": ">=8.3",
-    "amphp/socket": "^2.3"
+    "php": "^8.4",
+    "amphp/socket": "^2.3",
+    "revolt/event-loop": "^1.0"
   },
   "require-dev": {
     "friendsofphp/php-cs-fixer": "^3.75",
@@ -40,7 +41,7 @@
   "config": {
     "sort-packages": true,
     "platform": {
-      "php": "8.3.0"
+      "php": "8.4.0"
     },
     "allow-plugins": {
       "pestphp/pest-plugin": true

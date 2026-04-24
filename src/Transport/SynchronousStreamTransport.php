@@ -10,11 +10,12 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
 /**
  * Simple blocking transport using PHP stream sockets.
  */
-class SynchronousStreamTransport implements TransportInterface
+final class SynchronousStreamTransport implements TransportInterface
 {
     /**
      * @return \Amp\Future<string>
      */
+    #[\Override]
     public function request(Config $config, string $rawRequest): \Amp\Future
     {
         $errno = 0;

@@ -11,13 +11,14 @@ use Ndrstmr\Icap\Exception\IcapResponseException;
  * Parses raw ICAP responses into IcapResponse objects.
  */
 
-class ResponseParser implements ResponseParserInterface
+final class ResponseParser implements ResponseParserInterface
 {
     /**
      * @param string $rawResponse
      *
      * @throws IcapResponseException
      */
+    #[\Override]
     public function parse(string $rawResponse): IcapResponse
     {
         $parts = preg_split("/\r?\n\r?\n/", $rawResponse, 2);

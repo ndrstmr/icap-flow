@@ -18,12 +18,12 @@ use Ndrstmr\Icap\DefaultPreviewStrategy;
  */
 final class SynchronousIcapClient
 {
-    private IcapClient $asyncClient;
+    private IcapClientInterface $asyncClient;
 
     /**
-     * @param IcapClient $asyncClient Underlying asynchronous client
+     * @param IcapClientInterface $asyncClient Underlying asynchronous client
      */
-    public function __construct(IcapClient $asyncClient)
+    public function __construct(IcapClientInterface $asyncClient)
     {
         $this->asyncClient = $asyncClient;
     }
