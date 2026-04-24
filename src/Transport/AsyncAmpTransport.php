@@ -20,6 +20,7 @@ final class AsyncAmpTransport implements TransportInterface
     /**
      * @return \Amp\Future<string>
      */
+    #[\Override]
     public function request(Config $config, string $rawRequest): \Amp\Future
     {
         /** @var \Amp\Future<string> $future */

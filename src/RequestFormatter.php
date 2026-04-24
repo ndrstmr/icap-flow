@@ -9,11 +9,12 @@ use Ndrstmr\Icap\DTO\IcapRequest;
 /**
  * Default implementation converting an {@link IcapRequest} into a raw string.
  */
-class RequestFormatter implements RequestFormatterInterface
+final class RequestFormatter implements RequestFormatterInterface
 {
     /**
      * @param IcapRequest $request
      */
+    #[\Override]
     public function format(IcapRequest $request): string
     {
         $parts = parse_url($request->uri);

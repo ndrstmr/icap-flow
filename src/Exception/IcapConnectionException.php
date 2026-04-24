@@ -9,6 +9,6 @@ use RuntimeException;
 /**
  * Thrown when a connection to the ICAP server cannot be established.
  */
-class IcapConnectionException extends RuntimeException
+final class IcapConnectionException extends RuntimeException implements IcapExceptionInterface
 {
 }

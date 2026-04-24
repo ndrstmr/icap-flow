@@ -22,7 +22,7 @@ use Ndrstmr\Icap\DefaultPreviewStrategy;
 /**
  * Core asynchronous ICAP client used by the synchronous wrapper.
  */
-class IcapClient
+final class IcapClient implements IcapClientInterface
 {
     /**
      * @param Config                       $config          Connection configuration
@@ -71,6 +71,7 @@ class IcapClient
      * @param IcapRequest $request
      * @return Future<ScanResult>
      */
+    #[\Override]
     public function request(IcapRequest $request): Future
     {
         /** @var Future<ScanResult> $future */
@@ -92,6 +93,7 @@ class IcapClient
      * @param string $service
      * @return Future<ScanResult>
      */
+    #[\Override]
     public function options(string $service): Future
     {
         $uri = sprintf('icap://%s%s', $this->config->host, $service);
@@ -107,6 +109,7 @@ class IcapClient
      * @return Future<ScanResult>
      * @throws \RuntimeException When the file cannot be opened
      */
+    #[\Override]
     public function scanFile(string $service, string $filePath): Future
     {
         $stream = fopen($filePath, 'r');
@@ -127,6 +130,7 @@ class IcapClient
      * @return Future<ScanResult>
      * @throws \RuntimeException When the file cannot be read
      */
+    #[\Override]
     public function scanFileWithPreview(string $service, string $filePath, int $previewSize = 1024): Future
     {
         /** @var Future<ScanResult> $future */

@@ -5,6 +5,7 @@ use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\IcapClientInterface;
 use Ndrstmr\Icap\SynchronousIcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParserInterface;
@@ -54,8 +55,8 @@ it('delegates calls to the async client and blocks for results', function () {
 });
 
 it('scanFile delegates correctly to async client', function () {
-    /** @var IcapClient&\Mockery\MockInterface $async */
-    $async = m::mock(IcapClient::class);
+    /** @var IcapClientInterface&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClientInterface::class);
     $response = new IcapResponse(201);
     $result = new ScanResult(false, null, $response);
     /** @var \Mockery\Expectation $exp */
@@ -74,8 +75,8 @@ it('scanFile delegates correctly to async client', function () {
 });
 
 it('request delegates correctly to async client', function () {
-    /** @var IcapClient&\Mockery\MockInterface $async */
-    $async = m::mock(IcapClient::class);
+    /** @var IcapClientInterface&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClientInterface::class);
     $req = new \Ndrstmr\Icap\DTO\IcapRequest('OPTIONS', 'icap://icap.example');
     $response = new IcapResponse(200);
     $result = new ScanResult(false, null, $response);
@@ -95,8 +96,8 @@ it('request delegates correctly to async client', function () {
 });
 
 it('it handles and rethrows exceptions from async client', function () {
-    /** @var IcapClient&\Mockery\MockInterface $async */
-    $async = m::mock(IcapClient::class);
+    /** @var IcapClientInterface&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClientInterface::class);
     $exception = new \Ndrstmr\Icap\Exception\IcapConnectionException('fail');
     /** @var \Mockery\Expectation $exp */
     $exp = $async->shouldReceive('scanFile');
