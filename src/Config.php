@@ -16,28 +16,37 @@ final readonly class Config
     private const int DEFAULT_MAX_HEADER_COUNT = 100;
     private const int DEFAULT_MAX_HEADER_LINE = 8192;
 
+    /** @var list<string> */
+    private array $virusFoundHeaders;
+
     /**
-     * @param string                $host               Hostname or IP of the ICAP server
-     * @param int                   $port               TCP port, defaults to 1344 (11344 is the common TLS port)
-     * @param float                 $socketTimeout      Timeout in seconds for establishing the connection
-     * @param float                 $streamTimeout      Timeout in seconds for reading/writing
-     * @param string                $virusFoundHeader   Header name inspected for an infection signal (default X-Virus-Name)
-     * @param ClientTlsContext|null $tlsContext         When set, the async transport upgrades the connection to TLS (icaps://)
-     * @param int                   $maxResponseSize    DoS ceiling for total bytes accepted from a single ICAP response
-     * @param int                   $maxHeaderCount     DoS ceiling for total header lines in the ICAP head block
+     * @param string                $host                Hostname or IP of the ICAP server
+     * @param int                   $port                TCP port, defaults to 1344 (11344 is the common TLS port)
+     * @param float                 $socketTimeout       Timeout in seconds for establishing the connection
+     * @param float                 $streamTimeout       Timeout in seconds for reading/writing
+     * @param string                $virusFoundHeader    Legacy single virus header (back-compat). The client now
+     *                                                   consults a list; this value seeds it when
+     *                                                   $virusFoundHeaders is null.
+     * @param ClientTlsContext|null $tlsContext          When set, the async transport upgrades the connection to TLS (icaps://)
+     * @param int                   $maxResponseSize     DoS ceiling for total bytes accepted from a single ICAP response
+     * @param int                   $maxHeaderCount      DoS ceiling for total header lines in the ICAP head block
      * @param int                   $maxHeaderLineLength DoS ceiling for a single header line length (bytes)
+     * @param list<string>|null     $virusFoundHeaders   Ordered list of vendor virus-name headers;
+     *                                                   null falls back to [$virusFoundHeader].
      */
     public function __construct(
         public string $host,
         public int $port = 1344,
         private float $socketTimeout = 10.0,
         private float $streamTimeout = 10.0,
-        private string $virusFoundHeader = 'X-Virus-Name',
+        string $virusFoundHeader = 'X-Virus-Name',
         private ?ClientTlsContext $tlsContext = null,
         private int $maxResponseSize = self::DEFAULT_MAX_RESPONSE_SIZE,
         private int $maxHeaderCount = self::DEFAULT_MAX_HEADER_COUNT,
         private int $maxHeaderLineLength = self::DEFAULT_MAX_HEADER_LINE,
+        ?array $virusFoundHeaders = null,
     ) {
+        $this->virusFoundHeaders = $virusFoundHeaders ?? [$virusFoundHeader];
     }
 
     public function getSocketTimeout(): float
@@ -51,27 +60,54 @@ final readonly class Config
     }
 
     /**
-     * Header the ICAP server uses to report an infection. Defaults to
-     * the de-facto standard `X-Virus-Name`; c-icap, ClamAV, Sophos and
-     * Kaspersky use it verbatim.
+     * Legacy accessor — returns the first configured virus header.
+     * Prefer {@see getVirusFoundHeaders()} for new code; this method
+     * stays for back-compat with v1 callers.
      */
     public function getVirusFoundHeader(): string
     {
-        return $this->virusFoundHeader;
+        return $this->virusFoundHeaders[0];
+    }
+
+    /**
+     * Ordered list of ICAP headers inspected for infection signals.
+     * The first header that is present in the server's response wins.
+     * Different vendors use different headers — c-icap / ClamAV use
+     * `X-Virus-Name`; Trend Micro reports via `X-Violations-Found`,
+     * ISS Proventia via `X-Infection-Found`, Symantec via `X-Virus-ID`.
+     *
+     * @return list<string>
+     */
+    public function getVirusFoundHeaders(): array
+    {
+        return $this->virusFoundHeaders;
     }
 
     public function withVirusFoundHeader(string $headerName): self
     {
+        return $this->withVirusFoundHeaders([$headerName]);
+    }
+
+    /**
+     * @param list<string> $headerNames
+     */
+    public function withVirusFoundHeaders(array $headerNames): self
+    {
+        if ($headerNames === []) {
+            throw new \InvalidArgumentException('virusFoundHeaders must contain at least one header name.');
+        }
+
         return new self(
-            $this->host,
-            $this->port,
-            $this->socketTimeout,
-            $this->streamTimeout,
-            $headerName,
-            $this->tlsContext,
-            $this->maxResponseSize,
-            $this->maxHeaderCount,
-            $this->maxHeaderLineLength,
+            host: $this->host,
+            port: $this->port,
+            socketTimeout: $this->socketTimeout,
+            streamTimeout: $this->streamTimeout,
+            virusFoundHeader: $headerNames[0],
+            tlsContext: $this->tlsContext,
+            maxResponseSize: $this->maxResponseSize,
+            maxHeaderCount: $this->maxHeaderCount,
+            maxHeaderLineLength: $this->maxHeaderLineLength,
+            virusFoundHeaders: $headerNames,
         );
     }
 
@@ -88,15 +124,16 @@ final readonly class Config
     public function withTlsContext(?ClientTlsContext $tlsContext): self
     {
         return new self(
-            $this->host,
-            $this->port,
-            $this->socketTimeout,
-            $this->streamTimeout,
-            $this->virusFoundHeader,
-            $tlsContext,
-            $this->maxResponseSize,
-            $this->maxHeaderCount,
-            $this->maxHeaderLineLength,
+            host: $this->host,
+            port: $this->port,
+            socketTimeout: $this->socketTimeout,
+            streamTimeout: $this->streamTimeout,
+            virusFoundHeader: $this->virusFoundHeaders[0],
+            tlsContext: $tlsContext,
+            maxResponseSize: $this->maxResponseSize,
+            maxHeaderCount: $this->maxHeaderCount,
+            maxHeaderLineLength: $this->maxHeaderLineLength,
+            virusFoundHeaders: $this->virusFoundHeaders,
         );
     }
 
@@ -135,15 +172,16 @@ final readonly class Config
         }
 
         return new self(
-            $this->host,
-            $this->port,
-            $this->socketTimeout,
-            $this->streamTimeout,
-            $this->virusFoundHeader,
-            $this->tlsContext,
-            $maxResponseSize ?? $this->maxResponseSize,
-            $maxHeaderCount ?? $this->maxHeaderCount,
-            $maxHeaderLineLength ?? $this->maxHeaderLineLength,
+            host: $this->host,
+            port: $this->port,
+            socketTimeout: $this->socketTimeout,
+            streamTimeout: $this->streamTimeout,
+            virusFoundHeader: $this->virusFoundHeaders[0],
+            tlsContext: $this->tlsContext,
+            maxResponseSize: $maxResponseSize ?? $this->maxResponseSize,
+            maxHeaderCount: $maxHeaderCount ?? $this->maxHeaderCount,
+            maxHeaderLineLength: $maxHeaderLineLength ?? $this->maxHeaderLineLength,
+            virusFoundHeaders: $this->virusFoundHeaders,
         );
     }
 }
