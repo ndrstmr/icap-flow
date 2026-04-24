@@ -15,6 +15,18 @@ use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
  */
 final class ResponseParser implements ResponseParserInterface
 {
+    private const int DEFAULT_MAX_HEADER_COUNT = 100;
+    private const int DEFAULT_MAX_HEADER_LINE = 8192;
+
+    public function __construct(
+        private readonly int $maxHeaderCount = self::DEFAULT_MAX_HEADER_COUNT,
+        private readonly int $maxHeaderLineLength = self::DEFAULT_MAX_HEADER_LINE,
+    ) {
+        if ($maxHeaderCount < 1 || $maxHeaderLineLength < 1) {
+            throw new \InvalidArgumentException('Parser limits must be >= 1');
+        }
+    }
+
     #[\Override]
     public function parse(string $rawResponse): IcapResponse
     {
@@ -29,6 +41,21 @@ final class ResponseParser implements ResponseParserInterface
         $lines = preg_split('/\r?\n/', $head);
         if ($lines === false || count($lines) === 0) {
             throw new IcapMalformedResponseException('Invalid ICAP response: no lines');
+        }
+
+        // +1 for the status line itself.
+        if (count($lines) > $this->maxHeaderCount + 1) {
+            throw new IcapMalformedResponseException(
+                sprintf('ICAP response exceeded max header count (%d).', $this->maxHeaderCount),
+            );
+        }
+
+        foreach ($lines as $line) {
+            if (strlen($line) > $this->maxHeaderLineLength) {
+                throw new IcapMalformedResponseException(
+                    sprintf('ICAP response header exceeded max line length (%d).', $this->maxHeaderLineLength),
+                );
+            }
         }
 
         $statusLine = array_shift($lines);
