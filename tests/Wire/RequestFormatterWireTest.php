@@ -38,6 +38,7 @@ it('formats an OPTIONS request with null-body=0 (RFC 3507 ยง4.10)', function () 
     $expected = "OPTIONS icap://icap.example.net/service ICAP/1.0\r\n"
         . "Host: icap.example.net\r\n"
         . "User-Agent: icap-flow/2.0\r\n"
+        . "Connection: close\r\n"
         . "Encapsulated: null-body=0\r\n"
         . "\r\n";
 
@@ -72,6 +73,7 @@ it('formats a RESPMOD request with encapsulated HTTP response and chunked body (
 
     $expected = "RESPMOD icap://icap.example.net/scan ICAP/1.0\r\n"
         . "Host: icap.example.net\r\n"
+        . "Connection: close\r\n"
         . "Encapsulated: res-hdr=0, res-body={$resBodyOffset}\r\n"
         . "\r\n"
         . $httpHeaderBlock
@@ -109,6 +111,7 @@ it('formats a REQMOD with encapsulated HTTP request and chunked body (RFC 3507 ย
 
     $expected = "REQMOD icap://icap.example.net/scan ICAP/1.0\r\n"
         . "Host: icap.example.net\r\n"
+        . "Connection: close\r\n"
         . "Encapsulated: req-hdr=0, req-body={$reqBodyOffset}\r\n"
         . "\r\n"
         . $httpHeaderBlock
@@ -150,6 +153,7 @@ it('emits 0; ieof\\r\\n\\r\\n when the preview body is the complete payload (RFC
     $expected = "RESPMOD icap://icap.example.net/scan ICAP/1.0\r\n"
         . "Host: icap.example.net\r\n"
         . "Preview: 5\r\n"
+        . "Connection: close\r\n"
         . "Encapsulated: res-hdr=0, res-body={$resBodyOffset}\r\n"
         . "\r\n"
         . $httpHeaderBlock
