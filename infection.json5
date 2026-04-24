@@ -16,10 +16,12 @@
     // transports and preview continuation paths.
     minMsi: 65,
     minCoveredMsi: 75,
-    // Pest drives the underlying PHPUnit runner — tell Infection which
-    // framework binary to call.
-    testFramework: "pest",
-    testFrameworkOptions: "--no-coverage",
+    // Pest 3 generates PHPUnit-compatible test classes at runtime, so
+    // Infection drives the underlying PHPUnit runner. The
+    // testFrameworkOptions restrict execution to the Unit suite so
+    // mutants don't exercise the skip-on-missing-env Integration tests.
+    testFramework: "phpunit",
+    testFrameworkOptions: "--testsuite=Unit",
     mutators: {
         "@default": true,
     },
