@@ -1,47 +1,33 @@
 # Integration-test fixture for icap-flow.
 #
-# Two services are provided:
-#   * icap-echo    — c-icap with its built-in srv_echo module, used to
-#                    verify wire-format correctness (fast start, no AV
-#                    signatures required).
-#   * icap-clamav  — c-icap + squidclamav + ClamAV for real virus
-#                    detection (EICAR signature must be downloaded on
-#                    first boot, so this service is slower to become
-#                    healthy).
+# A single ClamAV+ICAP service is sufficient for all smoke scenarios
+# we currently have — OPTIONS round-trip, EICAR detection, clean-file
+# verdict. More specialised fixtures (pure c-icap SrvEcho, Squid,
+# vendor-specific stacks) can be added under separate compose
+# profiles in a follow-up.
 #
 # Usage:
 #   docker compose up -d
 #   ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
-#   ICAP_ECHO_SERVICE=/echo \
+#   ICAP_ECHO_SERVICE=/squidclamav \
 #   ICAP_CLAMAV_SERVICE=/squidclamav \
 #       composer test:integration
 #
-# Services are deliberately pinned to image digests on CI to avoid
-# surprise upstream changes; locally `docker compose pull` keeps them
-# current.
+# The image is pinned to an exact minor tag. `docker compose pull`
+# locally picks up newer tags; CI stays on the pin so the test run is
+# reproducible across time.
 
 services:
-  icap-echo:
-    image: toolarium/c-icap:0.5.10
-    container_name: icap-flow-echo
-    ports:
-      - "1344:1344"
-    healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "1344"]
-      interval: 5s
-      timeout: 2s
-      retries: 12
-
   icap-clamav:
-    image: deepdiver1975/icap-clamav-service:latest
+    image: mnemoshare/clamav-icap:0.14.5
     container_name: icap-flow-clamav
     ports:
-      - "11344:1344"
-    # First boot downloads the signature database (~200 MB); allow
-    # plenty of room before marking the service unhealthy.
+      - "1344:1344"
+    # First boot downloads the ClamAV signature database (~200 MB);
+    # allow several minutes before marking the container unhealthy.
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "1344"]
+      test: ["CMD", "sh", "-c", "ss -lnt | grep -q :1344 || netstat -lnt 2>/dev/null | grep -q :1344"]
       interval: 10s
       timeout: 3s
       retries: 60
-      start_period: 120s
+      start_period: 180s

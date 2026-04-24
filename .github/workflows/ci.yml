@@ -78,31 +78,21 @@ jobs:
       - name: Start ICAP services
         run: docker compose up -d
 
-      - name: Wait for icap-echo readiness
-        run: |
-          for i in $(seq 1 24); do
-            if nc -z 127.0.0.1 1344; then echo "icap-echo ready"; exit 0; fi
-            sleep 5
-          done
-          echo "icap-echo did not become ready in time" >&2
-          docker compose logs icap-echo
-          exit 1
-
       - name: Wait for icap-clamav readiness
         run: |
           for i in $(seq 1 60); do
-            if nc -z 127.0.0.1 11344; then echo "icap-clamav ready"; exit 0; fi
+            if nc -z 127.0.0.1 1344; then echo "icap-clamav ready"; exit 0; fi
             sleep 5
           done
           echo "icap-clamav did not become ready in time" >&2
           docker compose logs icap-clamav
           exit 1
 
-      - name: Run integration tests (echo + ClamAV)
+      - name: Run integration tests (ClamAV)
         env:
           ICAP_HOST: 127.0.0.1
           ICAP_PORT: 1344
-          ICAP_ECHO_SERVICE: /echo
+          ICAP_ECHO_SERVICE: /squidclamav
           ICAP_CLAMAV_SERVICE: /squidclamav
         run: composer test:integration
 
