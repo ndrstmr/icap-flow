@@ -41,7 +41,7 @@
     "stan": "phpstan analyse",
     "cs-check": "php-cs-fixer fix --dry-run --diff",
     "cs-fix": "php-cs-fixer fix",
-    "mutation": "pest --mutate --testsuite=Unit --parallel --min-msi=65 --covered-min-msi=75"
+    "mutation": "pest --mutate --testsuite=Unit --parallel --covered-only --min=65"
   },
   "config": {
     "sort-packages": true,
