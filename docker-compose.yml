@@ -1,0 +1,47 @@
+# Integration-test fixture for icap-flow.
+#
+# Two services are provided:
+#   * icap-echo    — c-icap with its built-in srv_echo module, used to
+#                    verify wire-format correctness (fast start, no AV
+#                    signatures required).
+#   * icap-clamav  — c-icap + squidclamav + ClamAV for real virus
+#                    detection (EICAR signature must be downloaded on
+#                    first boot, so this service is slower to become
+#                    healthy).
+#
+# Usage:
+#   docker compose up -d
+#   ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
+#   ICAP_ECHO_SERVICE=/echo \
+#   ICAP_CLAMAV_SERVICE=/squidclamav \
+#       composer test:integration
+#
+# Services are deliberately pinned to image digests on CI to avoid
+# surprise upstream changes; locally `docker compose pull` keeps them
+# current.
+
+services:
+  icap-echo:
+    image: toolarium/c-icap:0.5.10
+    container_name: icap-flow-echo
+    ports:
+      - "1344:1344"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "1344"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+
+  icap-clamav:
+    image: deepdiver1975/icap-clamav-service:latest
+    container_name: icap-flow-clamav
+    ports:
+      - "11344:1344"
+    # First boot downloads the signature database (~200 MB); allow
+    # plenty of room before marking the service unhealthy.
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "1344"]
+      interval: 10s
+      timeout: 3s
+      retries: 60
+      start_period: 120s

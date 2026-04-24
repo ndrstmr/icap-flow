@@ -18,10 +18,12 @@
   },
   "require-dev": {
     "friendsofphp/php-cs-fixer": "^3.75",
+    "infection/infection": "^0.29",
     "mockery/mockery": "^1.6",
     "pestphp/pest": "^3.8",
-    "phpstan/phpstan": "^1.11",
-    "phpunit/phpunit": "^11.2"
+    "phpstan/phpstan": "^2.1",
+    "phpunit/phpunit": "^11.2",
+    "roave/security-advisories": "dev-latest"
   },
   "autoload": {
     "psr-4": {
@@ -34,10 +36,13 @@
     }
   },
   "scripts": {
-    "test": "pest",
+    "test": "pest --testsuite=Unit",
+    "test:integration": "pest --testsuite=Integration",
+    "test:all": "pest",
     "stan": "phpstan analyse",
     "cs-check": "php-cs-fixer fix --dry-run --diff",
-    "cs-fix": "php-cs-fixer fix"
+    "cs-fix": "php-cs-fixer fix",
+    "mutation": "infection --threads=max --min-msi=65 --min-covered-msi=75"
   },
   "config": {
     "sort-packages": true,
@@ -45,7 +50,8 @@
       "php": "8.4.0"
     },
     "allow-plugins": {
-      "pestphp/pest-plugin": true
+      "pestphp/pest-plugin": true,
+      "infection/extension-installer": true
     }
   }
 }

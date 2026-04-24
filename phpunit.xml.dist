@@ -2,10 +2,18 @@
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="./vendor/phpunit/phpunit/phpunit.xsd"
          bootstrap="vendor/autoload.php"
-         colors="true">
+         colors="true"
+         beStrictAboutCoverageMetadata="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="false"
+         failOnWarning="false">
     <testsuites>
-        <testsuite name="Test Suite">
+        <testsuite name="Unit">
             <directory suffix="Test.php">./tests</directory>
+            <exclude>./tests/Integration</exclude>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory suffix="Test.php">./tests/Integration</directory>
         </testsuite>
     </testsuites>
 
@@ -14,9 +22,11 @@
             <directory suffix=".php">./src</directory>
         </include>
     </source>
-    <coverage>
+    <coverage includeUncoveredFiles="true">
         <report>
             <html outputDirectory="build/coverage-html"/>
+            <clover outputFile="build/coverage.xml"/>
+            <text outputFile="php://stdout" showUncoveredFiles="false" showOnlySummary="true"/>
         </report>
     </coverage>
 </phpunit>

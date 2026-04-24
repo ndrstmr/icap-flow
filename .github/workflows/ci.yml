@@ -1,6 +1,5 @@
 name: IcapFlow CI, Quality & Deployment
 
-# Trigger für den Workflow
 on:
   push:
     branches:
@@ -10,14 +9,15 @@ on:
       - main
 
 jobs:
-  # Job 1: Führt alle Qualitäts-Checks und Tests aus
+  # Unit tests + static analysis + coverage, run against every
+  # supported PHP version.
   quality-and-tests:
     name: PHP ${{ matrix.php-version }} Quality Checks
     runs-on: ubuntu-latest
     strategy:
-      # Teste immer gegen mehrere PHP-Versionen
       matrix:
         php-version: ['8.4', '8.5']
+      fail-fast: false
 
     steps:
       - name: Checkout code
@@ -42,45 +42,130 @@ jobs:
       - name: Run static analysis
         run: composer stan
 
-      - name: Run tests and generate coverage report
-        # Führt Tests aus und generiert den Report im Hintergrund
+      - name: Run unit tests with coverage
         run: composer test -- --coverage
 
-      # Speichere den Coverage-Report als Artefakt, damit der nächste Job ihn verwenden kann
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report-php-${{ matrix.php-version }}
           path: build/coverage-html/
 
-  # Job 2: Veröffentlicht den Coverage-Report (nur nach Erfolg von Job 1)
+  # Integration tests against a real c-icap + ClamAV stack spun up via
+  # docker-compose. Runs only on PHP 8.4 (the integration contract is
+  # version-agnostic) to keep CI cost bounded.
+  integration:
+    name: Integration tests (c-icap + ClamAV)
+    runs-on: ubuntu-latest
+    needs: quality-and-tests
+    # Don't fail the whole workflow if the public image for c-icap or
+    # ClamAV is flaky — we'll know from the step status.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: sockets
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Start ICAP services
+        run: docker compose up -d
+
+      - name: Wait for icap-echo readiness
+        run: |
+          for i in $(seq 1 24); do
+            if nc -z 127.0.0.1 1344; then echo "icap-echo ready"; exit 0; fi
+            sleep 5
+          done
+          echo "icap-echo did not become ready in time" >&2
+          docker compose logs icap-echo
+          exit 1
+
+      - name: Wait for icap-clamav readiness
+        run: |
+          for i in $(seq 1 60); do
+            if nc -z 127.0.0.1 11344; then echo "icap-clamav ready"; exit 0; fi
+            sleep 5
+          done
+          echo "icap-clamav did not become ready in time" >&2
+          docker compose logs icap-clamav
+          exit 1
+
+      - name: Run integration tests (echo + ClamAV)
+        env:
+          ICAP_HOST: 127.0.0.1
+          ICAP_PORT: 1344
+          ICAP_ECHO_SERVICE: /echo
+          ICAP_CLAMAV_SERVICE: /squidclamav
+        run: composer test:integration
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Shut services down
+        if: always()
+        run: docker compose down -v
+
+  # Mutation testing — informational for now, ratchet the gate in
+  # composer.json as the test suite grows. Flagged continue-on-error
+  # so flakes don't block merges while we're still building the
+  # integration baseline.
+  mutation:
+    name: Mutation testing (Infection)
+    runs-on: ubuntu-latest
+    needs: quality-and-tests
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.4
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: sockets
+          coverage: pcov
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Run Infection
+        run: composer mutation
+
+      - name: Upload Infection log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infection-log
+          path: build/infection.log
+
   deploy-coverage:
     name: Deploy Coverage Report
-    # Dieser Job ist abhängig vom Erfolg des vorherigen Jobs
     needs: quality-and-tests
-    # WICHTIG: Führe diesen Job NUR bei einem Push auf den main-Branch aus, nicht bei Pull Requests
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-
-    # Erforderliche Berechtigung, um auf den gh-pages Branch zu pushen
     permissions:
       contents: write
 
     steps:
-      # Lade den Report herunter, der im vorherigen Job erstellt wurde
       - name: Download coverage artifact
         uses: actions/download-artifact@v4
         with:
-          # Wir nehmen nur den Report von der neuesten PHP-Version, da sie identisch sein sollten
           name: coverage-report-php-8.5
 
-      # Deploye den heruntergeladenen Ordner nach GitHub Pages
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Der Ordnername nach dem Download ist einfach der Artefaktname,
-          # wir müssen den Inhalt direkt veröffentlichen.
           publish_dir: ./
           publish_branch: gh-pages
           force_orphan: true

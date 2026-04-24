@@ -1,0 +1,26 @@
+{
+    $schema: "vendor/infection/infection/resources/schema.json",
+    source: {
+        directories: [
+            "src",
+        ],
+    },
+    timeout: 30,
+    logs: {
+        text: "build/infection.log",
+        summary: "build/infection-summary.log",
+    },
+    // MSI (Mutation Score Indicator) gates — values are conservative for
+    // the initial introduction; they can be ratcheted up in M4.5-follow-up
+    // once the integration suite lands and adds coverage for the
+    // transports and preview continuation paths.
+    minMsi: 65,
+    minCoveredMsi: 75,
+    // Pest drives the underlying PHPUnit runner — tell Infection which
+    // framework binary to call.
+    testFramework: "pest",
+    testFrameworkOptions: "--no-coverage",
+    mutators: {
+        "@default": true,
+    },
+}

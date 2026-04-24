@@ -35,8 +35,10 @@ it('catches every concrete ICAP exception via the marker interface', function ()
 });
 
 it('places malformed responses under the protocol exception', function () {
-    expect(fn () => throw new IcapMalformedResponseException('invalid status line'))
-        ->toThrow(IcapProtocolException::class, 'invalid status line');
+    $thrower = function (): never {
+        throw new IcapMalformedResponseException('invalid status line');
+    };
+    expect($thrower)->toThrow(IcapProtocolException::class, 'invalid status line');
 });
 
 it('distinguishes 4xx client errors from 5xx server errors', function () {
