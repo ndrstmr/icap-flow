@@ -94,11 +94,12 @@ jobs:
           ICAP_PORT: 1344
           ICAP_ECHO_SERVICE: /squidclamav
           ICAP_CLAMAV_SERVICE: /squidclamav
-        # --verbose surfaces the Pest output that tells us WHICH
-        # assertion failed; the integration job is still
-        # continue-on-error so a failure doesn't block the merge
-        # while the server contract is being reverse-engineered.
-        run: composer test:integration -- --verbose
+        # --display-all-issues + --display-skipped print the full
+        # assertion diffs that Pest normally hides behind a summary
+        # line; --debug replaces the progress bar with event output.
+        # The integration job stays continue-on-error while we
+        # reverse-engineer the ICAP server contract.
+        run: composer test:integration -- --display-all-issues --display-skipped --debug
 
       - name: Dump service logs on failure
         if: failure()
