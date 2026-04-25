@@ -24,6 +24,7 @@ use Amp\Cancellation;
 use Amp\CompositeCancellation;
 use Amp\Socket;
 use Amp\Socket\ConnectContext;
+use Amp\Socket\Socket as SocketInterface;
 use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
@@ -43,15 +44,29 @@ use function Amp\async;
  * {@see CompositeCancellation}; whichever fires first aborts the
  * read/write loop with `Amp\CancelledException`.
  *
- * Response framing is done by {@see ResponseFrameReader} so the
- * read loop terminates as soon as the message is complete — no
- * dependency on the server closing the socket. That means the
- * `Connection: close` request-side hack from M4 is gone, and a
- * future pooling implementation can reuse the socket for the next
- * request without changing this code.
+ * Response framing is done by {@see ResponseFrameReader} so the read
+ * loop terminates as soon as the message is complete — no dependency
+ * on the server closing the socket.
+ *
+ * **Connection pooling (v2.1+).** When constructed with a
+ * {@see ConnectionPoolInterface}, the transport calls
+ * `acquire()` instead of opening a fresh TCP/TLS connection and
+ * `release()` instead of closing the socket. The socket is closed
+ * (rather than returned) when:
+ *   - the framing reader threw — the socket might be in an
+ *     inconsistent state and we play safe;
+ *   - the server's response carries `Connection: close` (RFC 7230
+ *     §6.1) — we honour the close intent.
+ * Without a pool the transport opens a fresh socket per request and
+ * closes it after — identical to the v2.0 behaviour.
  */
 final class AsyncAmpTransport implements TransportInterface
 {
+    public function __construct(
+        private ?ConnectionPoolInterface $pool = null,
+    ) {
+    }
+
     /**
      * @param iterable<string> $rawRequest
      * @return \Amp\Future<string>
@@ -61,25 +76,15 @@ final class AsyncAmpTransport implements TransportInterface
     {
         /** @var \Amp\Future<string> $future */
         $future = async(function () use ($config, $rawRequest, $cancellation): string {
-            $socket = null;
-            $tls = $config->getTlsContext();
-            $connectionUrl = sprintf('tcp://%s:%d', $config->host, $config->port);
-            $connectContext = (new ConnectContext())
-                ->withConnectTimeout($config->getSocketTimeout());
-            if ($tls !== null) {
-                $connectContext = $connectContext->withTlsContext($tls);
-            }
             $timeoutCancellation = new TimeoutCancellation($config->getStreamTimeout());
             $cancellation = $cancellation === null
                 ? $timeoutCancellation
                 : new CompositeCancellation($cancellation, $timeoutCancellation);
 
+            $socket = $this->acquireSocket($config, $cancellation);
+            $disposeBy = 'close';
+
             try {
-                if ($tls !== null) {
-                    $socket = Socket\connectTls($connectionUrl, $connectContext, $cancellation);
-                } else {
-                    $socket = Socket\connect($connectionUrl, $connectContext, $cancellation);
-                }
                 foreach ($rawRequest as $chunk) {
                     if ($chunk !== '') {
                         $socket->write($chunk);
@@ -90,18 +95,70 @@ final class AsyncAmpTransport implements TransportInterface
                     maxResponseSize: $config->getMaxResponseSize(),
                     maxHeaderLineLength: $config->getMaxHeaderLineLength(),
                 );
-                return $reader->readFrom(static fn (): ?string => $socket->read($cancellation));
-            } catch (Socket\ConnectException $e) {
-                throw new IcapConnectionException(
-                    sprintf('Async connection to %s:%d failed.', $config->host, $config->port),
-                    0,
-                    $e,
-                );
+                $response = $reader->readFrom(static fn (): ?string => $socket->read($cancellation));
+
+                // Honour `Connection: close` from the server (RFC 7230
+                // §6.1). The pooled path reuses the socket only when
+                // both sides agree to keep it alive; without a pool
+                // every socket is closed regardless.
+                $disposeBy = $this->serverWantsClose($response) ? 'close' : 'release';
+
+                return $response;
             } finally {
-                $socket?->close();
+                $this->disposeSocket($config, $socket, $disposeBy);
             }
         });
 
         return $future;
+    }
+
+    private function acquireSocket(Config $config, Cancellation $cancellation): SocketInterface
+    {
+        if ($this->pool !== null) {
+            return $this->pool->acquire($config, $cancellation);
+        }
+
+        $tls = $config->getTlsContext();
+        $url = sprintf('tcp://%s:%d', $config->host, $config->port);
+        $context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
+        if ($tls !== null) {
+            $context = $context->withTlsContext($tls);
+        }
+
+        try {
+            if ($tls !== null) {
+                return Socket\connectTls($url, $context, $cancellation);
+            }
+            return Socket\connect($url, $context, $cancellation);
+        } catch (Socket\ConnectException $e) {
+            throw new IcapConnectionException(
+                sprintf('Async connection to %s:%d failed.', $config->host, $config->port),
+                0,
+                $e,
+            );
+        }
+    }
+
+    private function disposeSocket(Config $config, SocketInterface $socket, string $disposeBy): void
+    {
+        if ($this->pool === null || $disposeBy === 'close') {
+            $socket->close();
+            return;
+        }
+        $this->pool->release($config, $socket);
+    }
+
+    /**
+     * Cheap heuristic for `Connection: close` in the ICAP head. We
+     * don't fully reparse here — the response parser does that — but
+     * we want to keep the socket-disposal decision local to the
+     * transport.
+     */
+    private function serverWantsClose(string $response): bool
+    {
+        // Limit the search to the head block; case-insensitive match.
+        $headEnd = strpos($response, "\r\n\r\n");
+        $head = $headEnd === false ? $response : substr($response, 0, $headEnd);
+        return preg_match('/^Connection:\s*close\s*$/im', $head) === 1;
     }
 }
