@@ -7,9 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v2.1.0
-- Keep-alive connection pooling in `AsyncAmpTransport` (the response-framing prerequisite landed in v2.0.0; this is now a tractable transport-only refactor).
-- Single-connection preview-continue per RFC 3507 §4.5 strict reading.
+_No changes since v2.1.0._
+
+## [2.1.0] - 2026-04-25
+
+### Added — keep-alive transport
+- **Connection pooling** in `AsyncAmpTransport`. New
+  `Ndrstmr\Icap\Transport\ConnectionPoolInterface` with default
+  `AmpConnectionPool` (LIFO stack per `host:port[:tls]` key,
+  configurable cap, drops closed sockets on acquire and on release).
+  Transport accepts an optional pool argument and reuses sockets
+  across requests; without a pool the v2.0 single-shot behaviour is
+  preserved unchanged. Closed (rather than released) on framing
+  errors or `Connection: close` from the server.
+- **`SessionAwareTransport`** capability surface plus
+  `TransportSession` and the `AmpTransportSession` implementation —
+  open one socket, run several write/read round-trips before
+  release/close. Used by the new strict preview-continue path.
+- **Strict RFC 3507 §4.5 preview-continue** in
+  `IcapClient::scanFileWithPreview()`. When the transport supports
+  sessions (the default async transport does), preview and
+  continuation travel on the **same** socket as one logical ICAP
+  request: the client sends only the chunked body remainder after
+  the `100 Continue`, no second `RESPMOD` head. The synchronous
+  transport keeps the v2.0 two-request approximation.
+- `ChunkedBodyEncoder` extracted from `RequestFormatter::chunkBody`;
+  reused by both the formatter and the §4.5 continuation path.
+
+### Tests
+- `tests/Transport/AmpConnectionPoolTest.php` — six pool-internals
+  cases driven by `Amp\Socket\createSocketPair`.
+- `tests/PreviewContinueStrictTest.php` — fake-server pair asserts
+  that the connector is invoked **exactly once** for preview +
+  continuation, that phase 1 is a real `RESPMOD` and phase 2 is
+  body-only.
+- Final unit-suite count at v2.1.0: **91 passed, 187 assertions**.
 
 ## [2.0.0] - 2026-04-25
 
