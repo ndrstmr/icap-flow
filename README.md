@@ -46,7 +46,7 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 
 The migration guide is [`docs/migration-v1-to-v2.md`](docs/migration-v1-to-v2.md). The full per-finding closure list is in [`docs/review/consolidated_task-list.md`](docs/review/consolidated_task-list.md).
 
-> Roadmap: **v2.1.0** adds connection pooling in `AsyncAmpTransport` (the framing prerequisite landed in v2.0.0).
+> **v2.1.0** added keep-alive connection pooling and strict RFC 3507 §4.5 preview-continue (preview + continuation on the same socket). See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
