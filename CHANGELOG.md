@@ -7,10 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- This release line will track post-v2.0.0 follow-up work, in particular: `Cancellation` in the public client API, OPTIONS-response cache, 503 retry with exponential backoff, single-connection preview-continue (RFC 3507 §4.5), keep-alive connection pooling.
+### Planned for v2.1.0
+- Keep-alive connection pooling in `AsyncAmpTransport` (the response-framing prerequisite landed in v2.0.0; this is now a tractable transport-only refactor).
+- Single-connection preview-continue per RFC 3507 §4.5 strict reading.
 
-## [2.0.0] - 2026-04-24
+## [2.0.0] - 2026-04-25
 
 ### Why a major release
 v1.0.0 had several RFC-3507-blocking bugs that no real ICAP server (c-icap, Symantec, Sophos, Kaspersky, Trend Micro) would have accepted, plus a fail-open security bug in the response interpreter. Closing those required wire-format changes that are by definition breaking.
@@ -49,6 +50,13 @@ v1.0.0 had several RFC-3507-blocking bugs that no real ICAP server (c-icap, Syma
 - **PSR-3 logger** optional injection on `IcapClient`. Three structured events per request (`info` started / `info` completed / `warning` failed) with method, URI, host, port, status code, infected flag.
 - **Multi-vendor virus headers**: `Config::withVirusFoundHeaders(list<string>)` and `getVirusFoundHeaders(): list<string>`. The client returns the first header that the server actually sent.
 - **Custom request headers** on `scanFile()` / `scanFileWithPreview()` — `X-Client-IP`, `X-Authenticated-User`, etc. — with CRLF guard and library-managed-headers-win semantics.
+- **External cancellation**: every public method (`request`, `options`, `scanFile`, `scanFileWithPreview`) takes an optional `?Amp\Cancellation` parameter. `AsyncAmpTransport` combines it with the internal `TimeoutCancellation` via `CompositeCancellation`. `SynchronousStreamTransport` honours it opportunistically between read/write iterations.
+- **OPTIONS-response cache** (RFC 3507 §4.10.2 `Options-TTL`): new `Ndrstmr\Icap\Cache\OptionsCacheInterface` with default `InMemoryOptionsCache`. Optional last constructor argument on `IcapClient`. On a cache hit, no transport call, no parser call — the parsed `IcapResponse` is returned synchronously and still runs through `interpretResponse()` for the fail-secure status pass.
+- **`RetryingIcapClient` decorator**: configurable exponential backoff (default 3 attempts, 0.1 s base, 2× factor, 5 s cap) that retries **only** on `IcapServerException` (5xx). 4xx, parse errors, connection errors, cancellation propagate after the first attempt.
+
+### Added — transport / wire framing
+- **Encapsulated-aware response framing** via the new `Ndrstmr\Icap\Transport\ResponseFrameReader`. The transport now knows when an ICAP response ends from the bytes themselves (head separator + Encapsulated-derived body offset + chunked terminator) instead of relying on the server closing the socket. Removes the v2-pre-release `Connection: close` request-side hack and unblocks keep-alive pooling for v2.1.
+- DoS limits enforced inside the framing reader as well as in the parser, so a hostile server can't push us off a cliff before the head is even complete.
 
 ### Added — exception taxonomy
 - New marker interface `Ndrstmr\Icap\Exception\IcapExceptionInterface`. Every concrete exception implements it.
@@ -59,9 +67,11 @@ v1.0.0 had several RFC-3507-blocking bugs that no real ICAP server (c-icap, Syma
 ### Added — test infrastructure
 - `tests/Wire/RequestFormatterWireTest.php` and `tests/Wire/ResponseParserWireTest.php` with hand-computed RFC-3507 byte fixtures.
 - `tests/Security/FailSecureAndValidationTest.php` and `tests/Security/ParserDosLimitsTest.php` covering every branch of the new status matrix and DoS limits.
-- `tests/Integration/IcapServerSmokeTest.php` against a real ICAP server (skips gracefully when `ICAP_HOST` is unset).
+- `tests/CancellationTest.php`, `tests/OptionsCacheTest.php`, `tests/RetryingIcapClientTest.php`, `tests/Transport/ResponseFrameReaderTest.php` covering the M3 follow-up surface.
+- `tests/Integration/IcapServerSmokeTest.php` against a real ICAP server (skips gracefully when `ICAP_HOST` is unset). Verified end-to-end against `mnemoshare/clamav-icap` — OPTIONS, EICAR detection (via `X-Violations-Found`), clean-file verdict.
 - `docker-compose.yml` for local integration runs against `mnemoshare/clamav-icap:0.14.5`.
 - CI matrix expanded to PHP 8.4 + 8.5; new integration job; `roave/security-advisories` in dev-deps; PHPStan upgraded to 2.x; `beStrictAboutCoverageMetadata` and a separate Integration testsuite in `phpunit.xml.dist`.
+- Final unit-suite count: **84 passed, 167 assertions** at v2.0.0 release.
 
 ### Removed
 - v1 `mixed $body` on `IcapRequest`.

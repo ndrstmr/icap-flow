@@ -38,9 +38,15 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 - **Multi-vendor virus headers** — Config takes an ordered list (`X-Virus-Name`, `X-Infection-Found`, `X-Violations-Found`, `X-Virus-ID`).
 - **PSR-3 logger** optional, structured events on every request.
 - **Custom request headers** (`X-Client-IP`, `X-Authenticated-User`) on `scanFile()` / `scanFileWithPreview()`.
-- **PHP 8.4** minimum; **PHP 8.5** in CI.
+- **External cancellation** — every public method takes an optional `Amp\Cancellation`.
+- **OPTIONS-response cache** with `Options-TTL` honour.
+- **`RetryingIcapClient`** decorator with exponential backoff for 5xx.
+- **Encapsulated-aware response framing** — no dependency on `Connection: close`; servers may keep the socket open.
+- **PHP 8.4** minimum; **PHP 8.5** in CI; integration tested end-to-end against `mnemoshare/clamav-icap` (c-icap 0.6.3 + ClamAV).
 
 The migration guide is [`docs/migration-v1-to-v2.md`](docs/migration-v1-to-v2.md). The full per-finding closure list is in [`docs/review/consolidated_task-list.md`](docs/review/consolidated_task-list.md).
+
+> Roadmap: **v2.1.0** adds connection pooling in `AsyncAmpTransport` (the framing prerequisite landed in v2.0.0).
 
 ## Installation
 
