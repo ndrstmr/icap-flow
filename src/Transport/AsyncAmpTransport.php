@@ -59,8 +59,13 @@ use function Amp\async;
  *     §6.1) — we honour the close intent.
  * Without a pool the transport opens a fresh socket per request and
  * closes it after — identical to the v2.0 behaviour.
+ *
+ * **Sessions (v2.1+).** Implements {@see SessionAwareTransport} so
+ * callers that need to send + receive multiple times on the same
+ * connection (strict RFC 3507 §4.5 preview-continue, ICAP request
+ * pipelining, …) can call {@see openSession()}.
  */
-final class AsyncAmpTransport implements TransportInterface
+final class AsyncAmpTransport implements SessionAwareTransport
 {
     public function __construct(
         private ?ConnectionPoolInterface $pool = null,
@@ -76,40 +81,48 @@ final class AsyncAmpTransport implements TransportInterface
     {
         /** @var \Amp\Future<string> $future */
         $future = async(function () use ($config, $rawRequest, $cancellation): string {
-            $timeoutCancellation = new TimeoutCancellation($config->getStreamTimeout());
-            $cancellation = $cancellation === null
-                ? $timeoutCancellation
-                : new CompositeCancellation($cancellation, $timeoutCancellation);
-
-            $socket = $this->acquireSocket($config, $cancellation);
-            $disposeBy = 'close';
-
+            $session = $this->openSession($config, $cancellation);
+            $closeForced = false;
             try {
-                foreach ($rawRequest as $chunk) {
-                    if ($chunk !== '') {
-                        $socket->write($chunk);
-                    }
+                $session->write($rawRequest);
+                $response = $session->readResponse();
+                if ($this->serverWantsClose($response)) {
+                    $closeForced = true;
                 }
-
-                $reader = new ResponseFrameReader(
-                    maxResponseSize: $config->getMaxResponseSize(),
-                    maxHeaderLineLength: $config->getMaxHeaderLineLength(),
-                );
-                $response = $reader->readFrom(static fn (): ?string => $socket->read($cancellation));
-
-                // Honour `Connection: close` from the server (RFC 7230
-                // §6.1). The pooled path reuses the socket only when
-                // both sides agree to keep it alive; without a pool
-                // every socket is closed regardless.
-                $disposeBy = $this->serverWantsClose($response) ? 'close' : 'release';
-
                 return $response;
+            } catch (\Throwable $e) {
+                $closeForced = true;
+                throw $e;
             } finally {
-                $this->disposeSocket($config, $socket, $disposeBy);
+                if ($closeForced) {
+                    $session->close();
+                } else {
+                    $session->release();
+                }
             }
         });
 
         return $future;
+    }
+
+    #[\Override]
+    public function openSession(Config $config, ?Cancellation $cancellation = null): TransportSession
+    {
+        $timeoutCancellation = new TimeoutCancellation($config->getStreamTimeout());
+        $effective = $cancellation === null
+            ? $timeoutCancellation
+            : new CompositeCancellation($cancellation, $timeoutCancellation);
+
+        $socket = $this->acquireSocket($config, $effective);
+
+        return new AmpTransportSession(
+            config: $config,
+            socket: $socket,
+            cancellation: $effective,
+            maxResponseSize: $config->getMaxResponseSize(),
+            maxHeaderLineLength: $config->getMaxHeaderLineLength(),
+            pool: $this->pool,
+        );
     }
 
     private function acquireSocket(Config $config, Cancellation $cancellation): SocketInterface
@@ -139,15 +152,6 @@ final class AsyncAmpTransport implements TransportInterface
         }
     }
 
-    private function disposeSocket(Config $config, SocketInterface $socket, string $disposeBy): void
-    {
-        if ($this->pool === null || $disposeBy === 'close') {
-            $socket->close();
-            return;
-        }
-        $this->pool->release($config, $socket);
-    }
-
     /**
      * Cheap heuristic for `Connection: close` in the ICAP head. We
      * don't fully reparse here — the response parser does that — but
@@ -156,7 +160,6 @@ final class AsyncAmpTransport implements TransportInterface
      */
     private function serverWantsClose(string $response): bool
     {
-        // Limit the search to the head block; case-insensitive match.
         $headEnd = strpos($response, "\r\n\r\n");
         $head = $headEnd === false ? $response : substr($response, 0, $headEnd);
         return preg_match('/^Connection:\s*close\s*$/im', $head) === 1;

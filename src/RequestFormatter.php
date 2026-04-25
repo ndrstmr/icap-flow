@@ -41,8 +41,6 @@ use Ndrstmr\Icap\DTO\IcapRequest;
  */
 final class RequestFormatter implements RequestFormatterInterface
 {
-    private const int CHUNK_SIZE = 8192;
-
     #[\Override]
     public function format(IcapRequest $request): iterable
     {
@@ -200,41 +198,16 @@ final class RequestFormatter implements RequestFormatterInterface
     }
 
     /**
-     * Emit the body as HTTP/1.1 chunked transfer encoding.
-     *
-     * Strings are sent as a single chunk; resources are read in
-     * self::CHUNK_SIZE blocks so a multi-gigabyte body never needs to
-     * reside in memory.
+     * Emit the body as HTTP/1.1 chunked transfer encoding. Delegates
+     * to {@see ChunkedBodyEncoder} so the strict RFC 3507 §4.5
+     * preview-continue path on the same socket can reuse the exact
+     * same encoding rules.
      *
      * @param string|resource $body
      * @return iterable<string>
      */
     private function chunkBody(mixed $body, bool $previewIsComplete): iterable
     {
-        $terminator = $previewIsComplete ? "0; ieof\r\n\r\n" : "0\r\n\r\n";
-
-        if (is_string($body)) {
-            if ($body !== '') {
-                yield dechex(strlen($body)) . "\r\n" . $body . "\r\n";
-            }
-            yield $terminator;
-            return;
-        }
-
-        if (!is_resource($body)) {
-            throw new \InvalidArgumentException(
-                'Encapsulated HTTP body must be a string or a readable stream resource.',
-            );
-        }
-
-        rewind($body);
-        while (!feof($body)) {
-            $chunk = fread($body, self::CHUNK_SIZE);
-            if ($chunk === false || $chunk === '') {
-                break;
-            }
-            yield dechex(strlen($chunk)) . "\r\n" . $chunk . "\r\n";
-        }
-        yield $terminator;
+        return (new ChunkedBodyEncoder())->encode($body, $previewIsComplete);
     }
 }

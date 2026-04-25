@@ -32,6 +32,7 @@ use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapResponseException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 use Psr\Log\LoggerInterface;
@@ -289,58 +290,100 @@ final class IcapClient implements IcapClientInterface
                 throw new \RuntimeException('Unable to open file: ' . $filePath);
             }
 
-            $previewBytes = fread($stream, $previewSize);
-            if ($previewBytes === false) {
+            try {
+                if ($this->transport instanceof SessionAwareTransport) {
+                    // Strict RFC 3507 §4.5 path — preview + continuation
+                    // on the same socket, one logical ICAP request.
+                    return $this->scanFileWithPreviewStrict(
+                        $service,
+                        $stream,
+                        $fileSize,
+                        $previewSize,
+                        $extraHeaders,
+                        $cancellation,
+                    );
+                }
+                // Legacy two-request approximation for non-session
+                // transports (synchronous, custom impls).
+                return $this->scanFileWithPreviewLegacy(
+                    $service,
+                    $stream,
+                    $fileSize,
+                    $previewSize,
+                    $extraHeaders,
+                    $cancellation,
+                );
+            } finally {
                 fclose($stream);
-                throw new \RuntimeException('Unable to read preview: ' . $filePath);
             }
+        });
 
-            $previewIsComplete = $fileSize <= $previewSize;
+        return $future;
+    }
 
-            $previewEnvelope = new HttpResponse(
-                statusCode: 200,
-                headers: [
-                    'Content-Type'   => ['application/octet-stream'],
-                    'Content-Length' => [(string) $fileSize],
-                ],
-                body: $previewBytes,
-            );
+    /**
+     * Strict RFC 3507 §4.5 preview-continue: the preview and the
+     * continuation travel on the same socket as one logical ICAP
+     * request. Requires a {@see SessionAwareTransport}.
+     *
+     * @param resource                       $stream
+     * @param array<string, string|string[]> $extraHeaders
+     */
+    private function scanFileWithPreviewStrict(
+        string $service,
+        mixed $stream,
+        int $fileSize,
+        int $previewSize,
+        array $extraHeaders,
+        ?Cancellation $cancellation,
+    ): ScanResult {
+        \assert($this->transport instanceof SessionAwareTransport);
+        \assert($previewSize >= 1);
 
-            // Merge caller-supplied headers, but library-managed headers
-            // MUST win: letting the caller override Preview/Allow would
-            // put the protocol exchange into an inconsistent state.
-            $headers = $this->mergeHeaders($extraHeaders, [
-                'Preview' => [(string) $previewSize],
-                'Allow'   => ['204'],
-            ]);
+        $previewBytes = fread($stream, $previewSize);
+        if ($previewBytes === false) {
+            throw new \RuntimeException('Unable to read preview from file stream.');
+        }
+        $previewIsComplete = $fileSize <= $previewSize;
 
-            $previewRequest = new IcapRequest(
-                method: 'RESPMOD',
-                uri: $this->buildServiceUri($service),
-                headers: $headers,
-                encapsulatedResponse: $previewEnvelope,
-                previewIsComplete: $previewIsComplete,
-            );
+        $previewEnvelope = new HttpResponse(
+            statusCode: 200,
+            headers: [
+                'Content-Type'   => ['application/octet-stream'],
+                'Content-Length' => [(string) $fileSize],
+            ],
+            body: $previewBytes,
+        );
+        $headers = $this->mergeHeaders($extraHeaders, [
+            'Preview' => [(string) $previewSize],
+            'Allow'   => ['204'],
+        ]);
+        $previewRequest = new IcapRequest(
+            method: 'RESPMOD',
+            uri: $this->buildServiceUri($service),
+            headers: $headers,
+            encapsulatedResponse: $previewEnvelope,
+            previewIsComplete: $previewIsComplete,
+        );
 
-            // Preview round: bypass interpretResponse() so a legitimate
-            // 100 Continue from the server doesn't trip the fail-secure
-            // guard that only applies outside preview context.
-            $previewIcapResponse = $this->executeRaw($previewRequest, $cancellation)->await();
+        $session = $this->transport->openSession($this->config, $cancellation);
+        try {
+            $session->write($this->formatter->format($previewRequest));
+            $previewIcapResponse = $this->parser->parse($session->readResponse());
 
             if ($previewIsComplete) {
-                fclose($stream);
+                $session->release();
                 return $this->interpretResponse($previewIcapResponse, $this->config);
             }
 
             $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
 
             if ($decision !== PreviewDecision::CONTINUE_SENDING) {
-                fclose($stream);
-                // The strategy has made the final call. Build a
-                // ScanResult directly from its verdict rather than
-                // running interpretResponse() over the preview-stage
-                // status code (which is 100 in a typical abort path
-                // and would otherwise trip the fail-secure guard).
+                // Server's intermediate response is the verdict — nothing
+                // to send on this socket. Release back to the pool;
+                // sockets that have only seen a 100 are still in good
+                // protocol state.
+                $session->release();
                 return new ScanResult(
                     isInfected: $decision === PreviewDecision::ABORT_INFECTED,
                     virusName: $decision === PreviewDecision::ABORT_INFECTED
@@ -350,35 +393,105 @@ final class IcapClient implements IcapClientInterface
                 );
             }
 
-            // The server wants the rest. Stream the full file in a fresh
-            // RESPMOD; this is the pragmatic approximation of the
-            // RFC-3507 §4.5 "continue after preview" flow on a persistent
-            // connection — proper single-connection continuation is
-            // tracked for a later milestone.
-            rewind($stream);
-            $fullResponse = new HttpResponse(
-                statusCode: 200,
-                headers: [
-                    'Content-Type'   => ['application/octet-stream'],
-                    'Content-Length' => [(string) $fileSize],
-                ],
-                body: $stream,
-            );
-            $fullRequest = new IcapRequest(
-                method: 'RESPMOD',
-                uri: $this->buildServiceUri($service),
-                headers: $extraHeaders,
-                encapsulatedResponse: $fullResponse,
-            );
-
-            try {
-                return $this->request($fullRequest, $cancellation)->await();
-            } finally {
-                fclose($stream);
+            // §4.5 continuation: ONLY the chunked body remainder, no
+            // new ICAP head. The original RESPMOD envelope still wraps
+            // the entire scan.
+            $remainder = stream_get_contents($stream);
+            if ($remainder === false) {
+                $remainder = '';
             }
-        });
+            $session->write((new ChunkedBodyEncoder())->encode($remainder));
 
-        return $future;
+            $finalIcapResponse = $this->parser->parse($session->readResponse());
+            $session->release();
+            return $this->interpretResponse($finalIcapResponse, $this->config);
+        } catch (\Throwable $e) {
+            // The exchange went off-script — never offer this socket
+            // back to the pool, the next user could see misaligned
+            // bytes.
+            $session->close();
+            throw $e;
+        }
+    }
+
+    /**
+     * Two-request approximation of RFC 3507 §4.5 used when the
+     * transport doesn't expose a {@see SessionAwareTransport} surface
+     * (synchronous transport, custom implementations). Works against
+     * permissive servers but spends a second TCP/TLS handshake.
+     *
+     * @param resource                       $stream
+     * @param array<string, string|string[]> $extraHeaders
+     */
+    private function scanFileWithPreviewLegacy(
+        string $service,
+        mixed $stream,
+        int $fileSize,
+        int $previewSize,
+        array $extraHeaders,
+        ?Cancellation $cancellation,
+    ): ScanResult {
+        \assert($previewSize >= 1);
+
+        $previewBytes = fread($stream, $previewSize);
+        if ($previewBytes === false) {
+            throw new \RuntimeException('Unable to read preview from file stream.');
+        }
+        $previewIsComplete = $fileSize <= $previewSize;
+
+        $previewEnvelope = new HttpResponse(
+            statusCode: 200,
+            headers: [
+                'Content-Type'   => ['application/octet-stream'],
+                'Content-Length' => [(string) $fileSize],
+            ],
+            body: $previewBytes,
+        );
+        $headers = $this->mergeHeaders($extraHeaders, [
+            'Preview' => [(string) $previewSize],
+            'Allow'   => ['204'],
+        ]);
+        $previewRequest = new IcapRequest(
+            method: 'RESPMOD',
+            uri: $this->buildServiceUri($service),
+            headers: $headers,
+            encapsulatedResponse: $previewEnvelope,
+            previewIsComplete: $previewIsComplete,
+        );
+
+        $previewIcapResponse = $this->executeRaw($previewRequest, $cancellation)->await();
+
+        if ($previewIsComplete) {
+            return $this->interpretResponse($previewIcapResponse, $this->config);
+        }
+
+        $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
+        if ($decision !== PreviewDecision::CONTINUE_SENDING) {
+            return new ScanResult(
+                isInfected: $decision === PreviewDecision::ABORT_INFECTED,
+                virusName: $decision === PreviewDecision::ABORT_INFECTED
+                    ? $this->extractVirusName($previewIcapResponse, $this->config)
+                    : null,
+                originalResponse: $previewIcapResponse,
+            );
+        }
+
+        rewind($stream);
+        $fullResponse = new HttpResponse(
+            statusCode: 200,
+            headers: [
+                'Content-Type'   => ['application/octet-stream'],
+                'Content-Length' => [(string) $fileSize],
+            ],
+            body: $stream,
+        );
+        $fullRequest = new IcapRequest(
+            method: 'RESPMOD',
+            uri: $this->buildServiceUri($service),
+            headers: $extraHeaders,
+            encapsulatedResponse: $fullResponse,
+        );
+        return $this->request($fullRequest, $cancellation)->await();
     }
 
     private function buildServiceUri(string $service): string
