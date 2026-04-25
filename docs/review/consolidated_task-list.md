@@ -1,6 +1,23 @@
 # Konsolidierte Task-Liste — v2.0.0 RFC-Compliance & Hardening
 
-> **Status (24.04.2026):** M0 (#36) ✅, M1 (#37) ✅, M2 (#38) ✅, M3-Core (#39) ✅, M4 (#40) ✅. M5 in Arbeit (dieser PR). M3-Follow-ups (Cancellation, OPTIONS-Cache, 503-Retry, Keep-Alive-Pooling) sind als dedizierte Folge-PRs nach v2.0.0 vorgemerkt. **Alle P0-Findings A–N sind geschlossen** — der Integration-Lauf gegen `mnemoshare/clamav-icap` (c-icap 0.6.3 + ClamAV) erkennt EICAR und attestiert Clean-Files korrekt.
+> **Status (25.04.2026):** ✅ **v2.0.0 ready to tag.** Alle ursprünglichen P0/P1-Findings (A–N) und alle vier M3-Follow-ups (Cancellation, OPTIONS-Cache, 503-Retry, Response-Framing) sind geschlossen.
+>
+> | Block | PR |
+> |---|---|
+> | M0 Foundation | #36 |
+> | M1 RFC Wire-Format | #37 |
+> | M2 Security Hardening | #38 |
+> | M3 Core (Logger, Multi-Vendor, Custom-Headers) | #39 |
+> | M4 Test Infrastructure | #40 |
+> | M5 Docs + AI Disclaimer | #41 |
+> | M3-ext Cancellation | #42 |
+> | M3-ext OPTIONS Cache | #43 |
+> | M3-ext 503 Retry Decorator | #44 |
+> | M3-ext Response Framing (drops `Connection: close`) | #45 |
+>
+> **Verifiziert end-to-end** gegen `mnemoshare/clamav-icap` Integration-Stack (OPTIONS, EICAR-Detection via `X-Violations-Found`, Clean-File). Final unit suite: **84 passed, 167 assertions**, PHPStan L9 + bleedingEdge clean, CS-Fixer clean.
+>
+> **Geplant für v2.1.0:** Keep-Alive Connection-Pooling in `AsyncAmpTransport` (Framing-Voraussetzung ist mit M3-ext erledigt; jetzt reines Transport-Refactor).
 
 **Ziel:** `ndrstmr/icap-flow` zum quasi-Standard PHP-ICAP-Client ausbauen — RFC-3507-konform, fail-secure, streaming-sicher, Symfony-ready.
 
