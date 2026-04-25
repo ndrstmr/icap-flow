@@ -22,6 +22,7 @@ namespace Ndrstmr\Icap;
 
 use Amp\Cancellation;
 use Amp\Future;
+use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
@@ -51,6 +52,7 @@ final class IcapClient implements IcapClientInterface
         private ResponseParserInterface $parser,
         ?PreviewStrategyInterface $previewStrategy = null,
         ?LoggerInterface $logger = null,
+        private ?OptionsCacheInterface $optionsCache = null,
     ) {
         $this->previewStrategy = $previewStrategy ?? new DefaultPreviewStrategy();
         $this->logger = $logger ?? new NullLogger();
@@ -153,9 +155,60 @@ final class IcapClient implements IcapClientInterface
     #[\Override]
     public function options(string $service, ?Cancellation $cancellation = null): Future
     {
+        // Validate first so injection attempts never reach the cache key.
         $uri = $this->buildServiceUri($service);
-        $request = new IcapRequest('OPTIONS', $uri);
-        return $this->request($request, $cancellation);
+
+        $cacheKey = $this->config->host . ':' . $this->config->port . $service;
+
+        if ($this->optionsCache !== null) {
+            $cached = $this->optionsCache->get($cacheKey);
+            if ($cached !== null) {
+                return Future::complete($this->interpretResponse($cached, $this->config));
+            }
+        }
+
+        /** @var Future<ScanResult> $future */
+        $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): ScanResult {
+            $request = new IcapRequest('OPTIONS', $uri);
+            $context = [
+                'method' => $request->method,
+                'uri'    => $request->uri,
+                'host'   => $this->config->host,
+                'port'   => $this->config->port,
+            ];
+            $this->logger->info('ICAP request started', $context);
+
+            $response = null;
+            try {
+                $response = $this->executeRaw($request, $cancellation)->await();
+                $result = $this->interpretResponse($response, $this->config);
+            } catch (\Throwable $e) {
+                $this->logger->warning('ICAP request failed', $context + [
+                    'statusCode' => $response?->statusCode,
+                    'exception'  => $e::class,
+                    'message'    => $e->getMessage(),
+                ]);
+                throw $e;
+            }
+
+            $this->logger->info('ICAP request completed', $context + [
+                'statusCode' => $response->statusCode,
+                'infected'   => $result->isInfected(),
+            ]);
+
+            // Cache the parsed IcapResponse, keyed by host:port + service.
+            // TTL is taken from the server's Options-TTL header
+            // (RFC 3507 §4.10.2); fall back to 0 (no caching) when the
+            // server didn't specify one.
+            if ($this->optionsCache !== null) {
+                $ttl = (int) ($response->headers['Options-TTL'][0] ?? '0');
+                $this->optionsCache->set($cacheKey, $response, $ttl);
+            }
+
+            return $result;
+        });
+
+        return $future;
     }
 
     /**
