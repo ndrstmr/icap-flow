@@ -27,7 +27,6 @@ use Amp\Socket\ConnectContext;
 use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
-use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 
 use function Amp\async;
 
@@ -43,6 +42,13 @@ use function Amp\async;
  * transport's internal {@see TimeoutCancellation} via a
  * {@see CompositeCancellation}; whichever fires first aborts the
  * read/write loop with `Amp\CancelledException`.
+ *
+ * Response framing is done by {@see ResponseFrameReader} so the
+ * read loop terminates as soon as the message is complete — no
+ * dependency on the server closing the socket. That means the
+ * `Connection: close` request-side hack from M4 is gone, and a
+ * future pooling implementation can reuse the socket for the next
+ * request without changing this code.
  */
 final class AsyncAmpTransport implements TransportInterface
 {
@@ -80,20 +86,11 @@ final class AsyncAmpTransport implements TransportInterface
                     }
                 }
 
-                $maxBytes = $config->getMaxResponseSize();
-                $response = '';
-                $received = 0;
-                while (null !== ($chunk = $socket->read($cancellation))) {
-                    $received += strlen($chunk);
-                    if ($received > $maxBytes) {
-                        throw new IcapMalformedResponseException(
-                            sprintf('ICAP response exceeded max size (%d bytes).', $maxBytes),
-                        );
-                    }
-                    $response .= $chunk;
-                }
-
-                return $response;
+                $reader = new ResponseFrameReader(
+                    maxResponseSize: $config->getMaxResponseSize(),
+                    maxHeaderLineLength: $config->getMaxHeaderLineLength(),
+                );
+                return $reader->readFrom(static fn (): ?string => $socket->read($cancellation));
             } catch (Socket\ConnectException $e) {
                 throw new IcapConnectionException(
                     sprintf('Async connection to %s:%d failed.', $config->host, $config->port),

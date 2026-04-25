@@ -23,7 +23,6 @@ namespace Ndrstmr\Icap\Transport;
 use Amp\Cancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
-use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 
 /**
  * Blocking transport using plain PHP stream sockets.
@@ -88,23 +87,21 @@ final class SynchronousStreamTransport implements TransportInterface
                 }
             }
 
-            $maxBytes = $config->getMaxResponseSize();
-            $response = '';
-            $received = 0;
-            while (!feof($stream)) {
+            $reader = new ResponseFrameReader(
+                maxResponseSize: $config->getMaxResponseSize(),
+                maxHeaderLineLength: $config->getMaxHeaderLineLength(),
+            );
+            $response = $reader->readFrom(static function () use ($stream, $cancellation): ?string {
                 $cancellation?->throwIfRequested();
+                if (feof($stream)) {
+                    return null;
+                }
                 $read = fread($stream, self::READ_CHUNK_SIZE);
                 if ($read === false || $read === '') {
-                    break;
+                    return null;
                 }
-                $received += strlen($read);
-                if ($received > $maxBytes) {
-                    throw new IcapMalformedResponseException(
-                        sprintf('ICAP response exceeded max size (%d bytes).', $maxBytes),
-                    );
-                }
-                $response .= $read;
-            }
+                return $read;
+            });
 
             return \Amp\Future::complete($response);
         } finally {
