@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-04-28
+
+### Fixed
+- **Streaming preview continuation (OOM fix)**: `IcapClient::scanFileWithPreviewStrict()`
+  now uses `ChunkedBodyEncoder::encodeRemainderFromStream()` instead of
+  `stream_get_contents()` to send the post-preview body. The remainder is
+  streamed in 8 KiB chunks from the current file position, eliminating the
+  risk of out-of-memory errors on large files. Finding F, Claude + Codex ×2.
+  (Issue #56)
+- **3 risky unit tests**: added explicit assertions to Mockery-only tests
+  (`LoggerIntegrationTest`, `OptionsCacheTest`, `RetryingIcapClientTest`) so
+  they pass under `failOnRisky=true`.
+- **SynchronousStreamTransportTest warning**: suppressed the expected
+  `E_WARNING` from `stream_socket_client()` so the test passes under
+  `failOnWarning=true`.
+
+### Added
+- `ChunkedBodyEncoder::encodeRemainderFromStream(resource $stream): iterable<string>`
+  — reads from the current stream position in `CHUNK_SIZE` blocks without
+  rewinding, emitting proper HTTP/1.1 chunked-transfer frames.
+- `tests/Wire/ChunkedBodyEncoderTest.php` — 4 unit tests covering position
+  preservation, chunked framing, empty remainder, and multi-chunk encoding.
+- `tests/PreviewContinueStrictTest.php` — new end-to-end test verifying
+  128 KiB streaming continuation with chunk-level payload verification.
+
+### Changed
+- **`phpunit.xml.dist`**: `failOnRisky` and `failOnWarning` set to `true`.
+- **`composer.json`**: PHPStan script now passes `--memory-limit=1G` for
+  CI stability on constrained runners.
+
 ## [2.1.1] - 2026-04-28
 
 ### Security

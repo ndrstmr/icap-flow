@@ -30,5 +30,13 @@ it('throws connection exception on failure', function () {
     $t = new SynchronousStreamTransport();
     $config = new Config('256.256.256.256', 9999); // invalid host
 
-    expect(fn () => $t->request($config, [])->await())->toThrow(IcapConnectionException::class);
+    // stream_socket_client emits E_WARNING for unresolvable hosts even
+    // with the @-operator — suppress it in the test to satisfy
+    // failOnWarning=true.
+    set_error_handler(static fn () => true, E_WARNING);
+    try {
+        expect(fn () => $t->request($config, [])->await())->toThrow(IcapConnectionException::class);
+    } finally {
+        restore_error_handler();
+    }
 });

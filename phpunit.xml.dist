@@ -5,8 +5,8 @@
          colors="true"
          beStrictAboutCoverageMetadata="true"
          beStrictAboutOutputDuringTests="true"
-         failOnRisky="false"
-         failOnWarning="false">
+         failOnRisky="true"
+         failOnWarning="true">
     <testsuites>
         <testsuite name="Unit">
             <directory suffix="Test.php">./tests</directory>

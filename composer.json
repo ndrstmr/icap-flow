@@ -38,7 +38,7 @@
     "test": "pest --testsuite=Unit",
     "test:integration": "pest --testsuite=Integration",
     "test:all": "pest",
-    "stan": "phpstan analyse",
+    "stan": "phpstan analyse --memory-limit=1G",
     "cs-check": "php-cs-fixer fix --dry-run --diff",
     "cs-fix": "php-cs-fixer fix",
     "mutation": "pest --mutate --testsuite=Unit --parallel --covered-only --min=65"
