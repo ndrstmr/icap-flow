@@ -32,9 +32,7 @@ use Ndrstmr\Icap\Config;
  * decides whether to hand out an existing idle socket or open a new
  * one, and whether to keep a returned socket idle or close it.
  *
- * The default implementation is {@see AmpConnectionPool}. The
- * {@see NullConnectionPool} variant disables pooling — every
- * acquire opens a fresh connection, every release closes it.
+ * The default implementation is {@see AmpConnectionPool}.
  *
  * Implementations MUST be safe to use across concurrent
  * acquire/release cycles within a single fiber-driven event loop;
