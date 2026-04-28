@@ -9,8 +9,8 @@ use Ndrstmr\Icap\SynchronousIcapClient;
 /*
  * Discover the server's negotiated capabilities (RFC 3507 §4.10) and
  * use the advertised Preview size. Real deployments should cache this
- * answer for `Options-TTL` seconds; the next milestone after v2.0.0
- * adds a built-in PSR-16 cache decorator for that.
+ * answer for `Options-TTL` seconds; since v2.0 the library ships a
+ * built-in InMemoryOptionsCache that honours Options-TTL automatically.
  */
 
 $icap = SynchronousIcapClient::create();
