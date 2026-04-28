@@ -397,12 +397,10 @@ final class IcapClient implements IcapClientInterface
 
             // §4.5 continuation: ONLY the chunked body remainder, no
             // new ICAP head. The original RESPMOD envelope still wraps
-            // the entire scan.
-            $remainder = stream_get_contents($stream);
-            if ($remainder === false) {
-                $remainder = '';
-            }
-            $session->write((new ChunkedBodyEncoder())->encode($remainder));
+            // the entire scan. Stream from the current position (past the
+            // preview bytes) in CHUNK_SIZE blocks — never buffer the
+            // entire remainder in memory (v2.1.2 OOM fix).
+            $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream($stream));
 
             $finalIcapResponse = $this->parser->parse($session->readResponse());
             $session->release();

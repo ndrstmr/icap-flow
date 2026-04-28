@@ -112,6 +112,7 @@ it('skips the transport on a cache hit', function () {
     });
 
     m::close();
+    expect(true)->toBeTrue(); // Mockery verified; satisfy PHPUnit strict-mode
 });
 
 it('isolates cache entries per service path', function () {

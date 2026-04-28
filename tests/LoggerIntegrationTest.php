@@ -67,6 +67,7 @@ it('logs a request-started event with the ICAP method + service URI', function (
     });
 
     m::close();
+    expect(true)->toBeTrue(); // Mockery verified; satisfy PHPUnit strict-mode
 });
 
 it('logs a warning when the request raises an exception', function () {

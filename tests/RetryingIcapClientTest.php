@@ -177,6 +177,7 @@ it('forwards request, scanFile and scanFileWithPreview through the decorator', f
     });
 
     m::close();
+    expect(true)->toBeTrue(); // Mockery verified; satisfy PHPUnit strict-mode
 });
 
 it('rejects nonsensical configuration', function () {

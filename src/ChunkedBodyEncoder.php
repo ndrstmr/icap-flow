@@ -67,4 +67,34 @@ final class ChunkedBodyEncoder
         }
         yield $terminator;
     }
+
+    /**
+     * Encode the remainder of an already-partially-read stream as
+     * HTTP/1.1 chunked-transfer. Reads from the **current** stream
+     * position (after the preview bytes) without rewinding.
+     *
+     * Used by the strict RFC 3507 §4.5 continuation path: the client
+     * has already sent the preview chunk, received `100 Continue`, and
+     * now streams the rest of the body on the same socket.
+     *
+     * @param  resource         $stream  readable stream positioned past the preview
+     * @return iterable<string>
+     */
+    public function encodeRemainderFromStream(mixed $stream): iterable
+    {
+        if (!is_resource($stream)) {
+            throw new \InvalidArgumentException(
+                'Expected a readable stream resource.',
+            );
+        }
+
+        while (!feof($stream)) {
+            $chunk = fread($stream, self::CHUNK_SIZE);
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+            yield dechex(strlen($chunk)) . "\r\n" . $chunk . "\r\n";
+        }
+        yield "0\r\n\r\n";
+    }
 }
