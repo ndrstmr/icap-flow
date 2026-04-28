@@ -198,6 +198,42 @@ it('close() shuts down every pooled socket', function () {
         ->and($b->isClosed())->toBeTrue();
 });
 
+it('isolates idle sockets for different TLS contexts on the same host:port', function () {
+    [, $socketA] = Socket\createSocketPair();
+    [, $socketB] = Socket\createSocketPair();
+    /** @var SocketInterface[] $queue */
+    $queue = [$socketA, $socketB];
+
+    $tlsA = new \Amp\Socket\ClientTlsContext('server-a.example');
+    $tlsB = new \Amp\Socket\ClientTlsContext('server-b.example');
+
+    $configA = (new Config('icap.example'))->withTlsContext($tlsA);
+    $configB = (new Config('icap.example'))->withTlsContext($tlsB);
+
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 4,
+        connector: function () use (&$queue): SocketInterface {
+            $socket = array_shift($queue);
+            if ($socket === null) {
+                throw new RuntimeException('Test connector exhausted');
+            }
+            return $socket;
+        },
+    );
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($pool, $configA, $configB, $socketA, $socketB) {
+        $a = $pool->acquire($configA);
+        $pool->release($configA, $a);
+
+        // Re-acquire with a DIFFERENT TLS context on the SAME host:port.
+        // Must NOT return the socket that was pooled for configA.
+        $b = $pool->acquire($configB);
+        expect($b)->not->toBe($socketA)
+            ->and($b)->toBe($socketB);
+    });
+});
+
 it('isolates idle sockets per host:port', function () {
     [, $h1] = Socket\createSocketPair();
     [, $h2] = Socket\createSocketPair();

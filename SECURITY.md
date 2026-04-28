@@ -67,12 +67,18 @@ The v2 line was reviewed against three independent due-diligence reports (`docs/
 - **Bounded reads.** `Config::withLimits(maxResponseSize, maxHeaderCount, maxHeaderLineLength)` caps every response. Defaults: 10 MB total, 100 headers, 8 KB per line.
 - **No fail-open on 5xx.** Server errors raise `IcapServerException`. Your application is responsible for blocking the upload — the library will never silently report it as clean.
 
+## What this library DOES provide (since v2.0 / v2.1)
+
+- **Automatic retry on 5xx** via `RetryingIcapClient` (decorator, exponential backoff, configurable attempts). Wraps `IcapClient`; no retry by default on the bare client.
+- **OPTIONS-response caching** via `InMemoryOptionsCache` (honours `Options-TTL`, RFC 3507 §4.10.2). Plug in via the `$optionsCache` constructor parameter.
+- **Keep-alive connection pooling** via `AmpConnectionPool` (LIFO per host:port:tls-context, configurable cap). Used automatically by `AsyncAmpTransport`.
+- **TLS pool-key isolation** (since v2.1.1): each distinct `ClientTlsContext` object gets its own idle-socket stack, preventing cross-tenant socket reuse in multi-tenant deployments. See [GHSA advisory](#) for the pre-2.1.1 risk.
+
 ## What this library does NOT guarantee
 
 - It does **not** authenticate the ICAP server beyond TLS hostname verification — if you need mutual TLS or pinning, configure the `ClientTlsContext` accordingly.
-- It does **not** retry on transient failures. A `IcapServerException` (5xx) propagates to the caller; the caller must decide whether to retry or fail.
-- It does **not** cache OPTIONS responses (RFC 3507 §4.10.2 `Options-TTL`); use a PSR-16 cache decorator if you need this.
-- It does **not** pool connections — each scan opens a fresh TCP/TLS connection. (Pooling is on the post-v2 roadmap.)
+- It does **not** persist the OPTIONS cache across process restarts — `InMemoryOptionsCache` is in-process only. Use a PSR-6/PSR-16 adapter (planned for v2.2) for distributed caching.
+- It does **not** auto-negotiate pool capacity from the server's `Max-Connections` OPTIONS header (planned for v2.2).
 
 ## AI-assisted origin
 

@@ -129,7 +129,21 @@ final class AmpConnectionPool implements ConnectionPoolInterface
 
     private function key(Config $config): string
     {
-        return $config->host . ':' . $config->port . ($config->getTlsContext() !== null ? ':tls' : '');
+        $key = $config->host . ':' . $config->port;
+        $tls = $config->getTlsContext();
+        if ($tls !== null) {
+            // spl_object_hash() is a deliberate transitional choice: it
+            // guarantees that two *different* ClientTlsContext instances
+            // always produce different pool keys, preventing cross-tenant
+            // socket reuse (CVE-class finding, v2.1.1-A).  The caller is
+            // responsible for not sharing TlsContext objects across tenants.
+            // v2.2 will switch to a deterministic hash derived from the
+            // context's peer name, cert path, and CA bundle so that
+            // equivalent contexts can still share idle connections.
+            $key .= ':tls:' . spl_object_hash($tls);
+        }
+
+        return $key;
     }
 
     /**

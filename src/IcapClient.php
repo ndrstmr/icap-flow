@@ -55,7 +55,9 @@ final class IcapClient implements IcapClientInterface
         ?LoggerInterface $logger = null,
         private ?OptionsCacheInterface $optionsCache = null,
     ) {
-        $this->previewStrategy = $previewStrategy ?? new DefaultPreviewStrategy();
+        $this->previewStrategy = $previewStrategy ?? new DefaultPreviewStrategy(
+            $config->getVirusFoundHeaders(),
+        );
         $this->logger = $logger ?? new NullLogger();
     }
 

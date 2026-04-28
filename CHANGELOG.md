@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes since v2.1.0._
+## [2.1.1] - 2026-04-28
+
+### Security
+- **TLS pool-key isolation** (`AmpConnectionPool::key()`): the pool key now
+  includes `spl_object_hash()` of the `ClientTlsContext` so that two configs
+  pointing at the same `host:port` but carrying different TLS identities
+  (certs, peer name, CA bundle) never share idle sockets. Pre-2.1.1 builds
+  are vulnerable to cross-tenant socket reuse in multi-tenant deployments.
+  Finding A, 4/4 reviewers. (Issue #53)
+
+### Fixed
+- **`DefaultPreviewStrategy` 200/206 verdict**: RFC 3507 §4.3.3 / §6 allows
+  servers to respond `200 OK` or `206 Partial Content` with a virus-name
+  header during a preview exchange if malware is detected in the first chunk.
+  The strategy now maps these responses to `ABORT_INFECTED` (when a
+  configured virus header is present) or `ABORT_CLEAN` (otherwise), making
+  the `ABORT_INFECTED` code path in `IcapClient` reachable for the first time.
+  The constructor accepts an optional `list<string> $virusFoundHeaders`
+  parameter (default `['X-Virus-Name']`); `IcapClient` forwards
+  `Config::getVirusFoundHeaders()` automatically. Finding B, Claude + Codex ×2.
+  (Issue #54)
+
+### Changed
+- **`SECURITY.md`** "What this library does NOT guarantee" section updated to
+  reflect the features that have been present since v2.0/v2.1 (`RetryingIcapClient`,
+  `InMemoryOptionsCache`, `AmpConnectionPool`). Finding C, Claude + Jules.
+  (Issue #55)
+- **`ConnectionPoolInterface`** phpdoc: removed broken `{@see NullConnectionPool}`
+  reference; replaced with a forward note for the v2.2 implementation.
+  Finding E, Codex. (Issue #57)
+- **Cookbook `02-custom-preview-strategy.php`**: corrected the McAfee example
+  strategy to inspect `X-Virus-ID` on 200/206 responses instead of mapping
+  200 unconditionally to `ABORT_CLEAN` (security anti-pattern). Added caveat
+  comment. Finding H, Claude.
+- **Cookbook `03-options-request.php`**: removed stale "next milestone after
+  v2.0.0" claim; `InMemoryOptionsCache` has been available since v2.0.
+  Finding G, Claude. (Issue #57)
 
 ## [2.1.0] - 2026-04-25
 
