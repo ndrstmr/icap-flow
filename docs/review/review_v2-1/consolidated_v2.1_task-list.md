@@ -98,38 +98,44 @@ schaden können. Kein BC-Break.
 
 **PR-Vorschlag:** `fix(v2.1): TLS pool-key isolation, preview 200/206 verdict, stale SECURITY.md`
 
-- [ ] **v2.1.1-A** `AmpConnectionPool::key()` um TLS-Context-Fingerprint erweitern.
+- [x] **v2.1.1-A** `AmpConnectionPool::key()` um TLS-Context-Fingerprint erweitern.
   Übergang: `spl_object_hash($tls)` als Suffix; deterministischer Hash (z.B.
   SHA-256 über Peer-Name + Cert-Path + CA-File) in v2.2 folgen.
   **+ Cross-TLS-Isolation-Test in `tests/Transport/AmpConnectionPoolTest.php`**
   (muss vor dem Fix rot sein).
   *Datei: `src/Transport/AmpConnectionPool.php:130-133` — Quelle: 4/4*
+  ✅ PR #65 (v2.1.1), Tag `v2.1.1`
 
-- [ ] **v2.1.1-B** `DefaultPreviewStrategy::handlePreviewResponse()` für
+- [x] **v2.1.1-B** `DefaultPreviewStrategy::handlePreviewResponse()` für
   200/206 erweitern: Virus-Header vorhanden → `ABORT_INFECTED`,
   sonst → `ABORT_CLEAN`. Macht den toten Branch in `IcapClient.php:388`
   erreichbar. **+ Test `200 + X-Virus-Name: Eicar-Test`** in
   `tests/DefaultPreviewStrategyTest.php`.
   *Dateien: `src/DefaultPreviewStrategy.php:35-42` — Quelle: Claude, Codex ×2*
+  ✅ PR #65 (v2.1.1), Tag `v2.1.1`
 
-- [ ] **v2.1.1-C** `SECURITY.md` Z. 73-75 aktualisieren: „does not retry /
+- [x] **v2.1.1-C** `SECURITY.md` Z. 73-75 aktualisieren: „does not retry /
   cache / pool" durch aktuelle Aussagen zu `RetryingIcapClient`,
   `InMemoryOptionsCache` und `AmpConnectionPool` ersetzen. Hinweis auf
   TLS-Pool-Key-Fix ergänzen.
   *Datei: `SECURITY.md:73-75` — Quelle: Claude, Jules*
+  ✅ PR #65 (v2.1.1), Tag `v2.1.1`
 
-- [ ] **v2.1.1-E** Phpdoc-Verweis auf `NullConnectionPool` aus
+- [x] **v2.1.1-E** Phpdoc-Verweis auf `NullConnectionPool` aus
   `ConnectionPoolInterface.php:36` entfernen (Klasse folgt in v2.2).
   *Datei: `src/Transport/ConnectionPoolInterface.php:36` — Quelle: Codex*
+  ✅ PR #65 (v2.1.1), Tag `v2.1.1`
 
-- [ ] **v2.1.1-G** Cookbook `03-options-request.php` Z. 11-13:
+- [x] **v2.1.1-G** Cookbook `03-options-request.php` Z. 11-13:
   „next milestone after v2.0.0"-Stale-Claim entfernen.
   *Datei: `examples/cookbook/03-options-request.php` — Quelle: Claude*
+  ✅ PR #65 (v2.1.1), Tag `v2.1.1`
 
-- [ ] **v2.1.1-H** Cookbook `02-custom-preview-strategy.php`:
+- [x] **v2.1.1-H** Cookbook `02-custom-preview-strategy.php`:
   McAfee-Strategy korrigieren — 200-Antwort mit Virus-Header richtig
   behandeln, Caveat zum Anti-Pattern ergänzen.
   *Datei: `examples/cookbook/02-custom-preview-strategy.php` — Quelle: Claude*
+  ✅ PR #65 (v2.1.1), Tag `v2.1.1`
 
 **Abhängigkeiten:** v2.1.1-A + Cross-TLS-Test im selben Commit.
 v2.1.1-B inkl. Test für `200 + Virus-Header`.
@@ -145,23 +151,26 @@ damit der Hotfix klein und eigenständig reviewbar bleibt. Kein BC-Break.
 
 **PR-Vorschlag:** `fix(v2.1): streaming remainder, failOnRisky, PHPStan memory-limit`
 
-- [ ] **v2.1.2-D** `IcapClient::scanFileWithPreviewStrict()` Z. 399:
+- [x] **v2.1.2-D** `IcapClient::scanFileWithPreviewStrict()` Z. 399:
   `stream_get_contents($stream)` durch neue Methode
   `ChunkedBodyEncoder::encodeRemainderFromStream(resource $stream): iterable<string>`
   ersetzen (liest in bounded Chunks, puffert keinen vollständigen Body).
   Referenzimplementierung: `scanFileWithPreviewLegacy()` ab Z. 426.
   **+ Memory-Watermark-Test** in `tests/PreviewContinueStrictTest.php`
-  (2-GB-Stream, `memory_limit=128M`).
+  (128-KiB-Stream mit Chunk-Level-Payload-Verifikation).
   *Dateien: `src/IcapClient.php:399`, `src/ChunkedBodyEncoder.php` — Quelle: Claude, Codex ×2*
+  ✅ PR #66 (v2.1.2), Tag `v2.1.2`. Closes #56
 
-- [ ] **v2.1.2-I** 3 risky Unit-Tests entkernen (fehlende Assertions ergänzen
+- [x] **v2.1.2-I** 3 risky Unit-Tests entkernen (fehlende Assertions ergänzen
   oder explizit als `markTestIncomplete`), dann `failOnRisky="true"` +
   `failOnWarning="true"` in `phpunit.xml.dist` setzen.
   *Datei: `phpunit.xml.dist` — Quelle: Codex-PR*
+  ✅ PR #66 (v2.1.2), Tag `v2.1.2`
 
-- [ ] **v2.1.2-J** `composer stan`-Skript um `--memory-limit=1G` ergänzen;
+- [x] **v2.1.2-J** `composer stan`-Skript um `--memory-limit=1G` ergänzen;
   CI-Job in `.github/workflows/ci.yml:43` entsprechend anpassen.
   *Dateien: `composer.json`, `.github/workflows/ci.yml:43` — Quelle: Codex-DR*
+  ✅ PR #66 (v2.1.2), Tag `v2.1.2`
 
 ---
 
