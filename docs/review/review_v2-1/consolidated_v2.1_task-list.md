@@ -214,10 +214,11 @@ Alle Items additiv; kein BC-Break.
 
 ### CI-Härtung & Test-Reife
 
-- [ ] **v2.2-M** Mutation-Testing wieder als Required-CI-Job:
+- [x] **v2.2-M** Mutation-Testing wieder als Required-CI-Job:
   `composer mutation` (`--min=65`, kein `continue-on-error`).
   Sollte früh im v2.2-Zyklus landen, damit Folge-PRs davon profitieren.
   *Datei: `.github/workflows/ci.yml:130-135` — Quelle: 4/4*
+  ✅ PR #69, Closes #60. MSI 68.47% im ersten CI-Lauf.
 
 - [ ] **v2.2-N** Integration-CI aus `continue-on-error: true` herausführen:
   entweder hartes Gate auf PRs oder Nightly-Workflow mit
