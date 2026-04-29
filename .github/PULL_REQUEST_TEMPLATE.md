@@ -48,6 +48,15 @@ welche Edge-Cases sie absichern, ob Mutation-Score betroffen ist.
 - [ ] `composer test:integration` — gegen `docker compose up -d` (falls relevant)
 - [ ] CI-Matrix (PHP 8.4 + 8.5)
 
+## Closes
+
+<!--
+GitHub Auto-Close: jedes Issue auf eigener Zeile mit Keyword.
+Nur Closes/Fixes/Resolves löst Auto-Close aus — "Refs" verlinkt nur.
+Zeilen entfernen, wenn kein Issue geschlossen wird.
+-->
+Closes #
+
 ## Status
 
 <!--

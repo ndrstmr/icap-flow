@@ -117,7 +117,7 @@ Diese Repo folgt **strikt** [Conventional Commits 1.0](https://www.conventionalc
 - **Body:** Pflicht. Erklärt **warum**, nicht **was** — der Diff zeigt das Was. Bei Items aus `docs/review/review_v2-1/consolidated_v2.1_task-list.md` die Tabellenzeile + Reviewer-Quelle nennen.
 - **Footer:**
   - `BREAKING CHANGE: <Beschreibung>` für jeden BC-Break (gehören in den v3.0.0-Bucket, nicht in Patch/Minor).
-  - `Refs #<issue>` / `Closes #<issue>` für Verlinkung zur GitHub-Issue.
+  - `Closes #<issue>` wenn der Commit/PR das Issue schließen soll. `Refs #<issue>` nur für Verweise ohne Schließen. **Wichtig:** GitHub Auto-Close braucht exakt `Closes #XX` / `Fixes #XX` / `Resolves #XX` — `Refs` verlinkt nur, schließt nicht. Bei mehreren Issues jedes einzeln auflisten (`Closes #53`, `Closes #54`), nicht komma-separiert.
 
 ### Was nicht in Commits / PRs gehört
 
