@@ -291,17 +291,6 @@ Alle Items additiv; kein BC-Break.
   ergänzen (Typen, Scopes, Body-Pflicht).
   *Datei: `CONTRIBUTING.md` — Quelle: Claude*
 
-- [ ] **v2.2-Y** OpenTelemetry-Decorator `OtelTracingIcapClient` als
-  Optional-Dep auf `open-telemetry/api`.
-  *Datei: `src/Tracing/OtelTracingIcapClient.php` (neu) — Quelle: 4/4*
-
-- [ ] **v2.2-Z** PHPBench-Suite: Pool-Throughput, Strict-§4.5-Latency,
-  Chunked-Encoder-Durchsatz.
-  *Verzeichnis: `benchmarks/` (neu) — Quelle: 3/4*
-
-- [ ] **v2.2-sbom** SBOM (CycloneDX/SPDX) in CI generieren.
-  *Datei: `.github/workflows/ci.yml` — Quelle: Claude*
-
 - [x] **v2.2-F** `IcapResponseException`: PHP 8.4 `#[\Deprecated]` mit
   konkretem `v3.0.0`-Removal-Tag auf dem Konstruktor gesetzt.
   ✅ PR #79.
@@ -316,6 +305,27 @@ Alle Items additiv; kein BC-Break.
 - [ ] Fuzz-Korpus für `ResponseParser` (PHPUnit-Data-Provider-basiert oder
   nativer Fuzzer).
   *Verzeichnis: `tests/Fuzz/` (neu) — Quelle: Claude*
+
+---
+
+## Wunschliste — Someday / Maybe
+
+> Items, die aus den Audits stammen, aber aktuell keinen konkreten Bedarf
+> haben. Werden bei Bedarf in einen Release-Milestone gezogen.
+
+- [ ] **W-Y** OpenTelemetry-Decorator `OtelTracingIcapClient` als
+  Optional-Dep auf `open-telemetry/api`. Erst sinnvoll, wenn OTel im
+  Deployment-Stack tatsächlich eingesetzt wird.
+  *Datei: `src/Tracing/OtelTracingIcapClient.php` (neu) — Quelle: 4/4*
+
+- [ ] **W-Z** PHPBench-Suite: Pool-Throughput, Strict-§4.5-Latency,
+  Chunked-Encoder-Durchsatz. Sinnvoll erst bei bekannten
+  Performance-Problemen oder hoher Release-Frequenz mit Regressionsgefahr.
+  *Verzeichnis: `benchmarks/` (neu) — Quelle: 3/4*
+
+- [ ] **W-sbom** SBOM (CycloneDX/SPDX) in CI generieren. Besser durch
+  externe Tooling-Pipelines abgedeckt (Trivy, Dependabot, `composer audit`).
+  *Datei: `.github/workflows/ci.yml` — Quelle: Claude*
 
 ---
 
@@ -368,7 +378,6 @@ erzwungen werden.
 | v2.2-T + v2.2-U | — | zusammen mergen für testbare Fixtures |
 | v2.2-E2 | — | v2.3 Bundle-DI-Default-Pool |
 | v2.2-M | v2.2-O (Coverage-Lücken zuerst schließen) | alle v2.2-Folge-PRs |
-| v2.2-Y | v2.2-E2 | v2.3 Bundle-Tracing |
 | v2.3 Bundle | v2.2.0-Release | — |
 
 ---
@@ -412,4 +421,3 @@ erzwungen werden.
 - `composer mutation --min=65` als Required-Status-Check auf PRs.
 - Coverage: `AmpConnectionPool` ≥ 90 %, `SynchronousStreamTransport` ≥ 85 %, Socket-Error ≥ 85 %.
 - Integration-CI als Required-Status (oder Nightly mit Issue-on-Failure).
-- `phpbench run benchmarks/ --report=default` liefert Baseline.
