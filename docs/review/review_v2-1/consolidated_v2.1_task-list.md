@@ -213,8 +213,9 @@ Alle Items additiv; kein BC-Break.
   *Datei: `src/Transport/NullConnectionPool.php` (neu) — Quelle: Codex*
   ✅ PR #71, Closes #57.
 
-- [ ] **v2.2-X** PSR-6/16 OPTIONS-Cache-Adapter als Optional-Deps:
+- [x] **v2.2-X** PSR-6/16 OPTIONS-Cache-Adapter als Optional-Deps:
   `Cache/Psr16OptionsCache.php`, `Cache/Psr6OptionsCache.php`.
+  ✅ PR #81.
   *Quelle: 3/4*
 
 ### CI-Härtung & Test-Reife

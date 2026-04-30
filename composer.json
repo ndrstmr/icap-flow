@@ -22,7 +22,13 @@
     "pestphp/pest": "^3.8",
     "phpstan/phpstan": "^2.1",
     "phpunit/phpunit": "^11.2",
+    "psr/cache": "^3.0",
+    "psr/simple-cache": "^3.0",
     "roave/security-advisories": "dev-latest"
+  },
+  "suggest": {
+    "psr/cache": "Required for Psr6OptionsCache adapter (PSR-6 CacheItemPoolInterface)",
+    "psr/simple-cache": "Required for Psr16OptionsCache adapter (PSR-16 CacheInterface)"
   },
   "autoload": {
     "psr-4": {
