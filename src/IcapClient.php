@@ -271,14 +271,16 @@ final class IcapClient implements IcapClientInterface
     public function scanFileWithPreview(
         string $service,
         string $filePath,
-        int $previewSize = 1024,
+        ?int $previewSize = null,
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
-        if ($previewSize < 1) {
+        if ($previewSize !== null && $previewSize < 1) {
             throw new \InvalidArgumentException('Preview size must be >= 1, got: ' . $previewSize);
         }
         $this->validateIcapHeaders($extraHeaders);
+
+        $previewSize = $this->resolvePreviewSize($service, $previewSize);
 
         /** @var int<1, max> $previewSize */
         /** @var Future<ScanResult> $future */
@@ -492,6 +494,40 @@ final class IcapClient implements IcapClientInterface
             encapsulatedResponse: $fullResponse,
         );
         return $this->request($fullRequest, $cancellation)->await();
+    }
+
+    private const int DEFAULT_PREVIEW_SIZE = 1024;
+
+    /**
+     * Resolve the effective preview size. When the caller passes null,
+     * the OPTIONS cache is consulted for the server's advertised
+     * `Preview` header (RFC 3507 §4.10.2). Falls back to
+     * {@see DEFAULT_PREVIEW_SIZE} when no cache is configured, the
+     * cache has no entry, or the cached response lacks a `Preview`
+     * header.
+     *
+     * @return int<1, max>
+     */
+    private function resolvePreviewSize(string $service, ?int $previewSize): int
+    {
+        if ($previewSize !== null) {
+            /** @var int<1, max> $previewSize */
+            return $previewSize;
+        }
+
+        if ($this->optionsCache !== null) {
+            $cacheKey = $this->config->host . ':' . $this->config->port . $service;
+            $cached = $this->optionsCache->get($cacheKey);
+            if ($cached !== null && isset($cached->headers['Preview'][0])) {
+                $advertised = (int) $cached->headers['Preview'][0];
+                if ($advertised >= 1) {
+                    /** @var int<1, max> $advertised */
+                    return $advertised;
+                }
+            }
+        }
+
+        return self::DEFAULT_PREVIEW_SIZE;
     }
 
     private function buildServiceUri(string $service): string

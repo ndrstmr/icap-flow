@@ -72,6 +72,11 @@ interface IcapClientInterface
     /**
      * Scan a file using preview mode, streaming the remainder on demand.
      *
+     * When $previewSize is null the client queries the OPTIONS cache for
+     * the server's advertised `Preview` header (RFC 3507 §4.10.2) and
+     * uses that value. Falls back to 1024 when the cache has no entry
+     * or the response carries no `Preview` header.
+     *
      * @param array<string, string|string[]> $extraHeaders See {@see scanFile()}.
      *        `Preview` and `Allow` are library-managed and cannot be
      *        overridden via this parameter.
@@ -80,7 +85,7 @@ interface IcapClientInterface
     public function scanFileWithPreview(
         string $service,
         string $filePath,
-        int $previewSize = 1024,
+        ?int $previewSize = null,
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future;

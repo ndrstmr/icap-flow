@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **OPTIONS-driven preview size auto-detection** (v2.2-K): `scanFileWithPreview()`
+  now accepts `?int $previewSize = null`. When null, the client queries the
+  OPTIONS cache for the server's advertised `Preview` header (RFC 3507 §4.10.2)
+  and uses that value. Falls back to 1024 when no cache entry exists or the
+  response carries no `Preview` header. Explicit values still take precedence.
+  (Issue #58)
+- `NullConnectionPool` (v2.2-E2): implements `ConnectionPoolInterface` with
+  no keep-alive — every `acquire()` opens a fresh connection, every `release()`
+  closes it. Useful for testing and explicit no-pool configurations.
+  (Issue #57)
+
 ## [2.1.2] - 2026-04-28
 
 ### Fixed
