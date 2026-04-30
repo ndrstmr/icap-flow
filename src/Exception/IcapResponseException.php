@@ -27,10 +27,13 @@ use RuntimeException;
  *
  * @deprecated since 2.0 — use the more specific IcapProtocolException,
  *   IcapMalformedResponseException, IcapClientException (4xx) or
- *   IcapServerException (5xx) introduced by M0.1. This class will be
- *   removed in a future minor release once all internal throw sites are
- *   migrated (M2).
+ *   IcapServerException (5xx). This class will be removed in v3.0.0.
  */
 class IcapResponseException extends RuntimeException implements IcapExceptionInterface
 {
+    #[\Deprecated(message: 'use IcapProtocolException, IcapClientException (4xx) or IcapServerException (5xx)', since: '2.0')]
+    public function __construct(string $message = '', int $code = 0, ?\Throwable $previous = null)
+    {
+        parent::__construct($message, $code, $previous);
+    }
 }

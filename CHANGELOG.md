@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closes it. Useful for testing and explicit no-pool configurations.
   (Issue #57)
 
+### Deprecated
+- **`IcapResponseException`** (v2.2-F): constructor now carries a PHP 8.4
+  `#[\Deprecated]` attribute with `since: '2.0'`. Instantiation triggers
+  `E_USER_DEPRECATED`. Use `IcapProtocolException`, `IcapClientException`
+  (4xx), or `IcapServerException` (5xx) instead. Will be removed in v3.0.0.
+
 ### Changed
 - **Strict header-name validation** (v2.2-S): `IcapClient::validateIcapHeaders()`
   now rejects any character outside the RFC 7230 §3.2.6 `tchar` set.
