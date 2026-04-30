@@ -39,16 +39,15 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
  * if none are usable. On {@see release()} a socket is pushed back
  * unless the per-host cap is reached, in which case it's closed.
  *
- * The pool keeps no separate idle timer — c-icap and most ICAP
- * vendors send `Connection: close` once they're done with a session
- * (or simply close the socket); the next {@see acquire()} drops the
- * stale entry and reconnects. A future enhancement could add an
- * idle-time eviction sweep if real deployments show socket
- * accumulation.
+ * Each entry records when it became idle. On {@see acquire()} entries
+ * older than `$maxIdleSeconds` (default 30 s) are evicted and closed
+ * before testing `isClosed()`. This prevents stale socket
+ * accumulation in long-running PHP workers (Swoole, RoadRunner,
+ * ReactPHP) where the server may have closed its end silently.
  */
 final class AmpConnectionPool implements ConnectionPoolInterface
 {
-    /** @var array<string, list<SocketInterface>> */
+    /** @var array<string, list<array{socket: SocketInterface, idleSince: float}>> */
     private array $idle = [];
 
     private bool $closed = false;
@@ -56,15 +55,22 @@ final class AmpConnectionPool implements ConnectionPoolInterface
     /** @var Closure(Config, ?Cancellation): SocketInterface */
     private Closure $connector;
 
+    /** @var Closure(): float */
+    private Closure $clock;
+
     /**
      * @param int                                                                  $maxConnectionsPerHost  cap on idle sockets per host:port[:tls] key
      * @param (Closure(Config, ?Cancellation): SocketInterface)|null               $connector              optional override — production code uses the amphp connector; tests can inject pre-built socket pairs
      * @param int|null                                                             $serverMaxConnections   optional server-advertised Max-Connections (RFC 3507 §4.10.2); when set, the effective idle cap becomes min(localCap, serverMax)
+     * @param float                                                                $maxIdleSeconds         idle sockets older than this are evicted on acquire() (default 30 s)
+     * @param (Closure(): float)|null                                              $clock                  monotonic clock for idle-age checks; defaults to microtime(true); injectable for deterministic tests
      */
     public function __construct(
         private int $maxConnectionsPerHost = 8,
         ?Closure $connector = null,
         private ?int $serverMaxConnections = null,
+        private float $maxIdleSeconds = 30.0,
+        ?Closure $clock = null,
     ) {
         if ($maxConnectionsPerHost < 1) {
             throw new \InvalidArgumentException(
@@ -78,7 +84,14 @@ final class AmpConnectionPool implements ConnectionPoolInterface
             );
         }
 
+        if ($maxIdleSeconds <= 0.0) {
+            throw new \InvalidArgumentException(
+                'maxIdleSeconds must be > 0, got: ' . $maxIdleSeconds,
+            );
+        }
+
         $this->connector = $connector ?? self::defaultConnector();
+        $this->clock = $clock ?? static fn (): float => microtime(true);
     }
 
     #[\Override]
@@ -89,13 +102,22 @@ final class AmpConnectionPool implements ConnectionPoolInterface
         }
 
         $key = $this->key($config);
+        $now = ($this->clock)();
 
         while (!empty($this->idle[$key])) {
-            $socket = array_pop($this->idle[$key]);
-            if (!$socket->isClosed()) {
-                return $socket;
+            $entry = array_pop($this->idle[$key]);
+            $socket = $entry['socket'];
+
+            if ($socket->isClosed()) {
+                continue;
             }
-            // Drop the stale entry and try the next one.
+
+            if (($now - $entry['idleSince']) > $this->maxIdleSeconds) {
+                $socket->close();
+                continue;
+            }
+
+            return $socket;
         }
 
         return ($this->connector)($config, $cancellation);
@@ -118,16 +140,19 @@ final class AmpConnectionPool implements ConnectionPoolInterface
             return;
         }
 
-        $this->idle[$key][] = $socket;
+        $this->idle[$key][] = [
+            'socket' => $socket,
+            'idleSince' => ($this->clock)(),
+        ];
     }
 
     #[\Override]
     public function close(): void
     {
         $this->closed = true;
-        foreach ($this->idle as $sockets) {
-            foreach ($sockets as $socket) {
-                $socket->close();
+        foreach ($this->idle as $entries) {
+            foreach ($entries as $entry) {
+                $entry['socket']->close();
             }
         }
         $this->idle = [];

@@ -65,7 +65,7 @@
 | N | Integration-CI `continue-on-error: true` → Wire-Format-Regressionen bleiben unerkannt | CI P1 | `.github/workflows/ci.yml:63` | 3/4 |
 | O | Coverage-Hotspots: `AmpConnectionPool` 54 %, `SynchronousStreamTransport` 41 %, Socket-Error-Handling 63 % | Testing P1 | — | Jules |
 | P | Strict-§4.5-Path nutzt eine Session-Lifetime-Cancellation statt per-IO | Korrektheit P2 | `Transport/AsyncAmpTransport.php:111-114` | Claude |
-| Q | Pool ohne Idle-Eviction → langlebige Workers akkumulieren Stale-Connections | Robustheit P2 | `Transport/AmpConnectionPool.php:42-46` | 4/4 |
+| Q | ~~Pool ohne Idle-Eviction → langlebige Workers akkumulieren Stale-Connections~~ ✅ PR #77 | Robustheit P2 | `Transport/AmpConnectionPool.php` | 4/4 |
 | R | ~~obs-fold (RFC 7230) im `Encapsulated`-Header wird im Framer nicht erkannt~~ ✅ PR #76 | RFC P2 | `Transport/ResponseFrameReader.php:144-155` | Claude, Codex |
 | S | ~~Header-Name-Validation-Regex lässt RFC-7230-§3.2.6 Separator-Tokens durch~~ ✅ PR #75 | Security P2 | `IcapClient.php:637` | Claude |
 | T | ~~OPTIONS-Cache ohne ISTag-Invalidation — Signature-Update wird nicht erkannt~~ ✅ PR #78 | RFC P2 | `Cache/InMemoryOptionsCache.php` | Claude |
@@ -254,9 +254,10 @@ Alle Items additiv; kein BC-Break.
   in Phpdoc + CHANGELOG.
   *Datei: `src/Transport/AsyncAmpTransport.php:111-114` — Quelle: Claude*
 
-- [ ] **v2.2-Q** Pool-Idle-Eviction mit konfigurierbarem `maxIdleAge`
+- [x] **v2.2-Q** Pool-Idle-Eviction mit konfigurierbarem `maxIdleSeconds`
   (Default 30 s): Beim `acquire()` abgelaufene Idle-Einträge verwerfen.
-  *Datei: `src/Transport/AmpConnectionPool.php:42-46` — Quelle: 4/4*
+  ✅ PR #77, Closes #64.
+  *Datei: `src/Transport/AmpConnectionPool.php` — Quelle: 4/4*
 
 - [x] **v2.2-R** obs-fold (RFC 7230) im `Encapsulated`-Header:
   `ResponseFrameReader::findEncapsulatedHeader()` faltet Continuation-Lines
