@@ -275,21 +275,25 @@ Alle Items additiv; kein BC-Break.
 
 ### Doku & Tooling
 
-- [ ] **v2.2-cookbook** 4 neue Cookbook-Files:
+- [x] **v2.2-cookbook** 4 neue Cookbook-Files:
   `04-tls-mtls.php`, `05-retry-decorator.php`,
   `06-pool-tuning.php`, `07-cancellation-from-upload.php`.
+  ✅ PR #84.
   *Dateien: `examples/cookbook/` — Quelle: Claude, Codex*
 
-- [ ] **v2.2-readme** Connection-Pool-Konfiguration im README-Config-Block
+- [x] **v2.2-readme** Connection-Pool-Konfiguration im README-Config-Block
   dokumentieren.
+  ✅ PR #84.
   *Datei: `README.md:89-129` — Quelle: Claude*
 
-- [ ] **v2.2-compliance** `docs/compliance.md` mit BSI OPS.1.1.4 / APP.4.4 /
+- [x] **v2.2-compliance** `docs/compliance.md` mit BSI OPS.1.1.4 / APP.4.4 /
   DSGVO Art. 32-Mapping + AI-Disclaimer-Verlinkung.
+  ✅ PR #84.
   *Datei: `docs/compliance.md` (neu) — Quelle: Claude*
 
-- [ ] **v2.2-contrib** CONTRIBUTING.md um Conventional-Commits-Konvention
+- [x] **v2.2-contrib** CONTRIBUTING.md um Conventional-Commits-Konvention
   ergänzen (Typen, Scopes, Body-Pflicht).
+  ✅ PR #84.
   *Datei: `CONTRIBUTING.md` — Quelle: Claude*
 
 - [x] **v2.2-F** `IcapResponseException`: PHP 8.4 `#[\Deprecated]` mit
