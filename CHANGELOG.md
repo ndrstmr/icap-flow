@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `E_USER_DEPRECATED`. Use `IcapProtocolException`, `IcapClientException`
   (4xx), or `IcapServerException` (5xx) instead. Will be removed in v3.0.0.
 
+### Fixed
+- **Per-IO timeout for session-aware transports** (v2.2-P):
+  `AmpTransportSession` now creates a fresh `TimeoutCancellation` for each
+  `readResponse()` call instead of sharing a single session-lifetime timer.
+  For multi-round-trip flows (strict RFC 3507 §4.5 preview-continue), the
+  old timer accumulated across all IO phases — a server that legitimately
+  takes close to `streamTimeout` for a scan after `100 Continue` would
+  trigger a spurious `CancelledException`. Each IO phase now gets the full
+  `streamTimeout` window independently.
+
 ### Changed
 - **Strict header-name validation** (v2.2-S): `IcapClient::validateIcapHeaders()`
   now rejects any character outside the RFC 7230 §3.2.6 `tchar` set.

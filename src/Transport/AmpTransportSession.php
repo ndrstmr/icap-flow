@@ -21,7 +21,9 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Transport;
 
 use Amp\Cancellation;
+use Amp\CompositeCancellation;
 use Amp\Socket\Socket as SocketInterface;
+use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 
 /**
@@ -43,7 +45,8 @@ final class AmpTransportSession implements TransportSession
     public function __construct(
         private readonly Config $config,
         private readonly SocketInterface $socket,
-        private readonly Cancellation $cancellation,
+        private readonly float $streamTimeout,
+        private readonly ?Cancellation $userCancellation,
         private readonly int $maxResponseSize,
         private readonly int $maxHeaderLineLength,
         private readonly ?ConnectionPoolInterface $pool,
@@ -69,9 +72,25 @@ final class AmpTransportSession implements TransportSession
             maxResponseSize: $this->maxResponseSize,
             maxHeaderLineLength: $this->maxHeaderLineLength,
         );
-        $cancellation = $this->cancellation;
+        $cancellation = $this->makeIoCancellation();
         $socket = $this->socket;
         return $reader->readFrom(static fn (): ?string => $socket->read($cancellation));
+    }
+
+    /**
+     * Creates a fresh TimeoutCancellation for a single IO phase,
+     * combined with the optional user-supplied Cancellation.
+     *
+     * Each call gets the full streamTimeout window — no session-lifetime
+     * timer that accumulates across multiple preview-continue round trips.
+     */
+    private function makeIoCancellation(): Cancellation
+    {
+        $timeout = new TimeoutCancellation($this->streamTimeout);
+        if ($this->userCancellation === null) {
+            return $timeout;
+        }
+        return new CompositeCancellation($this->userCancellation, $timeout);
     }
 
     #[\Override]
