@@ -7,6 +7,11 @@ on:
   pull_request:
     branches:
       - main
+  schedule:
+    # Nightly at 03:15 UTC — runs integration tests against the latest
+    # ClamAV signatures so wire-format regressions don't hide until the
+    # next push-to-main.
+    - cron: '15 3 * * *'
 
 jobs:
   # Unit tests + static analysis + coverage, run against every
@@ -54,13 +59,17 @@ jobs:
   # Integration tests against a real c-icap + ClamAV stack spun up via
   # docker-compose. Runs only on PHP 8.4 (the integration contract is
   # version-agnostic) to keep CI cost bounded.
+  #
+  # Runs on push-to-main and nightly schedule only — NOT on PRs. The
+  # ClamAV image needs 30–120 s for signature download on cold start,
+  # which is flaky on shared runners. Wire-format regressions surface
+  # on the next push-to-main or the nightly run; PRs are gated by
+  # unit tests + mutation testing instead.
   integration:
     name: Integration tests (c-icap + ClamAV)
     runs-on: ubuntu-latest
     needs: quality-and-tests
-    # Don't fail the whole workflow if the public image for c-icap or
-    # ClamAV is flaky — we'll know from the step status.
-    continue-on-error: true
+    if: github.event_name == 'push' || github.event_name == 'schedule'
 
     steps:
       - name: Checkout code
@@ -108,8 +117,6 @@ jobs:
         # --display-all-issues + --display-skipped print the full
         # assertion diffs that Pest normally hides behind a summary
         # line; --debug replaces the progress bar with event output.
-        # The integration job stays continue-on-error while we
-        # reverse-engineer the ICAP server contract.
         run: composer test:integration -- --display-all-issues --display-skipped --debug
 
       - name: Dump service logs on failure
