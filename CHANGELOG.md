@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and uses that value. Falls back to 1024 when no cache entry exists or the
   response carries no `Preview` header. Explicit values still take precedence.
   (Issue #58)
+- **OPTIONS Max-Connections pool tuning** (v2.2-L): `AmpConnectionPool` accepts
+  an optional `serverMaxConnections` constructor parameter. When set, the
+  effective idle cap becomes `min(localCap, serverMaxConnections)` per
+  RFC 3507 §4.10.2. (Issue #59)
 - `NullConnectionPool` (v2.2-E2): implements `ConnectionPoolInterface` with
   no keep-alive — every `acquire()` opens a fresh connection, every `release()`
   closes it. Useful for testing and explicit no-pool configurations.
