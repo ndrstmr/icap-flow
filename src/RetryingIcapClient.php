@@ -124,7 +124,7 @@ final class RetryingIcapClient implements IcapClientInterface
     public function scanFileWithPreview(
         string $service,
         string $filePath,
-        int $previewSize = 1024,
+        ?int $previewSize = null,
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {

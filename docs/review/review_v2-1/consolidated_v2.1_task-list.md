@@ -181,11 +181,12 @@ Alle Items additiv; kein BC-Break.
 
 ### OPTIONS-getriebenes Pool-/Preview-Tuning
 
-- [ ] **v2.2-K** OPTIONS-driven Preview-Size: `scanFileWithPreview()` ohne
+- [x] **v2.2-K** OPTIONS-driven Preview-Size: `scanFileWithPreview()` ohne
   expliziten `$previewSize`-Parameter befragt den OPTIONS-Cache und nutzt
   den Server-`Preview`-Header-Wert. Intern über bestehendes
   `OptionsCacheInterface` — kein neues Public-API nötig.
   *Datei: `src/IcapClient.php:269-322` — Quelle: 4/4*
+  ✅ PR #72, Closes #58.
 
 - [ ] **v2.2-L** Max-Connections aus OPTIONS für Pool-Cap:
   `effectiveCap = min(localCap, serverMaxConnections)`,
@@ -202,11 +203,12 @@ Alle Items additiv; kein BC-Break.
   TTL-Tests ohne `advanceClockForTesting()`.
   *Datei: `src/Cache/InMemoryOptionsCache.php:92-94` — Quelle: Claude*
 
-- [ ] **v2.2-E2** `NullConnectionPool` anlegen:
+- [x] **v2.2-E2** `NullConnectionPool` anlegen:
   implementiert `ConnectionPoolInterface`, jede `acquire()`-Anfrage
   öffnet eine frische Verbindung, `release()` schließt sie.
   Nützlich für explizite Pool-Off-Konfigs und Tests.
   *Datei: `src/Transport/NullConnectionPool.php` (neu) — Quelle: Codex*
+  ✅ PR #71, Closes #57.
 
 - [ ] **v2.2-X** PSR-6/16 OPTIONS-Cache-Adapter als Optional-Deps:
   `Cache/Psr16OptionsCache.php`, `Cache/Psr6OptionsCache.php`.
