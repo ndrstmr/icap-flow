@@ -249,9 +249,10 @@ Alle Items additiv; kein BC-Break.
 
 ### Korrektheit & Robustheit
 
-- [ ] **v2.2-P** Strict-§4.5-Path: per-IO-Timeout-Reset statt
+- [x] **v2.2-P** Strict-§4.5-Path: per-IO-Timeout-Reset statt
   Session-Lifetime-`TimeoutCancellation`. Alternativ: explizites Caveat
   in Phpdoc + CHANGELOG.
+  ✅ PR #80.
   *Datei: `src/Transport/AsyncAmpTransport.php:111-114` — Quelle: Claude*
 
 - [x] **v2.2-Q** Pool-Idle-Eviction mit konfigurierbarem `maxIdleSeconds`

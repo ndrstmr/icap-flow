@@ -108,17 +108,22 @@ final class AsyncAmpTransport implements SessionAwareTransport
     #[\Override]
     public function openSession(Config $config, ?Cancellation $cancellation = null): TransportSession
     {
-        $timeoutCancellation = new TimeoutCancellation($config->getStreamTimeout());
-        $effective = $cancellation === null
-            ? $timeoutCancellation
-            : new CompositeCancellation($cancellation, $timeoutCancellation);
+        // Use a one-shot timeout for socket acquisition only.
+        $acquireCancellation = new TimeoutCancellation($config->getStreamTimeout());
+        $effectiveAcquire = $cancellation === null
+            ? $acquireCancellation
+            : new CompositeCancellation($cancellation, $acquireCancellation);
 
-        $socket = $this->acquireSocket($config, $effective);
+        $socket = $this->acquireSocket($config, $effectiveAcquire);
 
+        // The session creates a fresh TimeoutCancellation per IO call
+        // (write / readResponse), so each individual operation gets
+        // the full streamTimeout window — no session-lifetime timer.
         return new AmpTransportSession(
             config: $config,
             socket: $socket,
-            cancellation: $effective,
+            streamTimeout: $config->getStreamTimeout(),
+            userCancellation: $cancellation,
             maxResponseSize: $config->getMaxResponseSize(),
             maxHeaderLineLength: $config->getMaxHeaderLineLength(),
             pool: $this->pool,
