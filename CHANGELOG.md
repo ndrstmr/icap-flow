@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-04-30
+
 ### Added
 - **PSR-6 and PSR-16 OPTIONS-cache adapters** (v2.2-X): `Psr6OptionsCache` and
   `Psr16OptionsCache` delegate to any PSR-6 `CacheItemPoolInterface` or PSR-16
