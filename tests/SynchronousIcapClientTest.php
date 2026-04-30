@@ -129,6 +129,26 @@ it('it handles and rethrows exceptions from async client', function () {
     m::close();
 });
 
+it('scanFileWithPreview delegates correctly to async client', function () {
+    /** @var IcapClientInterface&\Mockery\MockInterface $async */
+    $async = m::mock(IcapClientInterface::class);
+    $response = new IcapResponse(204);
+    $result = new ScanResult(false, null, $response);
+    /** @var \Mockery\Expectation $exp */
+    $exp = $async->shouldReceive('scanFileWithPreview');
+    $exp->with('/service', '/tmp/file', 512, [], null);
+    $exp->once();
+    $exp->andReturn(\Amp\Future::complete($result));
+
+    $client = new SynchronousIcapClient($async);
+
+    $res = $client->scanFileWithPreview('/service', '/tmp/file', 512);
+
+    expect($res)->toBe($result);
+
+    m::close();
+});
+
 it('static create factory returns a usable client', function () {
     $client = SynchronousIcapClient::create();
     expect($client)->toBeInstanceOf(SynchronousIcapClient::class);

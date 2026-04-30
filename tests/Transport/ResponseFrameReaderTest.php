@@ -161,6 +161,50 @@ it('handles obs-fold in the Encapsulated header with null-body', function () {
     expect($response)->toBe($bytes);
 });
 
+it('handles 0; ieof chunked terminator from a complete-in-preview response', function () {
+    $http = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+    $bytes = "ICAP/1.0 200 OK\r\n"
+        . 'Encapsulated: res-hdr=0, res-body=' . strlen($http) . "\r\n"
+        . "\r\n"
+        . $http
+        . "5\r\nhello\r\n0; ieof\r\n\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+    $response = $reader->readFrom(makeChunkProducer([$bytes]));
+
+    expect($response)->toBe($bytes);
+});
+
+it('handles multi-section Encapsulated with req-hdr + res-hdr + res-body', function () {
+    $reqHdr = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    $resHdr = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n";
+    $bytes = "ICAP/1.0 200 OK\r\n"
+        . 'Encapsulated: req-hdr=0, res-hdr=' . strlen($reqHdr) . ', res-body=' . (strlen($reqHdr) + strlen($resHdr)) . "\r\n"
+        . "\r\n"
+        . $reqHdr
+        . $resHdr
+        . "3\r\nabc\r\n0\r\n\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+    $response = $reader->readFrom(makeChunkProducer([$bytes]));
+
+    expect($response)->toBe($bytes);
+});
+
+it('handles multi-section Encapsulated with req-hdr + req-body (REQMOD)', function () {
+    $reqHdr = "POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: 4\r\n\r\n";
+    $bytes = "ICAP/1.0 200 OK\r\n"
+        . 'Encapsulated: req-hdr=0, req-body=' . strlen($reqHdr) . "\r\n"
+        . "\r\n"
+        . $reqHdr
+        . "4\r\ndata\r\n0\r\n\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+    $response = $reader->readFrom(makeChunkProducer([$bytes]));
+
+    expect($response)->toBe($bytes);
+});
+
 /**
  * @param list<string> $chunks
  * @return Closure(): ?string
