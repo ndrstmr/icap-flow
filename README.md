@@ -128,6 +128,31 @@ $client = new IcapClient(
 );
 ```
 
+### Connection pool
+
+For long-running workers (RoadRunner, Swoole, ReactPHP) the async transport can reuse sockets via a connection pool:
+
+```php
+use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
+use Ndrstmr\Icap\Transport\AmpConnectionPool;
+use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+
+$pool = new AmpConnectionPool(
+    maxConnectionsPerHost: 8,    // idle-socket cap per host:port:tls
+    maxIdleSeconds: 30.0,        // evict sockets idle longer than 30 s
+);
+
+$transport = new AsyncAmpTransport($pool);
+
+// Optional: pass an OPTIONS cache so the client auto-negotiates
+// preview size and honours Options-TTL / ISTag invalidation.
+$cache = new InMemoryOptionsCache();
+// For cross-process caching (Redis, APCu) use Psr16OptionsCache
+// or Psr6OptionsCache instead.
+
+$client = new IcapClient($config, $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+```
+
 ## Custom request headers
 
 ```php
@@ -162,6 +187,10 @@ The `examples/` directory has runnable demos, including a full Symfony-ready asy
 - `examples/cookbook/01-custom-headers.php` — `X-Client-IP`, `X-Authenticated-User`
 - `examples/cookbook/02-custom-preview-strategy.php` — vendor-specific preview interpretation
 - `examples/cookbook/03-options-request.php` — capability discovery via OPTIONS
+- `examples/cookbook/04-tls-mtls.php` — TLS and mutual TLS (mTLS) setup
+- `examples/cookbook/05-retry-decorator.php` — exponential-backoff retry on 5xx
+- `examples/cookbook/06-pool-tuning.php` — connection-pool idle eviction and Max-Connections
+- `examples/cookbook/07-cancellation-from-upload.php` — timeout and user-initiated cancellation
 
 ## Integration tests
 
