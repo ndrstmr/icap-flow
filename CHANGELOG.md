@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Pool idle-eviction** (v2.2-Q): `AmpConnectionPool` now records when each
+  socket became idle and evicts entries older than `maxIdleSeconds` (default
+  30 s) on the next `acquire()`. Prevents stale socket accumulation in
+  long-running PHP workers (Swoole, RoadRunner, ReactPHP). The constructor
+  accepts optional `maxIdleSeconds` and `clock` parameters for tuning and
+  deterministic testing. (Issue #64)
 - **OPTIONS-driven preview size auto-detection** (v2.2-K): `scanFileWithPreview()`
   now accepts `?int $previewSize = null`. When null, the client queries the
   OPTIONS cache for the server's advertised `Preview` header (RFC 3507 §4.10.2)
