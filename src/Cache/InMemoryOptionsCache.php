@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Cache;
 
+use Closure;
 use Ndrstmr\Icap\DTO\IcapResponse;
 
 /**
@@ -36,14 +37,22 @@ use Ndrstmr\Icap\DTO\IcapResponse;
  */
 final class InMemoryOptionsCache implements OptionsCacheInterface
 {
-    /** @var array<string, array{response: IcapResponse, expiresAt: int}> */
+    /** @var array<string, array{response: IcapResponse, expiresAt: int, istag: ?string}> */
     private array $entries = [];
 
+    private ?string $lastKnownIstag = null;
+
+    /** @var Closure(): int */
+    private Closure $clock;
+
     /**
-     * Test seam — lets unit tests advance the cache's notion of "now"
-     * past a stored entry's TTL without sleeping.
+     * @param (Closure(): int)|null $clock injectable clock for deterministic tests; defaults to time()
      */
-    private int $clockOffsetSeconds = 0;
+    public function __construct(
+        ?Closure $clock = null,
+    ) {
+        $this->clock = $clock ?? static fn (): int => time();
+    }
 
     #[\Override]
     public function get(string $key): ?IcapResponse
@@ -53,7 +62,18 @@ final class InMemoryOptionsCache implements OptionsCacheInterface
             return null;
         }
 
-        if ($this->now() >= $entry['expiresAt']) {
+        if (($this->clock)() >= $entry['expiresAt']) {
+            unset($this->entries[$key]);
+            return null;
+        }
+
+        // ISTag drift: if a newer ISTag has been observed globally,
+        // entries stored under an older ISTag are stale.
+        if (
+            $this->lastKnownIstag !== null
+            && $entry['istag'] !== null
+            && $entry['istag'] !== $this->lastKnownIstag
+        ) {
             unset($this->entries[$key]);
             return null;
         }
@@ -62,15 +82,27 @@ final class InMemoryOptionsCache implements OptionsCacheInterface
     }
 
     #[\Override]
-    public function set(string $key, IcapResponse $response, int $ttlSeconds): void
+    public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
     {
         if ($ttlSeconds <= 0) {
             return;
         }
 
+        // When the ISTag changes, all previously cached entries are
+        // potentially stale (the server updated its configuration or
+        // signature database). Flush them.
+        if ($istag !== null && $this->lastKnownIstag !== null && $istag !== $this->lastKnownIstag) {
+            $this->entries = [];
+        }
+
+        if ($istag !== null) {
+            $this->lastKnownIstag = $istag;
+        }
+
         $this->entries[$key] = [
             'response'  => $response,
-            'expiresAt' => $this->now() + $ttlSeconds,
+            'expiresAt' => ($this->clock)() + $ttlSeconds,
+            'istag'     => $istag ?? $this->lastKnownIstag,
         ];
     }
 
@@ -78,19 +110,5 @@ final class InMemoryOptionsCache implements OptionsCacheInterface
     public function delete(string $key): void
     {
         unset($this->entries[$key]);
-    }
-
-    /**
-     * Advance the cache's notion of "now" by $seconds. Strictly for
-     * tests — production code should use a real clock.
-     */
-    public function advanceClockForTesting(int $seconds): void
-    {
-        $this->clockOffsetSeconds += $seconds;
-    }
-
-    private function now(): int
-    {
-        return time() + $this->clockOffsetSeconds;
     }
 }

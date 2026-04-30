@@ -205,7 +205,8 @@ final class IcapClient implements IcapClientInterface
             // server didn't specify one.
             if ($this->optionsCache !== null) {
                 $ttl = (int) ($response->headers['Options-TTL'][0] ?? '0');
-                $this->optionsCache->set($cacheKey, $response, $ttl);
+                $istag = $response->headers['ISTag'][0] ?? null;
+                $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
             }
 
             return $result;

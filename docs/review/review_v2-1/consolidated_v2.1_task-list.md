@@ -68,8 +68,8 @@
 | Q | Pool ohne Idle-Eviction → langlebige Workers akkumulieren Stale-Connections | Robustheit P2 | `Transport/AmpConnectionPool.php:42-46` | 4/4 |
 | R | ~~obs-fold (RFC 7230) im `Encapsulated`-Header wird im Framer nicht erkannt~~ ✅ PR #76 | RFC P2 | `Transport/ResponseFrameReader.php:144-155` | Claude, Codex |
 | S | ~~Header-Name-Validation-Regex lässt RFC-7230-§3.2.6 Separator-Tokens durch~~ ✅ PR #75 | Security P2 | `IcapClient.php:637` | Claude |
-| T | OPTIONS-Cache ohne ISTag-Invalidation — Signature-Update wird nicht erkannt | RFC P2 | `Cache/InMemoryOptionsCache.php` | Claude |
-| U | `InMemoryOptionsCache` nutzt `time()` direkt, kein PSR-20 `ClockInterface` | Testbarkeit P2 | `Cache/InMemoryOptionsCache.php:92-94` | Claude |
+| T | ~~OPTIONS-Cache ohne ISTag-Invalidation — Signature-Update wird nicht erkannt~~ ✅ PR #78 | RFC P2 | `Cache/InMemoryOptionsCache.php` | Claude |
+| U | ~~`InMemoryOptionsCache` nutzt `time()` direkt, kein PSR-20 `ClockInterface`~~ ✅ PR #78 | Testbarkeit P2 | `Cache/InMemoryOptionsCache.php` | Claude |
 | V | `IcapClient::executeRaw()` ist `public` aber nicht im Interface — leakt internen Pfad | API P1 | `IcapClient.php:144` | Claude, Codex |
 | W | `options()` gibt `Future<ScanResult>` zurück — semantisch falsch (keine infected/clean Semantik) | API P1 | `IcapClient.php:157` | Claude, Codex |
 | X | Kein PSR-6/16 Cache-Adapter für OPTIONS-Cache | Erweiterbarkeit P2 | — | 3/4 |
@@ -194,15 +194,17 @@ Alle Items additiv; kein BC-Break.
   *Dateien: `src/Transport/AmpConnectionPool.php:106-110` — Quelle: 4/4*
   ✅ PR #73, Closes #59.
 
-- [ ] **v2.2-T** OPTIONS-Cache ISTag-Invalidation:
-  `OptionsCacheInterface` um `?string $istag`-Parameter erweitern;
-  `InMemoryOptionsCache` eviktet den Eintrag bei ISTag-Wechsel.
+- [x] **v2.2-T** OPTIONS-Cache ISTag-Invalidation:
+  `OptionsCacheInterface::set()` um `?string $istag`-Parameter erweitert;
+  `InMemoryOptionsCache` eviktet alle Einträge bei ISTag-Wechsel.
+  ✅ PR #78.
   *Dateien: `src/Cache/OptionsCacheInterface.php`, `src/Cache/InMemoryOptionsCache.php` — Quelle: Claude*
 
-- [ ] **v2.2-U** PSR-20 `ClockInterface` als optionalen Konstruktor-Parameter
-  in `InMemoryOptionsCache` einführen; ermöglicht deterministische
-  TTL-Tests ohne `advanceClockForTesting()`.
-  *Datei: `src/Cache/InMemoryOptionsCache.php:92-94` — Quelle: Claude*
+- [x] **v2.2-U** Injectable `(Closure(): int)|null $clock` als Konstruktor-Parameter
+  in `InMemoryOptionsCache`; ermöglicht deterministische TTL-Tests.
+  `advanceClockForTesting()` entfernt.
+  ✅ PR #78.
+  *Datei: `src/Cache/InMemoryOptionsCache.php` — Quelle: Claude*
 
 - [x] **v2.2-E2** `NullConnectionPool` anlegen:
   implementiert `ConnectionPoolInterface`, jede `acquire()`-Anfrage

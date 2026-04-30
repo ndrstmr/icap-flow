@@ -44,8 +44,14 @@ interface OptionsCacheInterface
     /**
      * Store $response under $key for at most $ttlSeconds. A value
      * <= 0 means "do not cache".
+     *
+     * When $istag is not null, the implementation SHOULD use it to
+     * invalidate stale entries: if the ISTag (RFC 3507 §4.10.2
+     * "Implementation Status Tag") has changed since the last store,
+     * the server's configuration or signature database was updated
+     * and all previously cached entries are potentially stale.
      */
-    public function set(string $key, IcapResponse $response, int $ttlSeconds): void;
+    public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void;
 
     /**
      * Remove the cached entry for $key. Idempotent.

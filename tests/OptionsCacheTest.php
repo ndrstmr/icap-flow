@@ -170,11 +170,13 @@ it('honours the Options-TTL header when storing', function () {
 });
 
 it('treats an expired cache entry as a miss', function () {
-    $cache = new InMemoryOptionsCache();
-    // Entry with a TTL of 1 second, then artificially advance the
-    // cache's notion of "now" past it.
+    $now = 1000;
+    $cache = new InMemoryOptionsCache(clock: function () use (&$now): int {
+        return $now;
+    });
+    // Entry with a TTL of 1 second, then advance the clock past it.
     $cache->set('k', new IcapResponse(200), 1);
-    $cache->advanceClockForTesting(2);
+    $now = 1002;
     expect($cache->get('k'))->toBeNull();
 });
 
