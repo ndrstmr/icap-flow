@@ -146,3 +146,68 @@ it('rejects header values that contain CR/LF (injection)', function () {
     expect(fn () => $client->scanFile('/svc', __FILE__, ['X-Bad' => "value\r\nInjected: 1"]))
         ->toThrow(InvalidArgumentException::class);
 });
+
+/**
+ * v2.2-S — RFC 7230 §3.2.6 strict header-name validation.
+ *
+ * tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" /
+ *         "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+ *
+ * Anything outside this set must be rejected. The previous regex only
+ * blocked control characters and the colon; separator tokens like
+ * parentheses, brackets, slash, at-sign etc. slipped through.
+ */
+
+it('rejects header names containing RFC 7230 separator tokens', function () {
+    $client = IcapClient::forServer('icap.example');
+
+    // Each of these characters is a valid ASCII printable but NOT a
+    // valid tchar — they must all be rejected.
+    $separators = ['(', ')', '<', '>', '@', ',', ';', '\\', '"', '/', '[', ']', '?', '=', '{', '}', ' ', "\t"];
+
+    foreach ($separators as $sep) {
+        expect(fn () => $client->scanFile('/svc', __FILE__, ["X-Bad{$sep}Name" => 'value']))
+            ->toThrow(InvalidArgumentException::class, '', "Separator '{$sep}' was not rejected in header name");
+    }
+});
+
+it('accepts valid tchar-only header names per RFC 7230', function () {
+    $captured = null;
+
+    $config = new Config('icap.example');
+    /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
+    $formatter = m::mock(RequestFormatterInterface::class);
+    /** @var TransportInterface&\Mockery\MockInterface $transport */
+    $transport = m::mock(TransportInterface::class);
+    /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
+    $parser = m::mock(ResponseParserInterface::class);
+
+    /** @var \Mockery\Expectation $f */
+    $f = $formatter->shouldReceive('format');
+    $f->andReturn(['HEAD']);
+    /** @var \Mockery\Expectation $t */
+    $t = $transport->shouldReceive('request');
+    $t->andReturn(\Amp\Future::complete('RAW'));
+    /** @var \Mockery\Expectation $p */
+    $p = $parser->shouldReceive('parse');
+    $p->andReturn(new IcapResponse(204));
+
+    $client = new IcapClient($config, $transport, $formatter, $parser);
+
+    $tmp = tempnam(sys_get_temp_dir(), 'icap');
+    file_put_contents($tmp, 'payload');
+
+    // All valid tchar characters in a header name.
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client, $tmp) {
+        $client->scanFile('/svc', $tmp, [
+            "X-Valid!#\$%&'*+-.^_`|~09azAZ" => 'ok',
+        ])->await();
+    });
+
+    // If we got here without exception, the name was accepted.
+    expect(true)->toBeTrue();
+
+    unlink($tmp);
+    m::close();
+});
