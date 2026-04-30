@@ -143,7 +143,13 @@ final class ResponseFrameReader
 
     private function findEncapsulatedHeader(string $headBlock): ?string
     {
-        $lines = preg_split('/\r?\n/', $headBlock) ?: [];
+        // RFC 7230 §3.2.4: obs-fold — a continuation line starts with
+        // at least one SP or HTAB and belongs to the previous header.
+        // Unfold before splitting so multi-line Encapsulated values
+        // (seen with c-icap) are parsed correctly.
+        $unfolded = (string) preg_replace('/\r?\n[ \t]+/', ' ', $headBlock);
+
+        $lines = preg_split('/\r?\n/', $unfolded) ?: [];
         foreach ($lines as $line) {
             if (preg_match('/^Encapsulated\s*:\s*(.+)$/i', $line, $m) === 1) {
                 return trim($m[1]);
