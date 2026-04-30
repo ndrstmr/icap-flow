@@ -97,6 +97,43 @@ it('logs a warning when the request raises an exception', function () {
     m::close();
 });
 
+it('does not leak response headers into log context', function () {
+    /** @var LoggerInterface&\Mockery\MockInterface $logger */
+    $logger = m::mock(LoggerInterface::class);
+
+    $logContexts = [];
+    /** @var \Mockery\Expectation $info */
+    $info = $logger->shouldReceive('info');
+    $info->withArgs(function (string $msg, array $ctx) use (&$logContexts) {
+        $logContexts[] = $ctx;
+        return true;
+    });
+
+    // Response carries a virus header — this must NOT appear in log context.
+    [$client] = buildClientWithLogger($logger, new IcapResponse(200, [
+        'X-Virus-Name' => ['Eicar-Test-Signature'],
+        'X-Infection-Found' => ['Type=0; Resolution=2; Threat=Eicar'],
+    ]));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        $client->options('/svc')->await();
+    });
+
+    // Verify that no log context contains response header values.
+    foreach ($logContexts as $ctx) {
+        // Keys that are expected: method, uri, host, port, statusCode, infected.
+        // Keys that must NOT appear: headers, X-Virus-Name, or any raw header data.
+        expect($ctx)->not->toHaveKey('headers');
+        expect($ctx)->not->toHaveKey('X-Virus-Name');
+        expect($ctx)->not->toHaveKey('X-Infection-Found');
+        $serialized = json_encode($ctx);
+        expect($serialized)->not->toContain('Eicar');
+    }
+
+    m::close();
+});
+
 /**
  * @return array{IcapClient}
  */

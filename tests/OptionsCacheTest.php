@@ -180,6 +180,24 @@ it('treats an expired cache entry as a miss', function () {
     expect($cache->get('k'))->toBeNull();
 });
 
+it('does not cache when Options-TTL is zero', function () {
+    $response = new IcapResponse(200, ['Options-TTL' => ['0']]);
+    $cache = new InMemoryOptionsCache();
+
+    [$client] = makeOptionsClient($cache, $response);
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        $client->options('/avscan')->await();
+    });
+
+    // TTL=0 means the server does not want the response cached.
+    $entry = $cache->get('icap.example:1344/avscan');
+    expect($entry)->toBeNull();
+
+    m::close();
+});
+
 it('is a no-op when no cache is configured', function () {
     // Passing optionsCache: null re-enters the original behaviour.
     $config = new Config('icap.example');

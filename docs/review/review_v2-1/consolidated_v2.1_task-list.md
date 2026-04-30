@@ -232,7 +232,7 @@ Alle Items additiv; kein BC-Break.
   *Datei: `.github/workflows/ci.yml:63` — Quelle: 3/4*
   ✅ PR #74, Closes #61. Nightly + push-to-main, kein continue-on-error.
 
-- [ ] **v2.2-O** Coverage-Push auf Hotspot-Klassen. Ziele:
+- [x] **v2.2-O** Coverage-Push auf Hotspot-Klassen. Ziele:
   `AmpConnectionPool` 54 → ≥ 90 %, `SynchronousStreamTransport` 41 → ≥ 85 %,
   Async-Socket-Error-Handling 63 → ≥ 85 %.
   Konkrete fehlende Test-Cases:
@@ -244,6 +244,7 @@ Alle Items additiv; kein BC-Break.
   - `Options-TTL=0` (kein-Caching-Pfad)
   - `SynchronousIcapClient::scanFileWithPreview()`
   - Logger Sensitive-Header-Regression
+  ✅ PR #83.
   *Dateien: `tests/Transport/`, `tests/Wire/`, `tests/CancellationTest.php`,
   `tests/SynchronousIcapClientTest.php`, `tests/LoggerIntegrationTest.php`,
   `tests/OptionsCacheTest.php` — Quelle: Jules + Claude + Codex*
