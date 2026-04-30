@@ -8,12 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **OPTIONS-cache ISTag invalidation** (v2.2-T): `OptionsCacheInterface::set()`
+  accepts an optional `?string $istag` parameter. `InMemoryOptionsCache` tracks
+  the last known ISTag and flushes all cached entries when it changes (RFC 3507
+  §4.10.2 — ISTag reflects server config/signature updates). `IcapClient::options()`
+  now extracts the `ISTag` header from the response and passes it to the cache.
+- **Injectable clock for InMemoryOptionsCache** (v2.2-U): the constructor accepts
+  an optional `(Closure(): int)|null $clock` parameter, replacing the internal
+  `advanceClockForTesting()` test seam with a clean dependency-injection approach.
+  Tests use a controlled clock closure; production code defaults to `time()`.
 - **Pool idle-eviction** (v2.2-Q): `AmpConnectionPool` now records when each
   socket became idle and evicts entries older than `maxIdleSeconds` (default
   30 s) on the next `acquire()`. Prevents stale socket accumulation in
   long-running PHP workers (Swoole, RoadRunner, ReactPHP). The constructor
   accepts optional `maxIdleSeconds` and `clock` parameters for tuning and
-  deterministic testing. (Issue #64)
+  deterministic testing.
 - **OPTIONS-driven preview size auto-detection** (v2.2-K): `scanFileWithPreview()`
   now accepts `?int $previewSize = null`. When null, the client queries the
   OPTIONS cache for the server's advertised `Preview` header (RFC 3507 §4.10.2)
