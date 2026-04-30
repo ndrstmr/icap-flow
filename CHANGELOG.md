@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Issue #57)
 
 ### Changed
+- **Strict header-name validation** (v2.2-S): `IcapClient::validateIcapHeaders()`
+  now rejects any character outside the RFC 7230 §3.2.6 `tchar` set.
+  The previous blacklist regex only blocked control characters and the
+  colon; separator tokens like parentheses, brackets, slash, at-sign,
+  etc. slipped through. The new whitelist regex accepts only
+  `ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" /
+  "-" / "." / "^" / "_" / "`" / "|" / "~"`. (Issue #62)
 - **Integration CI hardened** (v2.2-N): removed `continue-on-error: true` from
   the integration job. Integration tests now run on push-to-main and a nightly
   schedule (03:15 UTC) instead of on every PR, avoiding flaky ClamAV image

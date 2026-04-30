@@ -634,9 +634,12 @@ final class IcapClient implements IcapClientInterface
     private function validateIcapHeaders(array $headers): void
     {
         foreach ($headers as $name => $value) {
-            if (preg_match('/[\x00-\x1F\x7F:]/', $name) === 1) {
+            // RFC 7230 §3.2.6 — header names must consist of tchar only:
+            // tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+"
+            //       / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+            if (preg_match('/^[!#$%&\'*+\-.^_`|~0-9a-zA-Z]+$/', $name) !== 1) {
                 throw new \InvalidArgumentException(
-                    'ICAP header name contains control characters or separator: ' . var_export($name, true),
+                    'ICAP header name contains invalid characters (RFC 7230 §3.2.6): ' . var_export($name, true),
                 );
             }
             foreach ((array) $value as $v) {

@@ -67,7 +67,7 @@
 | P | Strict-§4.5-Path nutzt eine Session-Lifetime-Cancellation statt per-IO | Korrektheit P2 | `Transport/AsyncAmpTransport.php:111-114` | Claude |
 | Q | Pool ohne Idle-Eviction → langlebige Workers akkumulieren Stale-Connections | Robustheit P2 | `Transport/AmpConnectionPool.php:42-46` | 4/4 |
 | R | obs-fold (RFC 7230) im `Encapsulated`-Header wird im Framer nicht erkannt | RFC P2 | `Transport/ResponseFrameReader.php:144-153` | Claude, Codex |
-| S | Header-Name-Validation-Regex lässt RFC-7230-§3.2.6 Separator-Tokens durch | Security P2 | `IcapClient.php:601` | Claude |
+| S | ~~Header-Name-Validation-Regex lässt RFC-7230-§3.2.6 Separator-Tokens durch~~ ✅ PR #75 | Security P2 | `IcapClient.php:637` | Claude |
 | T | OPTIONS-Cache ohne ISTag-Invalidation — Signature-Update wird nicht erkannt | RFC P2 | `Cache/InMemoryOptionsCache.php` | Claude |
 | U | `InMemoryOptionsCache` nutzt `time()` direkt, kein PSR-20 `ClockInterface` | Testbarkeit P2 | `Cache/InMemoryOptionsCache.php:92-94` | Claude |
 | V | `IcapClient::executeRaw()` ist `public` aber nicht im Interface — leakt internen Pfad | API P1 | `IcapClient.php:144` | Claude, Codex |
@@ -261,9 +261,10 @@ Alle Items additiv; kein BC-Break.
   vor dem Zeilenweise-Split auf.
   *Datei: `src/Transport/ResponseFrameReader.php:144-153` — Quelle: Claude, Codex*
 
-- [ ] **v2.2-S** Header-Name-Validation auf RFC-7230-§3.2.6-Token-Set
+- [x] **v2.2-S** Header-Name-Validation auf RFC-7230-§3.2.6-Token-Set
   verschärfen: `[!#$%&'*+\-.^_` + "`" + `|~0-9a-zA-Z]+`.
-  *Datei: `src/IcapClient.php:601` — Quelle: Claude*
+  ✅ PR #75, Closes #62.
+  *Datei: `src/IcapClient.php:637` — Quelle: Claude*
 
 ### Doku & Tooling
 
