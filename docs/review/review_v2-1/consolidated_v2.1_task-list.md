@@ -54,7 +54,7 @@
 | C | `SECURITY.md` Z. 73-75 behauptet: kein Retry, kein Cache, kein Pooling — alles seit v2.0/2.1 implementiert | Doku P0 | `SECURITY.md:73-75` | Claude, Jules |
 | D | `scanFileWithPreviewStrict()` lädt Body-Remainder via `stream_get_contents()` in RAM → OOM bei GB-Uploads | OOM P1 | `IcapClient.php:399` | Claude, Codex ×2 |
 | E | `ConnectionPoolInterface` Phpdoc referenziert nicht-existente `NullConnectionPool`-Klasse | Doku/Code P1 | `Transport/ConnectionPoolInterface.php:36` | Codex |
-| F | `IcapResponseException` ist `@deprecated since 2.0, removal in M2` — M2 ist released, Klasse im Hot-Path | Inkonsistenz P1 | `Exception/IcapResponseException.php:28-32` | Claude, Codex |
+| F | ~~`IcapResponseException` ist `@deprecated since 2.0, removal in M2` — M2 ist released, Klasse im Hot-Path~~ ✅ PR #79 | Inkonsistenz P1 | `Exception/IcapResponseException.php` | Claude, Codex |
 | G | Cookbook `03-options-request.php` Z. 11-13: „next milestone after v2.0.0" — v2.0 ist released | Doku P1 | `examples/cookbook/03-options-request.php:11-13` | Claude |
 | H | Cookbook `02-custom-preview-strategy.php`: McAfee-Strategy mappt 200 → `ABORT_CLEAN` (Anti-Pattern, lehrt unsicheres Muster) | Doku P2 | `examples/cookbook/02-custom-preview-strategy.php` | Claude |
 | I | `phpunit.xml.dist`: `failOnRisky=false` + `failOnWarning=false`; 3 risky Tests im Unit-Run | CI P2 | `phpunit.xml.dist` | Codex-PR |
@@ -300,9 +300,10 @@ Alle Items additiv; kein BC-Break.
 - [ ] **v2.2-sbom** SBOM (CycloneDX/SPDX) in CI generieren.
   *Datei: `.github/workflows/ci.yml` — Quelle: Claude*
 
-- [ ] **v2.2-F** `IcapResponseException`: PHP 8.4 `#[\Deprecated]` mit
-  konkretem `v3.0.0`-Removal-Tag setzen.
-  *Datei: `src/Exception/IcapResponseException.php:28-32` — Quelle: Claude, Codex*
+- [x] **v2.2-F** `IcapResponseException`: PHP 8.4 `#[\Deprecated]` mit
+  konkretem `v3.0.0`-Removal-Tag auf dem Konstruktor gesetzt.
+  ✅ PR #79.
+  *Datei: `src/Exception/IcapResponseException.php` — Quelle: Claude, Codex*
 
 ### P3 — Nice-to-Have
 
