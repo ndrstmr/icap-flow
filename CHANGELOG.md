@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **PSR-6 and PSR-16 OPTIONS-cache adapters** (v2.2-X): `Psr6OptionsCache` and
+  `Psr16OptionsCache` delegate to any PSR-6 `CacheItemPoolInterface` or PSR-16
+  `CacheInterface` implementation (Redis, APCu, Memcached, …). Both support key
+  prefixing, ISTag-based flush-on-change, and TTL pass-through. The PSR interfaces
+  are listed as `suggest` in composer.json — no hard dependency added.
 - **OPTIONS-cache ISTag invalidation** (v2.2-T): `OptionsCacheInterface::set()`
   accepts an optional `?string $istag` parameter. `InMemoryOptionsCache` tracks
   the last known ISTag and flushes all cached entries when it changes (RFC 3507
