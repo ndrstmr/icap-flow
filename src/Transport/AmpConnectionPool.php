@@ -26,6 +26,7 @@ use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
 use Closure;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 /**
@@ -130,6 +131,26 @@ final class AmpConnectionPool implements ConnectionPoolInterface
             }
         }
         $this->idle = [];
+    }
+
+    /**
+     * Extract the `Max-Connections` header from an OPTIONS response and
+     * apply it as the server-side idle cap. Subsequent {@see release()}
+     * calls use `min(localCap, serverMaxConnections)`.
+     *
+     * Typical usage after an OPTIONS round-trip:
+     *
+     *     $result = $client->options('/avscan')->await();
+     *     $pool->tuneFromOptions($result->originalResponse);
+     *
+     * @see \Ndrstmr\Icap\DTO\ScanResult::$originalResponse
+     */
+    public function tuneFromOptions(IcapResponse $response): void
+    {
+        $maxConn = (int) ($response->headers['Max-Connections'][0] ?? '0');
+        if ($maxConn >= 1) {
+            $this->serverMaxConnections = $maxConn;
+        }
     }
 
     /**

@@ -147,3 +147,127 @@ it('rejects serverMaxConnections of zero or negative', function () {
     expect(fn () => new AmpConnectionPool(serverMaxConnections: -1))
         ->toThrow(InvalidArgumentException::class);
 });
+
+it('tuneFromOptions extracts Max-Connections from an OPTIONS response', function () {
+    $created = createSocketQueue(4);
+    $queue = $created;
+
+    $config = new Config('icap.example');
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 8,
+        connector: function () use (&$queue): SocketInterface {
+            return array_shift($queue) ?? throw new RuntimeException('exhausted');
+        },
+    );
+
+    // Simulate an OPTIONS response with Max-Connections: 2.
+    $optionsResponse = new \Ndrstmr\Icap\DTO\IcapResponse(200, [
+        'Max-Connections' => ['2'],
+        'Options-TTL'     => ['3600'],
+    ]);
+    $pool->tuneFromOptions($optionsResponse);
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($pool, $config) {
+        $sockets = [
+            $pool->acquire($config),
+            $pool->acquire($config),
+            $pool->acquire($config),
+        ];
+        foreach ($sockets as $s) {
+            $pool->release($config, $s);
+        }
+    });
+
+    // Effective cap = min(8, 2) = 2 → third socket closed.
+    expect($created[2]->isClosed())->toBeTrue();
+    expect($created[0]->isClosed())->toBeFalse()
+        ->and($created[1]->isClosed())->toBeFalse();
+});
+
+it('tuneFromOptions ignores a response without Max-Connections header', function () {
+    $created = createSocketQueue(4);
+    $queue = $created;
+
+    $config = new Config('icap.example');
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 3,
+        connector: function () use (&$queue): SocketInterface {
+            return array_shift($queue) ?? throw new RuntimeException('exhausted');
+        },
+    );
+
+    // OPTIONS response without Max-Connections → no change.
+    $pool->tuneFromOptions(new \Ndrstmr\Icap\DTO\IcapResponse(200, [
+        'Options-TTL' => ['3600'],
+    ]));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($pool, $config) {
+        $sockets = [
+            $pool->acquire($config),
+            $pool->acquire($config),
+            $pool->acquire($config),
+        ];
+        foreach ($sockets as $s) {
+            $pool->release($config, $s);
+        }
+    });
+
+    // All three fit within localCap (3) — no server constraint applied.
+    expect($created[0]->isClosed())->toBeFalse()
+        ->and($created[1]->isClosed())->toBeFalse()
+        ->and($created[2]->isClosed())->toBeFalse();
+});
+
+it('tuneFromOptions can be called multiple times to update the cap dynamically', function () {
+    $config = new Config('icap.example');
+    $socketIndex = 0;
+
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 8,
+        connector: function () use (&$socketIndex): SocketInterface {
+            $socketIndex++;
+            [, $end] = Socket\createSocketPair();
+            return $end;
+        },
+    );
+
+    // First tune: server allows 3.
+    $pool->tuneFromOptions(new \Ndrstmr\Icap\DTO\IcapResponse(200, [
+        'Max-Connections' => ['3'],
+    ]));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($pool, $config) {
+        $s1 = $pool->acquire($config);
+        $s2 = $pool->acquire($config);
+        $s3 = $pool->acquire($config);
+        $s4 = $pool->acquire($config);
+        $pool->release($config, $s1);
+        $pool->release($config, $s2);
+        $pool->release($config, $s3);
+        $pool->release($config, $s4); // 4th exceeds cap 3 → closed
+        expect($s4->isClosed())->toBeTrue();
+        expect($s1->isClosed())->toBeFalse();
+    });
+
+    // Second tune: server reduces to 1.
+    $pool->tuneFromOptions(new \Ndrstmr\Icap\DTO\IcapResponse(200, [
+        'Max-Connections' => ['1'],
+    ]));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($pool, $config) {
+        // Drain existing idle sockets (3 from above).
+        $a = $pool->acquire($config);
+        $b = $pool->acquire($config);
+        $c = $pool->acquire($config);
+        $pool->release($config, $a);
+        $pool->release($config, $b); // 2nd exceeds cap 1 → closed
+        expect($b->isClosed())->toBeTrue();
+        $pool->release($config, $c); // also exceeds → closed
+        expect($c->isClosed())->toBeTrue();
+        expect($a->isClosed())->toBeFalse();
+    });
+});
