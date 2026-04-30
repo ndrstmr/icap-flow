@@ -223,10 +223,11 @@ Alle Items additiv; kein BC-Break.
   *Datei: `.github/workflows/ci.yml:130-135` — Quelle: 4/4*
   ✅ PR #69, Closes #60. MSI 68.47% im ersten CI-Lauf.
 
-- [ ] **v2.2-N** Integration-CI aus `continue-on-error: true` herausführen:
+- [x] **v2.2-N** Integration-CI aus `continue-on-error: true` herausführen:
   entweder hartes Gate auf PRs oder Nightly-Workflow mit
   Required-Status-Check. Nightly empfohlen wegen flaky ClamAV-Image.
   *Datei: `.github/workflows/ci.yml:63` — Quelle: 3/4*
+  ✅ PR #74, Closes #61. Nightly + push-to-main, kein continue-on-error.
 
 - [ ] **v2.2-O** Coverage-Push auf Hotspot-Klassen. Ziele:
   `AmpConnectionPool` 54 → ≥ 90 %, `SynchronousStreamTransport` 41 → ≥ 85 %,
