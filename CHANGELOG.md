@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closes it. Useful for testing and explicit no-pool configurations.
   (Issue #57)
 
+### Changed
+- **Integration CI hardened** (v2.2-N): removed `continue-on-error: true` from
+  the integration job. Integration tests now run on push-to-main and a nightly
+  schedule (03:15 UTC) instead of on every PR, avoiding flaky ClamAV image
+  bootstrapping on shared runners. Failures are now hard failures. (Issue #61)
+
 ## [2.1.2] - 2026-04-28
 
 ### Fixed
