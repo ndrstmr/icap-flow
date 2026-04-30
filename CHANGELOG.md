@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   etc. slipped through. The new whitelist regex accepts only
   `ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" /
   "-" / "." / "^" / "_" / "`" / "|" / "~"`. (Issue #62)
+- **obs-fold support in ResponseFrameReader** (v2.2-R):
+  `findEncapsulatedHeader()` now unfolds RFC 7230 §3.2.4 obsolete line
+  folding (continuation lines starting with SP or HTAB) before parsing
+  the `Encapsulated` header value. Servers that fold long header values
+  across multiple lines (e.g. c-icap) previously caused the framer to
+  miss the body offset, truncating the response at the head separator.
+  (Issue #63)
 - **Integration CI hardened** (v2.2-N): removed `continue-on-error: true` from
   the integration job. Integration tests now run on push-to-main and a nightly
   schedule (03:15 UTC) instead of on every PR, avoiding flaky ClamAV image

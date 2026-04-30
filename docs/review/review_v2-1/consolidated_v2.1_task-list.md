@@ -66,7 +66,7 @@
 | O | Coverage-Hotspots: `AmpConnectionPool` 54 %, `SynchronousStreamTransport` 41 %, Socket-Error-Handling 63 % | Testing P1 | — | Jules |
 | P | Strict-§4.5-Path nutzt eine Session-Lifetime-Cancellation statt per-IO | Korrektheit P2 | `Transport/AsyncAmpTransport.php:111-114` | Claude |
 | Q | Pool ohne Idle-Eviction → langlebige Workers akkumulieren Stale-Connections | Robustheit P2 | `Transport/AmpConnectionPool.php:42-46` | 4/4 |
-| R | obs-fold (RFC 7230) im `Encapsulated`-Header wird im Framer nicht erkannt | RFC P2 | `Transport/ResponseFrameReader.php:144-153` | Claude, Codex |
+| R | ~~obs-fold (RFC 7230) im `Encapsulated`-Header wird im Framer nicht erkannt~~ ✅ PR #76 | RFC P2 | `Transport/ResponseFrameReader.php:144-155` | Claude, Codex |
 | S | ~~Header-Name-Validation-Regex lässt RFC-7230-§3.2.6 Separator-Tokens durch~~ ✅ PR #75 | Security P2 | `IcapClient.php:637` | Claude |
 | T | OPTIONS-Cache ohne ISTag-Invalidation — Signature-Update wird nicht erkannt | RFC P2 | `Cache/InMemoryOptionsCache.php` | Claude |
 | U | `InMemoryOptionsCache` nutzt `time()` direkt, kein PSR-20 `ClockInterface` | Testbarkeit P2 | `Cache/InMemoryOptionsCache.php:92-94` | Claude |
@@ -256,10 +256,11 @@ Alle Items additiv; kein BC-Break.
   (Default 30 s): Beim `acquire()` abgelaufene Idle-Einträge verwerfen.
   *Datei: `src/Transport/AmpConnectionPool.php:42-46` — Quelle: 4/4*
 
-- [ ] **v2.2-R** obs-fold (RFC 7230) im `Encapsulated`-Header:
+- [x] **v2.2-R** obs-fold (RFC 7230) im `Encapsulated`-Header:
   `ResponseFrameReader::findEncapsulatedHeader()` faltet Continuation-Lines
   vor dem Zeilenweise-Split auf.
-  *Datei: `src/Transport/ResponseFrameReader.php:144-153` — Quelle: Claude, Codex*
+  ✅ PR #76, Closes #63.
+  *Datei: `src/Transport/ResponseFrameReader.php:144-155` — Quelle: Claude, Codex*
 
 - [x] **v2.2-S** Header-Name-Validation auf RFC-7230-§3.2.6-Token-Set
   verschärfen: `[!#$%&'*+\-.^_` + "`" + `|~0-9a-zA-Z]+`.

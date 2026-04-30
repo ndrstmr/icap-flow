@@ -107,6 +107,61 @@ it('raises a malformed-response exception on EOF before any separator', function
 });
 
 /**
+ * v2.2-R — RFC 7230 §3.2.4 obs-fold support in the Encapsulated header.
+ *
+ * Some ICAP servers (notably c-icap under certain configurations) fold
+ * long headers across multiple lines using obs-fold: a continuation
+ * line starts with at least one SP or HTAB. The reader must unfold
+ * these before parsing the Encapsulated header value.
+ */
+
+it('handles obs-fold (continuation line) in the Encapsulated header — SP prefix', function () {
+    $http = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n";
+    // Encapsulated value is folded across two lines with a leading SP.
+    $bytes = "ICAP/1.0 200 OK\r\n"
+        . "ISTag: \"fold\"\r\n"
+        . "Encapsulated: res-hdr=0,\r\n"
+        . " res-body=" . strlen($http) . "\r\n"
+        . "\r\n"
+        . $http
+        . "3\r\nabc\r\n0\r\n\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+    $response = $reader->readFrom(makeChunkProducer([$bytes]));
+
+    expect($response)->toBe($bytes);
+});
+
+it('handles obs-fold (continuation line) in the Encapsulated header — HTAB prefix', function () {
+    $http = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n";
+    // Folded with HTAB instead of SP.
+    $bytes = "ICAP/1.0 200 OK\r\n"
+        . "Encapsulated: res-hdr=0,\r\n"
+        . "\tres-body=" . strlen($http) . "\r\n"
+        . "\r\n"
+        . $http
+        . "3\r\nxyz\r\n0\r\n\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+    $response = $reader->readFrom(makeChunkProducer([$bytes]));
+
+    expect($response)->toBe($bytes);
+});
+
+it('handles obs-fold in the Encapsulated header with null-body', function () {
+    // null-body on a continuation line.
+    $bytes = "ICAP/1.0 204 No Content\r\n"
+        . "Encapsulated:\r\n"
+        . " null-body=0\r\n"
+        . "\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+    $response = $reader->readFrom(makeChunkProducer([$bytes]));
+
+    expect($response)->toBe($bytes);
+});
+
+/**
  * @param list<string> $chunks
  * @return Closure(): ?string
  */
