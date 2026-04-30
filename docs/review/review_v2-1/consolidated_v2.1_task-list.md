@@ -188,10 +188,11 @@ Alle Items additiv; kein BC-Break.
   *Datei: `src/IcapClient.php:269-322` — Quelle: 4/4*
   ✅ PR #72, Closes #58.
 
-- [ ] **v2.2-L** Max-Connections aus OPTIONS für Pool-Cap:
+- [x] **v2.2-L** Max-Connections aus OPTIONS für Pool-Cap:
   `effectiveCap = min(localCap, serverMaxConnections)`,
-  opt-in via `Config::withAutoTunePoolFromOptions(bool)`.
-  *Dateien: `src/Transport/AmpConnectionPool.php:106-110`, `src/Config.php` — Quelle: 4/4*
+  via `AmpConnectionPool::__construct(serverMaxConnections: $max)`.
+  *Dateien: `src/Transport/AmpConnectionPool.php:106-110` — Quelle: 4/4*
+  ✅ PR #73, Closes #59.
 
 - [ ] **v2.2-T** OPTIONS-Cache ISTag-Invalidation:
   `OptionsCacheInterface` um `?string $istag`-Parameter erweitern;

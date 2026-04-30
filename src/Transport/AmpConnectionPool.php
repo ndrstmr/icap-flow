@@ -26,6 +26,7 @@ use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
 use Closure;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 /**
@@ -56,16 +57,24 @@ final class AmpConnectionPool implements ConnectionPoolInterface
     private Closure $connector;
 
     /**
-     * @param int                                                                  $maxConnectionsPerHost cap on idle sockets per host:port[:tls] key
+     * @param int                                                                  $maxConnectionsPerHost  cap on idle sockets per host:port[:tls] key
      * @param (Closure(Config, ?Cancellation): SocketInterface)|null               $connector              optional override — production code uses the amphp connector; tests can inject pre-built socket pairs
+     * @param int|null                                                             $serverMaxConnections   optional server-advertised Max-Connections (RFC 3507 §4.10.2); when set, the effective idle cap becomes min(localCap, serverMax)
      */
     public function __construct(
         private int $maxConnectionsPerHost = 8,
         ?Closure $connector = null,
+        private ?int $serverMaxConnections = null,
     ) {
         if ($maxConnectionsPerHost < 1) {
             throw new \InvalidArgumentException(
                 'maxConnectionsPerHost must be >= 1, got: ' . $maxConnectionsPerHost,
+            );
+        }
+
+        if ($serverMaxConnections !== null && $serverMaxConnections < 1) {
+            throw new \InvalidArgumentException(
+                'serverMaxConnections must be >= 1, got: ' . $serverMaxConnections,
             );
         }
 
@@ -102,12 +111,9 @@ final class AmpConnectionPool implements ConnectionPoolInterface
 
         $key = $this->key($config);
         $idleCount = count($this->idle[$key] ?? []);
+        $effectiveCap = $this->effectiveMaxConnections();
 
-        if ($idleCount >= $this->maxConnectionsPerHost) {
-            // Cap reached — closing the surplus socket is the right
-            // thing per RFC 3507 §4.10.2 (servers also bound this via
-            // Max-Connections; a future enhancement could read that
-            // value back and tune the cap automatically).
+        if ($idleCount >= $effectiveCap) {
             $socket->close();
             return;
         }
@@ -125,6 +131,39 @@ final class AmpConnectionPool implements ConnectionPoolInterface
             }
         }
         $this->idle = [];
+    }
+
+    /**
+     * Extract the `Max-Connections` header from an OPTIONS response and
+     * apply it as the server-side idle cap. Subsequent {@see release()}
+     * calls use `min(localCap, serverMaxConnections)`.
+     *
+     * Typical usage after an OPTIONS round-trip:
+     *
+     *     $result = $client->options('/avscan')->await();
+     *     $pool->tuneFromOptions($result->originalResponse);
+     *
+     * @see \Ndrstmr\Icap\DTO\ScanResult::$originalResponse
+     */
+    public function tuneFromOptions(IcapResponse $response): void
+    {
+        $maxConn = (int) ($response->headers['Max-Connections'][0] ?? '0');
+        if ($maxConn >= 1) {
+            $this->serverMaxConnections = $maxConn;
+        }
+    }
+
+    /**
+     * Effective idle cap: min(localCap, serverMaxConnections) when the
+     * server advertised a Max-Connections header, otherwise localCap.
+     */
+    private function effectiveMaxConnections(): int
+    {
+        if ($this->serverMaxConnections !== null) {
+            return min($this->maxConnectionsPerHost, $this->serverMaxConnections);
+        }
+
+        return $this->maxConnectionsPerHost;
     }
 
     private function key(Config $config): string
