@@ -137,13 +137,22 @@ final class IcapClient implements IcapClientInterface
 
     /**
      * Send the ICAP request and return the parsed {@see IcapResponse}
-     * without the fail-secure status-code interpretation pass. Used by
-     * the preview flow, where 100 Continue is a legitimate intermediate
-     * response. External callers should prefer {@see request()}.
+     * without the fail-secure status-code interpretation pass. Used
+     * internally by the preview flow, where `100 Continue` is a
+     * legitimate intermediate response.
+     *
+     * Visibility is intentionally `protected`: this method bypasses the
+     * fail-secure status-code interpretation in {@see interpretResponse()},
+     * so exposing it as part of the public surface would let callers
+     * silently turn unexpected statuses (e.g. a stray `100` outside the
+     * preview flow) into a `clean` verdict. External callers must use
+     * {@see request()} or one of the `scanFile*()` methods instead.
+     * Subclasses that need raw access (e.g. for vendor-specific extensions)
+     * can still override or invoke this method.
      *
      * @return Future<IcapResponse>
      */
-    public function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
+    protected function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
         /** @var Future<IcapResponse> $future */
         $future = \Amp\async(function () use ($request, $cancellation): IcapResponse {
