@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-05-01
+
+`v3.0.0` is a deliberately small breaking release. It carries no new features
+and no architectural rework — it is a cleanup pass that closes three known-stale
+corners of the v2 API so the surface can be frozen for the upcoming Symfony
+bundle (`ndrstmr/icap-flow-bundle`). Migration: see
+[`docs/migration-v2-to-v3.md`](docs/migration-v2-to-v3.md). For most call sites
+the upgrade is a no-op other than bumping the constraint to `^3.0`.
+
+### Removed
+- **BREAKING (v3.0.0):** `Ndrstmr\Icap\Exception\IcapResponseException` is gone.
+  The class was `@deprecated since 2.0` (with `#[\Deprecated]` since v2.2) and
+  served only as a catch-all bucket for status codes outside the recognised
+  taxonomy. Both throw sites (`IcapClient::interpretResponse()`'s fail-secure
+  backstop, `DefaultPreviewStrategy::handlePreviewResponse()`'s `default`
+  branch) now throw `IcapProtocolException` instead — semantically more honest:
+  a status that is neither a clean-scan signal (204/200/206) nor a recognised
+  failure (100/4xx/5xx) is a protocol violation. Callers using
+  `catch (IcapExceptionInterface $e)` are unaffected. Callers catching
+  `IcapResponseException` directly should switch to `IcapProtocolException` or
+  `IcapExceptionInterface`. *(v3-F — Quelle: Claude, Codex)*
+
+### Changed
+- **BREAKING (v3.0.0):** `IcapClient::executeRaw()` is now `protected`. It was
+  never part of `IcapClientInterface` and exists solely to support the internal
+  preview flow, where `100 Continue` is a legitimate intermediate response.
+  Exposing it as part of the public surface let callers bypass the fail-secure
+  status-code interpretation in `interpretResponse()`. External callers must use
+  `request()`, `scanFile()`, `scanFileWithPreview()` or `options()` instead;
+  subclasses that need raw access can still invoke or override the method.
+  *(v3-V — Quelle: Claude, Codex)*
+- **BREAKING (v3.0.0):** `IcapClient::options()` and
+  `SynchronousIcapClient::options()` now return `Future<IcapResponse>` /
+  `IcapResponse` instead of `Future<ScanResult>` / `ScanResult`. OPTIONS is a
+  capability-discovery method (RFC 3507 §4.10), so a virus-verdict wrapper was
+  always semantically wrong — callers want the raw headers (`Preview`,
+  `Options-TTL`, `Methods`, `Allow`, `Service`, `ISTag`, `Max-Connections`).
+  Fail-secure semantics are preserved: 4xx still throws `IcapClientException`,
+  5xx throws `IcapServerException`, `100 Continue` throws
+  `IcapProtocolException`. The pre-existing `assertSuccessfulStatus()` helper
+  (extracted from `interpretResponse()`) is the single source of truth for the
+  failure branches. Migration: replace `$result->isInfected()` /
+  `$result->getOriginalResponse()->headers` with `$result->headers` directly.
+  *(v3-W — Quelle: Claude, Codex)*
+
 ## [2.2.0] - 2026-04-30
 
 ### Added

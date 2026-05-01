@@ -24,9 +24,19 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 >
 > This software is provided AS IS under EUPL-1.2; the licence's "no warranty" clauses apply unconditionally.
 
+## What changed in v3
+
+`v3.0.0` is a small, deliberate breaking release. It carries no new features — it is a cleanup pass that closes three known-stale corners of the v2 API so the surface can be frozen for the upcoming Symfony bundle (`ndrstmr/icap-flow-bundle`):
+
+- **`IcapClient::executeRaw()` is now `protected`.** It was always meant as an internal seam for the preview flow and never appeared in `IcapClientInterface`. Keeping it public let external callers bypass the fail-secure status-code interpretation. External callers must use `request()`, `scanFile()`, `scanFileWithPreview()` or `options()`; subclasses keep raw access.
+- **`options()` returns `Future<IcapResponse>`** (was `Future<ScanResult>`). OPTIONS is capability discovery, not a virus verdict — callers want the headers (`Preview`, `Options-TTL`, `Methods`, `Allow`, `Service`, `ISTag`, `Max-Connections`) directly. Fail-secure is preserved: 4xx still throws `IcapClientException`, 5xx still throws `IcapServerException`, `100 Continue` still throws `IcapProtocolException` — extracted into a single `assertSuccessfulStatus()` helper shared between `interpretResponse()` and `options()`.
+- **`IcapResponseException` is removed.** Deprecated since v2.0 (`#[\Deprecated]` since v2.2). Both throw sites (`IcapClient::interpretResponse()` backstop, `DefaultPreviewStrategy::handlePreviewResponse()` `default` branch) now throw `IcapProtocolException`. Callers using `catch (IcapExceptionInterface $e)` are unaffected.
+
+Migration: [`docs/migration-v2-to-v3.md`](docs/migration-v2-to-v3.md). For most call sites the upgrade is a no-op other than bumping the constraint to `^3.0`.
+
 ## What changed in v2
 
-`v2.0.0` is a **breaking** release that fixes RFC-3507-blocking bugs in v1. The v1 line is **deprecated**. Highlights:
+`v2.0.0` was a **breaking** release that fixes RFC-3507-blocking bugs in v1. The v1 line is **deprecated**. Highlights:
 
 - **RFC-3507 wire format** is correct: real `Encapsulated` offsets, HTTP-in-ICAP nesting, chunked bodies for both string and stream payloads, `0; ieof` terminator on preview-complete.
 - **Streaming-safe preview** — `scanFileWithPreview()` no longer buffers the file; only the preview window is read.
@@ -46,12 +56,12 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 
 The migration guide is [`docs/migration-v1-to-v2.md`](docs/migration-v1-to-v2.md). The full per-finding closure list is in [`docs/review/consolidated_task-list.md`](docs/review/consolidated_task-list.md).
 
-> **v2.1.0** added keep-alive connection pooling and strict RFC 3507 §4.5 preview-continue (preview + continuation on the same socket). See [`CHANGELOG.md`](CHANGELOG.md).
+> **v2.1.0** added keep-alive connection pooling and strict RFC 3507 §4.5 preview-continue (preview + continuation on the same socket). **v2.2.0** added OPTIONS-driven pool tuning (`Max-Connections`), pool idle eviction, ISTag-based cache invalidation, PSR-6/PSR-16 OPTIONS-cache adapters and a per-IO timeout model. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
 ```bash
-composer require ndrstmr/icap-flow:^2.0
+composer require ndrstmr/icap-flow:^3.0
 ```
 
 ## Quickstart — synchronous

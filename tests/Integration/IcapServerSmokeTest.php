@@ -19,7 +19,7 @@
 declare(strict_types=1);
 
 use Ndrstmr\Icap\Config;
-use Ndrstmr\Icap\DTO\ScanResult;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 
@@ -74,8 +74,8 @@ it('performs an OPTIONS round-trip against the configured echo service', functio
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client, $service) {
         $result = $client->options($service)->await();
-        expect($result)->toBeInstanceOf(ScanResult::class)
-            ->and($result->getOriginalResponse()->statusCode)->toBe(200);
+        expect($result)->toBeInstanceOf(IcapResponse::class)
+            ->and($result->statusCode)->toBe(200);
     });
 });
 

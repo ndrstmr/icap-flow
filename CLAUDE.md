@@ -119,10 +119,22 @@ Diese Repo folgt **strikt** [Conventional Commits 1.0](https://www.conventionalc
   - `BREAKING CHANGE: <Beschreibung>` für jeden BC-Break (gehören in den v3.0.0-Bucket, nicht in Patch/Minor).
   - `Closes #<issue>` wenn der Commit/PR das Issue schließen soll. `Refs #<issue>` nur für Verweise ohne Schließen. **Wichtig:** GitHub Auto-Close braucht exakt `Closes #XX` / `Fixes #XX` / `Resolves #XX` — `Refs` verlinkt nur, schließt nicht. Bei mehreren Issues jedes einzeln auflisten (`Closes #53`, `Closes #54`), nicht komma-separiert.
 
-### Was nicht in Commits / PRs gehört
+### AI-Attribution in Commits / PRs
 
-- **Keine Co-Authored-By-Trailer für Claude / Anthropic / Generated-with-Claude-Code-Werbung.** Auch keine 🤖-Emoji-Footer. Commits sind authored vom Repo-Maintainer; Tooling-Provenance gehört nicht in die Git-Historie.
-- **Keine Werbe- oder Generator-Hinweise** in PR-Beschreibungen, Issue-Bodies oder Commit-Messages.
+Für die **v3-Linie und alles danach** ist die AI-Attribution explizit erwünscht. Die Repo-Politik dazu wurde vom Maintainer am 01.05.2026 umgestellt: nicht mehr verstecken, sondern transparent dokumentieren, wer welchen Commit geschrieben hat.
+
+**Erlaubt und erwünscht:**
+
+- Genau **ein** `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>` (oder das jeweils aktuelle Modell) als Trailer auf Commits, die mit Claude-Code-Hilfe entstanden sind. Mehr nicht — das ist die Provenance.
+
+**Nicht erlaubt:**
+
+- **Kein `🤖 Generated with [Claude Code]`-Hinweis** oder andere Generator-Werbe-Footer im Commit-Body. Der `Co-Authored-By`-Trailer reicht — alles darüber hinaus ist Werbung.
+- **Niemals einen `Co-authored-by`-Trailer auf den Repo-Maintainer setzen.** Der Maintainer ist sowieso der Git-`Author` jedes Commits — ein Co-Author-Trailer für ihn ist redundant und falsch.
+- Keine anderen Personen als Co-Author setzen, ohne dass diese tatsächlich am Commit mitgearbeitet haben.
+
+### Sonstige Commit-/PR-Regeln
+
 - **Keine `--no-verify`** — wenn pre-commit-Hooks fehlschlagen, Root-Cause fixen und neuen Commit anlegen (nicht amend).
 
 ### Pull Requests

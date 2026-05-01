@@ -21,17 +21,16 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap;
 
 use Ndrstmr\Icap\DTO\IcapResponse;
-use Ndrstmr\Icap\Exception\IcapResponseException;
+use Ndrstmr\Icap\Exception\IcapProtocolException;
 
 /**
  * Default strategy for interpreting preview responses.
  *
  * Handles RFC 3507 §4.3.3 / §6: servers may respond 200 or 206 during a
  * preview exchange when malware is detected in the first chunk — without
- * waiting for the full body.  Earlier versions of this class threw an
- * {@see IcapResponseException} on 200/206, making the ABORT_INFECTED branch
- * in {@see IcapClient} unreachable.  Fixed in v2.1.1 (finding B, 3/4
- * reviewers).
+ * waiting for the full body.  Earlier versions of this class threw on
+ * 200/206, making the ABORT_INFECTED branch in {@see IcapClient}
+ * unreachable.  Fixed in v2.1.1 (finding B, 3/4 reviewers).
  */
 final class DefaultPreviewStrategy implements PreviewStrategyInterface
 {
@@ -68,8 +67,9 @@ final class DefaultPreviewStrategy implements PreviewStrategyInterface
             $previewResponse->statusCode === 204 => PreviewDecision::ABORT_CLEAN,
             $previewResponse->statusCode === 200,
             $previewResponse->statusCode === 206 => $this->classifyBodyResponse($previewResponse),
-            default => throw new IcapResponseException(
+            default => throw new IcapProtocolException(
                 'Unexpected preview status code: ' . $previewResponse->statusCode,
+                $previewResponse->statusCode,
             ),
         };
     }

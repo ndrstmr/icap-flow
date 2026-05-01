@@ -29,7 +29,6 @@ use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
-use Ndrstmr\Icap\Exception\IcapResponseException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
@@ -137,13 +136,22 @@ final class IcapClient implements IcapClientInterface
 
     /**
      * Send the ICAP request and return the parsed {@see IcapResponse}
-     * without the fail-secure status-code interpretation pass. Used by
-     * the preview flow, where 100 Continue is a legitimate intermediate
-     * response. External callers should prefer {@see request()}.
+     * without the fail-secure status-code interpretation pass. Used
+     * internally by the preview flow, where `100 Continue` is a
+     * legitimate intermediate response.
+     *
+     * Visibility is intentionally `protected`: this method bypasses the
+     * fail-secure status-code interpretation in {@see interpretResponse()},
+     * so exposing it as part of the public surface would let callers
+     * silently turn unexpected statuses (e.g. a stray `100` outside the
+     * preview flow) into a `clean` verdict. External callers must use
+     * {@see request()} or one of the `scanFile*()` methods instead.
+     * Subclasses that need raw access (e.g. for vendor-specific extensions)
+     * can still override or invoke this method.
      *
      * @return Future<IcapResponse>
      */
-    public function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
+    protected function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
         /** @var Future<IcapResponse> $future */
         $future = \Amp\async(function () use ($request, $cancellation): IcapResponse {
@@ -166,12 +174,13 @@ final class IcapClient implements IcapClientInterface
         if ($this->optionsCache !== null) {
             $cached = $this->optionsCache->get($cacheKey);
             if ($cached !== null) {
-                return Future::complete($this->interpretResponse($cached, $this->config));
+                $this->assertSuccessfulStatus($cached->statusCode);
+                return Future::complete($cached);
             }
         }
 
-        /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): ScanResult {
+        /** @var Future<IcapResponse> $future */
+        $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): IcapResponse {
             $request = new IcapRequest('OPTIONS', $uri);
             $context = [
                 'method' => $request->method,
@@ -184,7 +193,7 @@ final class IcapClient implements IcapClientInterface
             $response = null;
             try {
                 $response = $this->executeRaw($request, $cancellation)->await();
-                $result = $this->interpretResponse($response, $this->config);
+                $this->assertSuccessfulStatus($response->statusCode);
             } catch (\Throwable $e) {
                 $this->logger->warning('ICAP request failed', $context + [
                     'statusCode' => $response?->statusCode,
@@ -196,7 +205,6 @@ final class IcapClient implements IcapClientInterface
 
             $this->logger->info('ICAP request completed', $context + [
                 'statusCode' => $response->statusCode,
-                'infected'   => $result->isInfected(),
             ]);
 
             // Cache the parsed IcapResponse, keyed by host:port + service.
@@ -209,7 +217,7 @@ final class IcapClient implements IcapClientInterface
                 $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
             }
 
-            return $result;
+            return $response;
         });
 
         return $future;
@@ -591,6 +599,30 @@ final class IcapClient implements IcapClientInterface
             return new ScanResult(false, null, $response);
         }
 
+        $this->assertSuccessfulStatus($code);
+
+        // Fail-secure backstop: any status that is neither a clean-scan
+        // signal (204/200/206) nor a recognised failure (100/4xx/5xx) —
+        // e.g. 1xx other than 100, 3xx, 6xx+ — is a protocol violation.
+        throw new IcapProtocolException(
+            'Unexpected ICAP status: ' . $code,
+            $code,
+        );
+    }
+
+    /**
+     * Apply the fail-secure verdict for status codes that do not signal a
+     * successful exchange. Used by {@see interpretResponse()} for scans and
+     * directly by {@see options()}, which returns the raw {@see IcapResponse}
+     * on success but must still treat 4xx/5xx/100 as exceptions.
+     *
+     * @throws IcapProtocolException When the response is `100 Continue`
+     *         outside the preview flow
+     * @throws IcapClientException   When the status is in the 4xx range
+     * @throws IcapServerException   When the status is in the 5xx range
+     */
+    private function assertSuccessfulStatus(int $code): void
+    {
         if ($code === 100) {
             throw new IcapProtocolException(
                 'ICAP 100 Continue is only valid during a preview exchange; received outside preview flow.',
@@ -611,8 +643,6 @@ final class IcapClient implements IcapClientInterface
                 $code,
             );
         }
-
-        throw new IcapResponseException('Unexpected ICAP status: ' . $code, $code);
     }
 
     private function extractVirusName(IcapResponse $response, Config $config): ?string

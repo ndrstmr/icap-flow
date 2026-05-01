@@ -359,16 +359,23 @@ Initial-Scope des neuen Repos:
 Nur relevasen, wenn mindestens zwei der folgenden Punkte durch User-Feedback
 erzwungen werden.
 
-- [ ] **v3-V** `IcapClient::executeRaw()` → `protected` **oder** in
+- [x] **v3-V** `IcapClient::executeRaw()` → `protected` **oder** in
   `IcapClientInterface` heben.
+  ✅ PR #85 (release/v3.0) — `executeRaw()` als `protected` umgesetzt;
+  Subklassen behalten Raw-Access.
   *Datei: `src/IcapClient.php:144`, `src/IcapClientInterface.php` — Quelle: Claude, Codex*
 
-- [ ] **v3-W** `options()` zu `Future<IcapResponse>` umstellen
+- [x] **v3-W** `options()` zu `Future<IcapResponse>` umstellen
   (BC-Break direkt, kein additives `optionsRaw()`).
+  ✅ PR #86 (release/v3.0) — `options()` returned `IcapResponse`,
+  Fail-Secure-Pfad in `assertSuccessfulStatus()` extrahiert.
   *Dateien: `src/IcapClient.php:157`, `src/IcapClientInterface.php`,
   `src/SynchronousIcapClient.php` — Quelle: Claude, Codex*
 
-- [ ] **v3-F** `IcapResponseException` entfernen (Deprecation einlösen).
+- [x] **v3-F** `IcapResponseException` entfernen (Deprecation einlösen).
+  ✅ PR #87 (release/v3.0) — Klasse gelöscht, beide Throw-Sites
+  (`IcapClient::interpretResponse()` Backstop, `DefaultPreviewStrategy`
+  default-Branch) auf `IcapProtocolException` umgestellt.
   *Datei: `src/Exception/IcapResponseException.php` + alle Call-Sites — Quelle: Claude, Codex*
 
 ---

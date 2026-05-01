@@ -23,14 +23,12 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapExceptionInterface;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
-use Ndrstmr\Icap\Exception\IcapResponseException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 
 it('catches every concrete ICAP exception via the marker interface', function () {
     $exceptions = [
         new IcapConnectionException('conn'),
-        new IcapResponseException('resp'),
         new IcapProtocolException('proto'),
         new IcapTimeoutException('to'),
         new IcapClientException('4xx', 400),

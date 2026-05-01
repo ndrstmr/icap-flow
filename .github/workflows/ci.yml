@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main
+      - 'release/**'
   pull_request:
     branches:
       - main
+      - 'release/**'
   schedule:
     # Nightly at 03:15 UTC — runs integration tests against the latest
     # ClamAV signatures so wire-format regressions don't hide until the

@@ -67,18 +67,24 @@ The v2 line was reviewed against three independent due-diligence reports (`docs/
 - **Bounded reads.** `Config::withLimits(maxResponseSize, maxHeaderCount, maxHeaderLineLength)` caps every response. Defaults: 10 MB total, 100 headers, 8 KB per line.
 - **No fail-open on 5xx.** Server errors raise `IcapServerException`. Your application is responsible for blocking the upload — the library will never silently report it as clean.
 
-## What this library DOES provide (since v2.0 / v2.1)
+## What this library DOES provide (since v2.0 / v2.1 / v2.2 / v3.0)
 
 - **Automatic retry on 5xx** via `RetryingIcapClient` (decorator, exponential backoff, configurable attempts). Wraps `IcapClient`; no retry by default on the bare client.
 - **OPTIONS-response caching** via `InMemoryOptionsCache` (honours `Options-TTL`, RFC 3507 §4.10.2). Plug in via the `$optionsCache` constructor parameter.
-- **Keep-alive connection pooling** via `AmpConnectionPool` (LIFO per host:port:tls-context, configurable cap). Used automatically by `AsyncAmpTransport`.
-- **TLS pool-key isolation** (since v2.1.1): each distinct `ClientTlsContext` object gets its own idle-socket stack, preventing cross-tenant socket reuse in multi-tenant deployments. See [GHSA advisory](#) for the pre-2.1.1 risk.
+- **Cross-process OPTIONS caching** via `Psr6OptionsCache` (PSR-6) and `Psr16OptionsCache` (PSR-16) — since v2.2. Suitable for Redis, APCu, Memcached, Symfony Cache. Supports cross-process ISTag-based invalidation via meta-keys.
+- **ISTag-based cache invalidation** (since v2.2): a server config / signature reload (new `ISTag` header per RFC 3507 §4.10.2) flushes all cached OPTIONS entries.
+- **Keep-alive connection pooling** via `AmpConnectionPool` (LIFO per host:port:tls-context-fingerprint, configurable cap). Used automatically by `AsyncAmpTransport`. `NullConnectionPool` is available for stateless workers (since v2.2).
+- **TLS pool-key isolation** (since v2.1.1): each distinct `ClientTlsContext` object gets its own idle-socket stack, preventing cross-tenant socket reuse in multi-tenant deployments.
+- **Pool idle eviction** (since v2.2): `AmpConnectionPool` evicts sockets idle longer than `maxIdleSeconds` (default 30 s) on the next `acquire()`. Prevents stale-socket accumulation in long-running workers (RoadRunner, Swoole, ReactPHP).
+- **OPTIONS-driven pool tuning** (since v2.2): `AmpConnectionPool::tuneFromOptions(IcapResponse)` honours the server's `Max-Connections` header (RFC 3507 §4.10.2).
+- **Per-IO timeout** (since v2.2): each socket read / write builds a fresh `TimeoutCancellation` from `streamTimeout`, combined with the caller's `Cancellation` via `CompositeCancellation`. Prevents spurious cancellation on slow but legitimate scans, while keeping a hard per-IO ceiling.
+- **Streaming-safe Strict §4.5 continuation** (since v2.1.2): the body remainder is streamed via `ChunkedBodyEncoder::encodeRemainderFromStream()`, never buffered in memory.
 
 ## What this library does NOT guarantee
 
-- It does **not** authenticate the ICAP server beyond TLS hostname verification — if you need mutual TLS or pinning, configure the `ClientTlsContext` accordingly.
-- It does **not** persist the OPTIONS cache across process restarts — `InMemoryOptionsCache` is in-process only. Use a PSR-6/PSR-16 adapter (planned for v2.2) for distributed caching.
-- It does **not** auto-negotiate pool capacity from the server's `Max-Connections` OPTIONS header (planned for v2.2).
+- It does **not** authenticate the ICAP server beyond TLS hostname verification — if you need mutual TLS or pinning, configure the `ClientTlsContext` accordingly. See [`examples/cookbook/04-tls-mtls.php`](examples/cookbook/04-tls-mtls.php).
+- It does **not** persist the OPTIONS cache across process restarts when using `InMemoryOptionsCache`. For cross-process caching use `Psr6OptionsCache` or `Psr16OptionsCache` with a Redis / APCu / Memcached / Symfony Cache backend.
+- It does **not** ship OpenTelemetry traces or Prometheus metrics out of the box. An observability decorator is on the wishlist (`docs/review/review_v2-1/consolidated_v2.1_task-list.md`, item W-Y) and will land when there is concrete deployment demand.
 
 ## AI-assisted origin
 
