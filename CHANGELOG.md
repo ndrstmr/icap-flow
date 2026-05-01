@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (v3.0.0):** `IcapClient::executeRaw()` is now `protected`. It was
+  never part of `IcapClientInterface` and exists solely to support the internal
+  preview flow, where `100 Continue` is a legitimate intermediate response.
+  Exposing it as part of the public surface let callers bypass the fail-secure
+  status-code interpretation in `interpretResponse()`. External callers must use
+  `request()`, `scanFile()`, `scanFileWithPreview()` or `options()` instead;
+  subclasses that need raw access can still invoke or override the method.
+  *(v3-V — Quelle: Claude, Codex)*
+
 ## [2.2.0] - 2026-04-30
 
 ### Added
