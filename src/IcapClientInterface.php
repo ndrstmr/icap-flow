@@ -23,6 +23,7 @@ namespace Ndrstmr\Icap;
 use Amp\Cancellation;
 use Amp\Future;
 use Ndrstmr\Icap\DTO\IcapRequest;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 
 /**
@@ -48,9 +49,15 @@ interface IcapClientInterface
     public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future;
 
     /**
-     * Issue an OPTIONS request against the given service.
+     * Issue an OPTIONS request against the given service. Returns the raw
+     * {@see IcapResponse} on success so callers can inspect capability
+     * headers (`Preview`, `Options-TTL`, `Methods`, `Allow`, `Service`,
+     * `ISTag`, …) directly. The fail-secure status-code interpretation
+     * still applies — 4xx throws {@see IcapClientException}, 5xx throws
+     * {@see IcapServerException}, `100 Continue` throws
+     * {@see IcapProtocolException}.
      *
-     * @return Future<ScanResult>
+     * @return Future<IcapResponse>
      */
     public function options(string $service, ?Cancellation $cancellation = null): Future;
 

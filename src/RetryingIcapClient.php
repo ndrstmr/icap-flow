@@ -24,7 +24,6 @@ use Amp\Cancellation;
 use Amp\Future;
 use Closure;
 use Ndrstmr\Icap\DTO\IcapRequest;
-use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Exception\IcapServerException;
 
 use function Amp\delay;
@@ -134,13 +133,16 @@ final class RetryingIcapClient implements IcapClientInterface
     }
 
     /**
-     * @param Closure(): Future<ScanResult> $operation
-     * @return Future<ScanResult>
+     * @template T
+     *
+     * @param Closure(): Future<T> $operation
+     *
+     * @return Future<T>
      */
     private function withRetry(Closure $operation): Future
     {
-        /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($operation): ScanResult {
+        /** @var Future<T> $future */
+        $future = \Amp\async(function () use ($operation): mixed {
             // The loop runs at least once because maxAttempts >= 1 is
             // enforced in the ctor, so the final throw always has a
             // captured exception to re-raise.

@@ -16,7 +16,7 @@ use Ndrstmr\Icap\SynchronousIcapClient;
 $icap = SynchronousIcapClient::create();
 
 $options = $icap->options('/avscan');
-$headers = $options->getOriginalResponse()->headers;
+$headers = $options->headers;
 
 $previewSize = (int) ($headers['Preview'][0] ?? 1024);
 

@@ -175,12 +175,13 @@ final class IcapClient implements IcapClientInterface
         if ($this->optionsCache !== null) {
             $cached = $this->optionsCache->get($cacheKey);
             if ($cached !== null) {
-                return Future::complete($this->interpretResponse($cached, $this->config));
+                $this->assertSuccessfulStatus($cached->statusCode);
+                return Future::complete($cached);
             }
         }
 
-        /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): ScanResult {
+        /** @var Future<IcapResponse> $future */
+        $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): IcapResponse {
             $request = new IcapRequest('OPTIONS', $uri);
             $context = [
                 'method' => $request->method,
@@ -193,7 +194,7 @@ final class IcapClient implements IcapClientInterface
             $response = null;
             try {
                 $response = $this->executeRaw($request, $cancellation)->await();
-                $result = $this->interpretResponse($response, $this->config);
+                $this->assertSuccessfulStatus($response->statusCode);
             } catch (\Throwable $e) {
                 $this->logger->warning('ICAP request failed', $context + [
                     'statusCode' => $response?->statusCode,
@@ -205,7 +206,6 @@ final class IcapClient implements IcapClientInterface
 
             $this->logger->info('ICAP request completed', $context + [
                 'statusCode' => $response->statusCode,
-                'infected'   => $result->isInfected(),
             ]);
 
             // Cache the parsed IcapResponse, keyed by host:port + service.
@@ -218,7 +218,7 @@ final class IcapClient implements IcapClientInterface
                 $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
             }
 
-            return $result;
+            return $response;
         });
 
         return $future;
@@ -600,6 +600,26 @@ final class IcapClient implements IcapClientInterface
             return new ScanResult(false, null, $response);
         }
 
+        $this->assertSuccessfulStatus($code);
+
+        // assertSuccessfulStatus() always throws for non-success codes;
+        // the throw below is unreachable but keeps PHPStan happy.
+        throw new IcapResponseException('Unexpected ICAP status: ' . $code, $code);
+    }
+
+    /**
+     * Apply the fail-secure verdict for status codes that do not signal a
+     * successful exchange. Used by {@see interpretResponse()} for scans and
+     * directly by {@see options()}, which returns the raw {@see IcapResponse}
+     * on success but must still treat 4xx/5xx/100 as exceptions.
+     *
+     * @throws IcapProtocolException When the response is `100 Continue`
+     *         outside the preview flow
+     * @throws IcapClientException   When the status is in the 4xx range
+     * @throws IcapServerException   When the status is in the 5xx range
+     */
+    private function assertSuccessfulStatus(int $code): void
+    {
         if ($code === 100) {
             throw new IcapProtocolException(
                 'ICAP 100 Continue is only valid during a preview exchange; received outside preview flow.',
@@ -620,8 +640,6 @@ final class IcapClient implements IcapClientInterface
                 $code,
             );
         }
-
-        throw new IcapResponseException('Unexpected ICAP status: ' . $code, $code);
     }
 
     private function extractVirusName(IcapResponse $response, Config $config): ?string

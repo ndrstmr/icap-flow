@@ -23,6 +23,7 @@ namespace Ndrstmr\Icap;
 use Amp\Cancellation;
 use Amp\Future;
 use Ndrstmr\Icap\DTO\IcapRequest;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
@@ -66,7 +67,7 @@ final class SynchronousIcapClient
         return $this->asyncClient->request($request, $cancellation)->await();
     }
 
-    public function options(string $service, ?Cancellation $cancellation = null): ScanResult
+    public function options(string $service, ?Cancellation $cancellation = null): IcapResponse
     {
         return $this->asyncClient->options($service, $cancellation)->await();
     }
