@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-05-01
+
+`v3.0.0` is a deliberately small breaking release. It carries no new features
+and no architectural rework — it is a cleanup pass that closes three known-stale
+corners of the v2 API so the surface can be frozen for the upcoming Symfony
+bundle (`ndrstmr/icap-flow-bundle`). Migration: see
+[`docs/migration-v2-to-v3.md`](docs/migration-v2-to-v3.md). For most call sites
+the upgrade is a no-op other than bumping the constraint to `^3.0`.
+
 ### Removed
 - **BREAKING (v3.0.0):** `Ndrstmr\Icap\Exception\IcapResponseException` is gone.
   The class was `@deprecated since 2.0` (with `#[\Deprecated]` since v2.2) and
