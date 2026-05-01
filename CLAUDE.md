@@ -125,11 +125,11 @@ Für die **v3-Linie und alles danach** ist die AI-Attribution explizit erwünsch
 
 **Erlaubt und erwünscht:**
 
-- `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>` (oder das jeweils aktuelle Modell) als Trailer auf Commits, die mit Claude-Code-Hilfe entstanden sind.
-- Optional auch der Generator-Hinweis `🤖 Generated with [Claude Code](https://claude.com/claude-code)` in der Commit-Body, **vor** dem Co-Author-Trailer. Das ist keine Werbung — es ist Provenance.
+- Genau **ein** `Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>` (oder das jeweils aktuelle Modell) als Trailer auf Commits, die mit Claude-Code-Hilfe entstanden sind. Mehr nicht — das ist die Provenance.
 
 **Nicht erlaubt:**
 
+- **Kein `🤖 Generated with [Claude Code]`-Hinweis** oder andere Generator-Werbe-Footer im Commit-Body. Der `Co-Authored-By`-Trailer reicht — alles darüber hinaus ist Werbung.
 - **Niemals einen `Co-authored-by`-Trailer auf den Repo-Maintainer setzen.** Der Maintainer ist sowieso der Git-`Author` jedes Commits — ein Co-Author-Trailer für ihn ist redundant und falsch.
 - Keine anderen Personen als Co-Author setzen, ohne dass diese tatsächlich am Commit mitgearbeitet haben.
 
