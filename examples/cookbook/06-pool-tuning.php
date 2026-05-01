@@ -44,10 +44,10 @@ $client = new IcapClient(
 \Amp\async(function () use ($client, $pool) {
     // The first OPTIONS response tells us the server's connection limit.
     $options = $client->options('/avscan')->await();
-    $headers = $options->getOriginalResponse()->headers;
+    $headers = $options->headers;
 
     // Tune the pool to respect the server's advertised limit.
-    $pool->tuneFromOptions($options->getOriginalResponse());
+    $pool->tuneFromOptions($options);
 
     echo 'Max-Connections: ' . ($headers['Max-Connections'][0] ?? 'not advertised') . PHP_EOL;
 

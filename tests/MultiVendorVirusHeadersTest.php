@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use Mockery as m;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
@@ -83,7 +84,7 @@ it('detects a virus via the first vendor header that is present', function () {
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client) {
-        $res = $client->options('/svc')->await();
+        $res = $client->request(new IcapRequest('RESPMOD', 'icap://h/svc'))->await();
         expect($res->isInfected())->toBeTrue()
             ->and($res->getVirusName())->toBe('Type=0; Resolution=2; Threat=EICAR;');
     });
@@ -99,7 +100,7 @@ it('returns clean when none of the configured virus headers is present', functio
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client) {
-        $res = $client->options('/svc')->await();
+        $res = $client->request(new IcapRequest('RESPMOD', 'icap://h/svc'))->await();
         expect($res->isInfected())->toBeFalse();
     });
 
@@ -117,7 +118,7 @@ it('picks the first header in the configured order when multiple are present', f
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client) {
-        $res = $client->options('/svc')->await();
+        $res = $client->request(new IcapRequest('RESPMOD', 'icap://h/svc'))->await();
         expect($res->getVirusName())->toBe('Eicar-Test');
     });
 

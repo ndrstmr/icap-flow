@@ -64,8 +64,7 @@ it('delegates calls to the async client and blocks for results', function () {
 
     $res = $client->options('/service');
 
-    expect($res)->toBeInstanceOf(ScanResult::class)
-        ->and($res->getOriginalResponse())->toBe($responseObj);
+    expect($res)->toBe($responseObj);
 
     m::close();
 });

@@ -22,7 +22,6 @@ use Mockery as m;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
-use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\PreviewDecision;
 use Ndrstmr\Icap\PreviewStrategyInterface;
@@ -79,8 +78,7 @@ it('OPTIONS: orchestrates formatter → transport → parser', function () {
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client, $resp) {
         $res = $client->options('/service')->await();
-        expect($res)->toBeInstanceOf(ScanResult::class)
-            ->and($res->getOriginalResponse())->toBe($resp);
+        expect($res)->toBe($resp);
     });
 
     m::close();

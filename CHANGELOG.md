@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `request()`, `scanFile()`, `scanFileWithPreview()` or `options()` instead;
   subclasses that need raw access can still invoke or override the method.
   *(v3-V — Quelle: Claude, Codex)*
+- **BREAKING (v3.0.0):** `IcapClient::options()` and
+  `SynchronousIcapClient::options()` now return `Future<IcapResponse>` /
+  `IcapResponse` instead of `Future<ScanResult>` / `ScanResult`. OPTIONS is a
+  capability-discovery method (RFC 3507 §4.10), so a virus-verdict wrapper was
+  always semantically wrong — callers want the raw headers (`Preview`,
+  `Options-TTL`, `Methods`, `Allow`, `Service`, `ISTag`, `Max-Connections`).
+  Fail-secure semantics are preserved: 4xx still throws `IcapClientException`,
+  5xx throws `IcapServerException`, `100 Continue` throws
+  `IcapProtocolException`. The pre-existing `assertSuccessfulStatus()` helper
+  (extracted from `interpretResponse()`) is the single source of truth for the
+  failure branches. Migration: replace `$result->isInfected()` /
+  `$result->getOriginalResponse()->headers` with `$result->headers` directly.
+  *(v3-W — Quelle: Claude, Codex)*
 
 ## [2.2.0] - 2026-04-30
 

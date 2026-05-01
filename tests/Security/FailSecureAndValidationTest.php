@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use Mockery as m;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
@@ -116,7 +117,7 @@ it('treats a 200 response with no virus header as clean', function () {
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client) {
-        $res = $client->options('/svc')->await();
+        $res = $client->request(new IcapRequest('RESPMOD', 'icap://h/svc'))->await();
         expect($res->isInfected())->toBeFalse();
     });
 
@@ -130,7 +131,7 @@ it('treats a 200 response carrying a virus header as infected', function () {
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client) {
-        $res = $client->options('/svc')->await();
+        $res = $client->request(new IcapRequest('RESPMOD', 'icap://h/svc'))->await();
         expect($res->isInfected())->toBeTrue()
             ->and($res->getVirusName())->toBe('Eicar-Test-Signature');
     });
