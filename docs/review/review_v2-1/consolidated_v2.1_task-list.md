@@ -373,7 +373,7 @@ erzwungen werden.
   `src/SynchronousIcapClient.php` — Quelle: Claude, Codex*
 
 - [x] **v3-F** `IcapResponseException` entfernen (Deprecation einlösen).
-  ✅ PR (release/v3.0) — Klasse gelöscht, beide Throw-Sites
+  ✅ PR #87 (release/v3.0) — Klasse gelöscht, beide Throw-Sites
   (`IcapClient::interpretResponse()` Backstop, `DefaultPreviewStrategy`
   default-Branch) auf `IcapProtocolException` umgestellt.
   *Datei: `src/Exception/IcapResponseException.php` + alle Call-Sites — Quelle: Claude, Codex*
