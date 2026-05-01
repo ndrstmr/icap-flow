@@ -19,7 +19,7 @@
 use Ndrstmr\Icap\DefaultPreviewStrategy;
 use Ndrstmr\Icap\PreviewDecision;
 use Ndrstmr\Icap\DTO\IcapResponse;
-use Ndrstmr\Icap\Exception\IcapResponseException;
+use Ndrstmr\Icap\Exception\IcapProtocolException;
 
 it('returns abort clean on 204', function () {
     $strategy = new DefaultPreviewStrategy();
@@ -35,7 +35,7 @@ it('returns continue on 100', function () {
 
 it('throws on unexpected codes', function () {
     $strategy = new DefaultPreviewStrategy();
-    expect(fn () => $strategy->handlePreviewResponse(new IcapResponse(500)))->toThrow(IcapResponseException::class);
+    expect(fn () => $strategy->handlePreviewResponse(new IcapResponse(500)))->toThrow(IcapProtocolException::class);
 });
 
 // v2.1.1-B: RFC 3507 §4.3.3 / §6 — server may respond 200/206 in preview

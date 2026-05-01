@@ -29,7 +29,6 @@ use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
-use Ndrstmr\Icap\Exception\IcapResponseException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
@@ -602,9 +601,13 @@ final class IcapClient implements IcapClientInterface
 
         $this->assertSuccessfulStatus($code);
 
-        // assertSuccessfulStatus() always throws for non-success codes;
-        // the throw below is unreachable but keeps PHPStan happy.
-        throw new IcapResponseException('Unexpected ICAP status: ' . $code, $code);
+        // Fail-secure backstop: any status that is neither a clean-scan
+        // signal (204/200/206) nor a recognised failure (100/4xx/5xx) —
+        // e.g. 1xx other than 100, 3xx, 6xx+ — is a protocol violation.
+        throw new IcapProtocolException(
+            'Unexpected ICAP status: ' . $code,
+            $code,
+        );
     }
 
     /**
