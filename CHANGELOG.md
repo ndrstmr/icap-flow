@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING (v3.0.0):** `Ndrstmr\Icap\Exception\IcapResponseException` is gone.
+  The class was `@deprecated since 2.0` (with `#[\Deprecated]` since v2.2) and
+  served only as a catch-all bucket for status codes outside the recognised
+  taxonomy. Both throw sites (`IcapClient::interpretResponse()`'s fail-secure
+  backstop, `DefaultPreviewStrategy::handlePreviewResponse()`'s `default`
+  branch) now throw `IcapProtocolException` instead — semantically more honest:
+  a status that is neither a clean-scan signal (204/200/206) nor a recognised
+  failure (100/4xx/5xx) is a protocol violation. Callers using
+  `catch (IcapExceptionInterface $e)` are unaffected. Callers catching
+  `IcapResponseException` directly should switch to `IcapProtocolException` or
+  `IcapExceptionInterface`. *(v3-F — Quelle: Claude, Codex)*
+
 ### Changed
 - **BREAKING (v3.0.0):** `IcapClient::executeRaw()` is now `protected`. It was
   never part of `IcapClientInterface` and exists solely to support the internal
