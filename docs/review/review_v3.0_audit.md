@@ -69,3 +69,58 @@ Haupt-Risiken liegen nicht mehr in offensichtlichen Protokollfehlern, sondern in
 - **v3.1.0:** Hard-deadline-Feature, OTel-Decorator, offizielles Symfony-Bundle v0.1/1.0.
 - **v3.2.0:** Property-based Parser tests, optional fuzz harness, Symfony cookbook for `cache.app` + Messenger.
 - **v4.0.0:** Nur bei tatsächlichen API-Zwängen (derzeit nicht erforderlich).
+
+## Phase 2 — Code- & Architektur-Analyse
+
+### 2.1 Sprachmoderne & Typsystem (PHP 8.4/8.5)
+
+- `declare(strict_types=1)` und EUPL-Header sind im Core durchgängig umgesetzt.
+- `Config` ist `final readonly`; Wither (`with*`) liefern neue Instanzen statt Mutationen.
+- `#[\Override]` wird in den Interface-Implementierungen konsequent genutzt (`IcapClient`, `SynchronousIcapClient`, `RetryingIcapClient`).
+- `RetryingIcapClient::withRetry()` ist generisch (`@template T`) und wird sowohl für `Future<ScanResult>` als auch `Future<IcapResponse>` verwendet; das passt zur v3-`options()`-Semantik.
+- `IcapResponseException` ist in der Exception-Hierarchie nicht mehr vorhanden; Marker-Catch bleibt über `IcapExceptionInterface` konsistent.
+
+**Bewertung:** Typsystem-Strenge ist für eine Netzwerkbibliothek überdurchschnittlich gut; ein größeres Restrisiko liegt weniger in Typen als in verteilten Cache-Atomizitäten.
+
+### 2.2 Design, Pattern & SOLID
+
+- Core-Schnitt ist klar: Client orchestriert Formatter/Transport/Parser, Retry bleibt als separater Decorator.
+- `assertSuccessfulStatus()` entkoppelt Fail-Secure-Mapping sauber von der Scan-Interpretation; dadurch ist die `options()`-Semantik korrekt und konsistent.
+- Preview-Handling ist mit Strategy (`PreviewStrategyInterface`) gut kapsuliert; der Strict-Path bleibt in derselben Session (same-socket).
+- `executeRaw()` als `protected` verhindert, dass Consumer die Security-Interpretation im Normalfall umgehen.
+
+**Bewertung:** SRP/Decorator/Strategy sind stimmig umgesetzt; keine offensichtliche Architektur-Regression durch v3-Cleanup.
+
+### 2.3 PSR-Compliance
+
+- PSR-3: Logger optional, `NullLogger` default, keine Header-Payloads im Logging-Kontext.
+- PSR-4: Namespace/Verzeichnisstruktur ist konsistent.
+- PSR-6/PSR-16: Adapter vorhanden und getestet, aber mit Meta-Key-basiertem Invalidierungsdesign (Race-Fenster bleibt als bekannter Trade-off).
+- PSR-20: InMemory-Clock nutzt Closure statt `ClockInterface`; pragmatisch testbar, aber weniger interoperabel.
+
+**Empfehlung (P2):** Optionalen `ClockInterface`-Adapterpfad in v3.1 ergänzen (ohne Breaking Change).
+
+### 2.4 Fehlerbehandlung & Exception-Design
+
+- Status-Mapping bleibt fail-secure: `100` außerhalb Preview ist Protocol-Fehler; `4xx`/`5xx` sind typisiert.
+- Nach Entfernung von `IcapResponseException` ist `IcapProtocolException` jetzt der Catch-all für unerwartete/non-taxonomy Status.
+- Retry bleibt bewusst auf `IcapServerException` (5xx) begrenzt; das schützt vor Retry auf Protokoll- oder Client-Fehlern.
+
+**Bewertung:** Für Security-kritische Upload-Scans ist diese Trennung sinnvoll und defensiv.
+
+### 2.5 Ressourcen-Management & Connection-Handling
+
+- Pool-Key enthält TLS-Fingerprint-Kontext; reduziert Cross-Tenant-Reuse-Risiko.
+- Idle-Eviction ist lazy-on-acquire implementiert (performant, aber ohne Hintergrund-Reaper).
+- Bei Fehlern im Session-Flow wird Socket geschlossen statt zurück in den Pool gelegt (fail-safe Pool-Hygiene).
+- Per-IO-Timeout behebt das frühere Lifetime-Cancellation-Problem, aber ohne globale Hard-Deadline.
+
+**Empfehlung (P2):** Optionalen globalen Request-Timeout als zweite Schutzlinie einführen.
+
+### 2.6 Async-Implementierung
+
+- Amp-Futures/Cancellation werden End-to-End durchgereicht (Client → Transport → Session).
+- `CompositeCancellation` + frische `TimeoutCancellation` pro I/O ist korrekt für mehrphasige Preview-Flows.
+- Sync-Wrapper bleibt als klare Integrationsschicht für nicht-async Laufzeitkontexte vorhanden.
+
+**Bewertung:** Async-Design ist robust und praxistauglich; größte offene Lücke liegt eher bei Observability/Bundle-Fit als im Event-Loop-Handling selbst.
