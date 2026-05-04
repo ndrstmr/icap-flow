@@ -124,3 +124,68 @@ Haupt-Risiken liegen nicht mehr in offensichtlichen Protokollfehlern, sondern in
 - Sync-Wrapper bleibt als klare Integrationsschicht für nicht-async Laufzeitkontexte vorhanden.
 
 **Bewertung:** Async-Design ist robust und praxistauglich; größte offene Lücke liegt eher bei Observability/Bundle-Fit als im Event-Loop-Handling selbst.
+
+## Phase 3 — ICAP-Protokoll-Compliance (RFC 3507)
+
+### 3.1 Methodenabdeckung
+
+- **OPTIONS** ist als Capability-Discovery korrekt modelliert (v3: raw `IcapResponse` statt `ScanResult`).
+- **RESPMOD** ist der primäre Scan-Pfad (`scanFile`, `scanFileWithPreview`).
+- **REQMOD** wird vom Formatter/Parser unterstützt und über `request(IcapRequest)` adressiert.
+
+**Verifikationsergebnis:** Methodenmatrix ist für den Library-Auftrag vollständig; v3-Semantik-Korrektur bei OPTIONS ist konsistent über Async- und Sync-Client.
+
+### 3.2 Nachrichtenformat (Wire)
+
+- Request-Line/Encapsulation wird im Formatter gebildet; die Wire-Tests prüfen Hand-Computed-Bytes für OPTIONS/RESPMOD/REQMOD.
+- Chunked-Encoding inklusive `0; ieof`-Pfad ist testseitig abgesichert.
+- Response-Framing arbeitet encapsulated-aware statt `Connection: close`-Heuristik.
+
+**Verifikationsergebnis:** RFC-nahe Wire-Disziplin ist vorhanden; die Test-Suite schützt die kritischen Byte-Pfade gut gegen Regression.
+
+### 3.3 Preview (§4.5)
+
+- Strict Preview-Continue läuft bei `SessionAwareTransport` auf **demselben Socket**.
+- Legacy-Fallback für nicht-sessionfähige Transports bleibt als bewusstes Kompatibilitätsverhalten erhalten.
+- Fortsetzungs-Streaming nutzt den Chunked-Encoder aus dem aktuellen Stream-Offset (kein Vollbuffer-Read des Restbodys).
+
+**Verifikationsergebnis:** Der v2.1.2-Fix gegen OOM-Risiko ist im Designpfad verankert und durch dedizierte Wire/Transport-Tests flankiert.
+
+### 3.4 Statuscode-Matrix (v3)
+
+- `204` → clean scan.
+- `200/206` → Header-basierte Virus-Interpretation.
+- `100` außerhalb Preview → `IcapProtocolException` (fail-secure).
+- `4xx` → `IcapClientException`, `5xx` → `IcapServerException`.
+- Nicht zuordenbare Codes außerhalb dieser Taxonomie laufen fail-secure als Protocol-Fehler.
+
+**Verifikationsergebnis:** v3-Extraktion `assertSuccessfulStatus()` reduziert Drift-Risiko zwischen `request()` und `options()`.
+
+### 3.5 Parser-Robustheit & Security
+
+- Parser verarbeitet RFC-7230-obsolete-folding (praktisch relevant für c-icap/Vendor-Header).
+- DoS-Limits (`maxResponseSize`, Headeranzahl, Headerzeilenlänge) sind konfigurierbar und testseitig abgesichert.
+- Malformed-Input wird in typisierte Protocol/Malformed-Exceptions überführt.
+
+**Verifikationsergebnis:** Robuste defensive Parsing-Strategie; kein Hinweis auf fail-open-Verhalten im Parserpfad.
+
+### 3.6 Interop-/Kompatibilitätsstand
+
+- CI-Integration gegen c-icap/ClamAV ist vorhanden.
+- Multi-Vendor-Header-Support ist im Core konfigurierbar und getestet.
+- Breite Hersteller-Interop (Symantec/Sophos/Trend/Kaspersky) ist nicht als First-Party-CI-Matrix abgedeckt.
+
+**Empfehlung (P2):** Interop-Matrix als optionales Nightly-Programm aufbauen (nicht als Hard-Gate für PRs).
+
+### RFC-3507-Checkliste (Phase-3 Snapshot)
+
+| Bereich | Status | Evidenz im Repo |
+|---|---|---|
+| OPTIONS Capability Discovery | Mitigated | `IcapClient::options()`, `OptionsCache*`, `OptionsCacheTest` |
+| REQMOD/RESPMOD Wire-Format | Mitigated | `RequestFormatter`, `Wire/RequestFormatterWireTest.php` |
+| Preview §4.5 Same-Socket (strict) | Mitigated | `scanFileWithPreviewStrict`, `PreviewContinueStrictTest.php` |
+| Preview fallback behavior | Partial (bewusst) | `scanFileWithPreviewLegacy` |
+| Encapsulated-aware response framing | Mitigated | `ResponseFrameReader`, `ResponseFrameReaderTest.php` |
+| Statuscode Fail-Secure-Mapping | Mitigated | `interpretResponse`, `assertSuccessfulStatus`, Security-Tests |
+| Header folding / malformed handling | Mitigated | `ResponseParser`, `Wire/ResponseParserWireTest.php` |
+| Vendor breadth CI coverage | Partial | Integration nur gegen c-icap/ClamAV |
