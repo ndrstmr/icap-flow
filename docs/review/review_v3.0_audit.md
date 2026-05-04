@@ -291,3 +291,61 @@ Haupt-Risiken liegen nicht mehr in offensichtlichen Protokollfehlern, sondern in
 - **Keine neuen P0-Blocker** aus dem Core-Codepfad identifiziert.
 - **P1 bestätigt:** Cross-process Cache-Konsistenz ist die wichtigste verbleibende technische Unsicherheit.
 - **P2 bestätigt:** SBOM/Provenance, globales Deadline-Modell und erweiterte Interop-Matrix sind die sinnvollsten nächsten Schritte.
+
+## Phase 5 — Testing & Qualitätssicherung (Coverage/Mutation/CI-Gates)
+
+### 5.1 Unit-Test-Qualität & Suite-Disziplin
+
+- PHPUnit ist strikt konfiguriert (`beStrictAboutCoverageMetadata`, `beStrictAboutOutputDuringTests`, `failOnRisky=true`, `failOnWarning=true`).
+- Unit und Integration sind sauber getrennt (eigene Testsuites, Integration ausgeschlossen aus Unit-Run).
+- Die dokumentierte lokale Unit-Ausführung (159/363) passt zur erwarteten Größenordnung für den v3-Stand.
+
+**Bewertung:** Test-Hygiene ist überdurchschnittlich robust; „grün“ bedeutet hier mehr als nur „keine Assertion fehlgeschlagen“.
+
+### 5.2 Coverage-Gates
+
+- CI führt Unit-Tests mit Coverage auf **PHP 8.4 und 8.5** aus.
+- Coverage wird als Artifact persistiert und auf `gh-pages` für `main` veröffentlicht.
+- `includeUncoveredFiles=true` in der PHPUnit-Coverage-Konfiguration verhindert künstlich geschönte Coveragewerte.
+
+**Einschätzung:** Der Gate-Mechanismus ist sauber; die konkrete Prozentzahl muss aus dem jeweils aktuellen Coverage-Report gezogen werden (nicht statisch im Doc hardcoden).
+
+### 5.3 Mutation-Testing-Gate
+
+- Mutation-Job ist als eigener CI-Job mit MSI-Schwelle (`--min=65`) konfiguriert.
+- Mutation läuft auf PR-Events nach erfolgreichem Quality-Gate.
+
+**Bewertung:** Für eine Security-kritische Library ist 65% ein brauchbarer Einstieg, aber mittelfristig konservativ.
+
+**Empfehlung (P2):** MSI in Stufen anheben (z. B. 65 → 70 → 75), begleitet von gezielten Tests für überlebende Mutanten in Status-/Parser-/Cache-Pfaden.
+
+### 5.4 Integration-Tests & Intermittenz-Risiko
+
+- Integration läuft gegen echtes `c-icap + ClamAV` Setup via Docker Compose.
+- Readiness-Probe prüft nicht nur offenen Port, sondern erwartet echte ICAP-Antwort (`ICAP/1.x`) — wichtig gegen Freshclam-Cold-Start-Flakiness.
+- Integration wird auf `push`/`schedule` ausgeführt, nicht auf PRs.
+
+**Trade-off:** Schnellere PR-Zyklen vs. späteres Erkennen von Wire-Interop-Regressionen.
+
+**Empfehlung (P1/P2-Grenze):** Optionalen, lightweight PR-smoke für Integration (z. B. manuell auslösbar oder label-gesteuert) ergänzen, um kritische Wire-Änderungen früher zu validieren.
+
+### 5.5 Cache-/Timeout-spezifische Teststärke
+
+- Dedizierte Testdateien für `PerIoTimeout`, `AmpConnectionPool` (inkl. Idle-Eviction/Max-Connections) und PSR-6/16-Options-Cache-Adapter sind vorhanden.
+- Das reduziert das Risiko, dass regressionskritische v2.2/v3-Pfade unbemerkt aufweichen.
+
+**Restrisiko:** Cross-process-Races in echten verteilten Caches sind mit In-Memory/Test-Doubles nur begrenzt abbildbar.
+
+### 5.6 CI-Gate-Bewertung (Gesamt)
+
+| Gate | Status | Bewertung |
+|---|---|---|
+| Lint/Style (`cs-check`) | Aktiv | Gut |
+| Static Analysis (`stan`) | Aktiv | Gut |
+| Unit Tests (8.4/8.5) | Aktiv | Sehr gut |
+| Coverage Artifact/Deploy | Aktiv | Gut |
+| Integration c-icap/ClamAV | Aktiv (push/schedule) | Gut mit PR-Lücke |
+| Mutation (`min=65`) | Aktiv (PR) | Gut, steigerbar |
+| Dependency Audit | Aktiv | Gut |
+
+**Phase-5-Fazit:** Die QA-Kette ist für v3.0 stark. Die größten Hebel sind jetzt nicht „mehr von allem“, sondern **gezielte Härtung**: höhere Mutation-Schwelle, optionaler PR-Integration-Smoke und belastbarere Cache-Race-Validierung.
