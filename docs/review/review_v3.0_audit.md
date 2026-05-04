@@ -349,3 +349,54 @@ Haupt-Risiken liegen nicht mehr in offensichtlichen Protokollfehlern, sondern in
 | Dependency Audit | Aktiv | Gut |
 
 **Phase-5-Fazit:** Die QA-Kette ist für v3.0 stark. Die größten Hebel sind jetzt nicht „mehr von allem“, sondern **gezielte Härtung**: höhere Mutation-Schwelle, optionaler PR-Integration-Smoke und belastbarere Cache-Race-Validierung.
+
+## Phase 6 — Symfony-Integration & Ökosystem-Fit
+
+### 6.1 Bundle-Readiness (Core → `ndrstmr/icap-flow-bundle`)
+
+- Der Core bleibt framework-agnostisch und ist damit grundsätzlich bundle-freundlich.
+- `IcapClientInterface` plus `RetryingIcapClient`-Decorator passen gut zu Symfony-DI-Alias-Ketten.
+- Die v3-API-Bereinigung (`options(): IcapResponse`, `executeRaw()` geschützt) reduziert API-Ambiguitäten für spätere Bundle-Kontrakte.
+
+**Bewertung:** Der jetzige Core ist hinreichend stabil, um ein offizielles Bundle auf `^3.0` aufzusetzen.
+
+### 6.2 Minimal Viable Bundle (konkret)
+
+Empfohlene erste Version (v0.1 oder direkt v1.0, je nach Stabilitätsanspruch):
+
+1. `IcapFlowBundle` + `DependencyInjection/Configuration` mit Tree für:
+   - `host`, `port`, `socket_timeout`, `stream_timeout`
+   - `tls.*` (inkl. mTLS-Optionen)
+   - `virus_found_headers[]`
+   - `limits.max_response_size`, `limits.max_header_count`, `limits.max_header_line_length`
+   - `pool.max_connections_per_host`, `pool.max_idle_seconds`
+   - `retry.max_attempts`, `retry.initial_delay_ms`, `retry.max_delay_ms`
+   - `options_cache` (`in_memory` / `psr6` / `psr16`)
+2. Service-Wiring:
+   - `Config`
+   - `AmpConnectionPool` (optional `NullConnectionPool`)
+   - `AsyncAmpTransport`
+   - `IcapClient` (+ optional `RetryingIcapClient` als public alias auf `IcapClientInterface`)
+3. Multi-Client-Unterstützung (`icap_flow.clients.<name>`), damit Behörden-/Shop-Setups mehrere ICAP-Services sauber trennen können.
+
+### 6.3 Symfony-7.4-Fit (praktische Integrationspunkte)
+
+- **Monolog Channel**: `icap` (Bundle-seitig) für saubere Trennung operativer Scan-Logs.
+- **Cache-Integration**: PSR-6 Bridge zu `cache.app` als Default-OPTIONS-Cache mit klarer Doku zu Konsistenztrade-offs.
+- **Health/Readiness Probe**: `icap:options` oder interner Probe-Service für Operations.
+- **Messenger-Szenario**: Best-Practice-Recipe für Async-File-Scan-Pipelines ergänzen.
+
+**Bewertung:** Nicht-Core-Themen; sollten bewusst im Bundle statt in der Library selbst landen.
+
+### 6.4 Observability-Lage (OTel/Profiler/Metrics)
+
+- Aktuell ist PSR-3-Logging solide, aber Tracing/Metrics fehlen als First-Party-Bausteine.
+- Für öffentliche Träger mit wachsender OTel-Adoption wäre ein optionaler Decorator sinnvoll (`trace span per request`, `status/infected tags`, latency histograms).
+
+**Empfehlung (P1/P2):** In v3.1 zuerst einen kleinen Observability-Decorator liefern; Symfony-DataCollector kann danach im Bundle folgen.
+
+### 6.5 Ökosystem-Fit Entscheidung
+
+- **Stark:** Core-Design, DI-Tauglichkeit, Fehler-/Statusmodell, transportnahe Kapselung.
+- **Fehlt:** Offizielles Bundle, standardisierte Symfony-Recipes, OTel/Metrics-Erweiterung.
+- **Konsequenz:** Kein Core-Redesign nötig; der nächste Hebel ist klar **Produktisierung im Ökosystem**.
