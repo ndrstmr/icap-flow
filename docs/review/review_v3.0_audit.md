@@ -400,3 +400,47 @@ Empfohlene erste Version (v0.1 oder direkt v1.0, je nach Stabilitätsanspruch):
 - **Stark:** Core-Design, DI-Tauglichkeit, Fehler-/Statusmodell, transportnahe Kapselung.
 - **Fehlt:** Offizielles Bundle, standardisierte Symfony-Recipes, OTel/Metrics-Erweiterung.
 - **Konsequenz:** Kein Core-Redesign nötig; der nächste Hebel ist klar **Produktisierung im Ökosystem**.
+
+## Phase 7 — Wettbewerbsvergleich / Benchmarking
+
+### 7.1 PHP-Landschaft (ICAP-bezogen)
+
+- Im PHP-Ökosystem ist die direkte ICAP-Client-Landschaft auf Packagist weiterhin dünn.
+- Als häufig referenzierter Vergleich taucht `nathan242/php-icap-client` auf (ältere API-/Runtime-Generation, deutlich geringere modern-typed/async Ausrichtung).
+- Ein dediziertes, modernes Symfony-First Bundle mit vergleichbarer Tiefe (Pool, Preview strictness, typed exception taxonomy, mutation-gated CI) ist in dieser Nische nicht klar als dominanter Standard sichtbar.
+
+**Einordnung:** `icap-flow` differenziert sich weniger über „es gibt gar keine Alternativen“ und mehr über **Engineering-Tiefe + QA-Governance**.
+
+### 7.2 Andere Sprachen (Referenzmuster)
+
+#### Go
+
+- `code.waarp.fr/lib/icap` betont explizit Streaming/TLS und adressiert Memory-Probleme älterer Bibliotheken als Designmotiv.
+- Ältere/fork-basierte Linien (`egirna`, `opencloud-eu`) zeigen, dass ICAP-Clients oft lange in „WIP/fork drift“-Zuständen bleiben.
+
+**Lernpunkt für icap-flow:** Die klare Positionierung auf Streaming- und Preview-Korrektheit ist im Sprachvergleich ein valides Qualitätsmerkmal.
+
+#### Python
+
+- PyPI-ICAP-Clients wirken fragmentiert; mehrere Pakete sind alt oder fork-basiert, was auf geringe Pflegefrequenz hindeutet.
+
+**Lernpunkt:** Ein stabiler Release-/Audit-Prozess ist ein echter Wettbewerbsvorteil gegenüber „funktioniert irgendwie“-Clientlibs.
+
+#### .NET
+
+- NuGet zeigt verfügbare ICAP-Client-Pakete, aber heterogene Reifegrade/Abdeckung.
+
+**Lernpunkt:** Auch hier ist weniger die Existenz eines Pakets entscheidend als die Tiefe bei Security/Fail-Secure/Interop.
+
+### 7.3 Benchmarking gegen Referenzimplementierungen
+
+- `c-icap` bleibt der praxisnahe Referenzanker für Interop-Validierung; die vorhandene Integration ist deshalb strategisch richtig.
+- Ein echter „Performance-Benchmark“ (Durchsatz/Latenz/Memory unter großen Dateien) ist im aktuellen Repo noch nicht als standardisierte Suite enthalten.
+
+**Empfehlung (P2):** In v3.1/v3.2 eine kleine, reproduzierbare Benchmark-Suite (z. B. phpbench + definierte Filegrößen/Preview-Profile) aufnehmen.
+
+### 7.4 Wettbewerbsfazit (Phase-7)
+
+- **Technisch:** `icap-flow` wirkt im Vergleich modern und sicherheitsbewusst.
+- **Produktseitig:** Größter Hebel ist nicht Core-Feature-Parität, sondern bessere Out-of-the-box Adoption (Bundle, Observability, Benchmarks, optional erweiterte Vendor-Interop).
+- **Strategisch:** Für Public-Sector-Nutzung ist nachvollziehbare QA-/Compliance-Story oft wichtiger als reine Feature-Anzahl — hier hat `icap-flow` eine gute Ausgangslage.
