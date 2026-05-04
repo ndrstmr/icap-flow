@@ -189,3 +189,105 @@ Haupt-Risiken liegen nicht mehr in offensichtlichen Protokollfehlern, sondern in
 | Statuscode Fail-Secure-Mapping | Mitigated | `interpretResponse`, `assertSuccessfulStatus`, Security-Tests |
 | Header folding / malformed handling | Mitigated | `ResponseParser`, `Wire/ResponseParserWireTest.php` |
 | Vendor breadth CI coverage | Partial | Integration nur gegen c-icap/ClamAV |
+
+## Phase 4 — Security & Compliance Assessment
+
+### 4.1 Security Posture v3.0 (OWASP-orientiert)
+
+#### Fail-Secure-Verhalten
+
+- Der Core erzwingt fail-secure für `100` außerhalb Preview sowie für `4xx/5xx` via typed exceptions.
+- `options()` nutzt dieselbe Failure-Policy wie Scan-Pfade (keine semantische Sonderbehandlung als „clean“).
+- Unerwartete Statusbereiche außerhalb der bekannten Taxonomie landen ebenfalls als Protocol-Fehler.
+
+**Bewertung:** Für ein Upload-Security-Gateway ist dieses Fehlerverhalten angemessen defensiv.
+
+#### Input-/Header-Validierung (Injection)
+
+- Service-Path-Validierung blockiert Control-Characters, NUL und Whitespace zur Vermeidung von Request-Line/Header-Injection.
+- Header-Validierung prüft Namen gegen RFC-7230-tchar und validiert Werte inkl. Array-Mehrfachwerten auf CR/LF/NUL.
+- Damit ist der bekannte „nested header value“-Vorwurf aus früheren Reviews im v3-Codepfad faktisch nicht bestätigt.
+
+**Restrisiko:** `%0d%0a` wird nicht explizit decoded; im aktuellen Modell ist das vertretbar, da keine URI-Decodierung vor Wire-Emission erfolgt.
+
+#### TLS / Connection-Isolation
+
+- Pool-Key differenziert per TLS-Kontext-Fingerprint (host:port plus TLS-relevante Materialisierung), was Cross-Tenant-Reuse mit abweichender TLS-Konfiguration verhindert.
+- Fehlerpfade schließen Session-Sockets fail-safe statt potenziell desynchronisierte Streams in den Pool zurückzugeben.
+
+**Bewertung:** Die v2.1.1-Härtung gegen Cross-Tenant-Leaks ist in v3 intakt.
+
+#### Logging / Sensitive Data Exposure
+
+- Logging ist optional (PSR-3, `NullLogger` default).
+- Event-Kontext fokussiert auf Metadaten (`method`, `uri`, `host`, `port`, `statusCode`, bei Scan `infected`) statt Header-/Body-Inhalten.
+- Regressionstest schützt gegen Header-Leakage im Log-Kontext.
+
+**Bewertung:** DSGVO-relevante Minimierung ist im Library-Core sinnvoll umgesetzt; Betreiberverantwortung bleibt beim Logger-Backend.
+
+#### Dependency Security
+
+- Security-Guardrails via `composer audit` und `roave/security-advisories` sind im Projektprozess verankert.
+- Das senkt Lieferkettenrisiken, ersetzt aber keine SBOM-/Provenance-Transparenz für Public-Sector-Beschaffung.
+
+**Empfehlung (P2):** SBOM-Export (CycloneDX/SPDX) als CI-Artefakt optional in v3.1 einführen.
+
+### 4.2 PSR-Cache-Cross-Process-Analyse (vertieft)
+
+#### Beobachtung
+
+- PSR-6/16-Adapter nutzen Meta-Keys (`__icap_istag`, `__icap_keys`) für globale ISTag-Invalidation.
+- Der Ansatz ist pragmatisch und backend-agnostisch, aber nicht streng atomar in jedem Store.
+
+#### Risiko-Szenarien
+
+1. **TOCTOU beim ISTag-Switch:** Worker A schreibt neuen Response-Key, Worker B liest zwischen Daten- und Meta-Key-Update.
+2. **Key-Set-Wachstum:** `__icap_keys` kann in dynamischen Multi-Service/Multi-Tenant-Umgebungen wachsen.
+3. **Backend-Semantik-Divergenz:** Redis/Memcached/File-Adapter verhalten sich bzgl. Konsistenz/Race unterschiedlich.
+
+#### Präzise Empfehlung
+
+- v3.0.x: Dokumentation ergänzen (Konsistenzmodell + empfohlene Backend-Klassen).
+- v3.1: Optionaler „atomic invalidation strategy“-Hook (adapter- oder backend-spezifisch).
+- v3.1+: Last-/Race-Testprofil (parallelisierte Worker-Simulation) als nicht-blockender CI-Job.
+
+### 4.3 OWASP Top 10 (2021/2025) Mapping — Library-spezifisch
+
+| OWASP-Kategorie | Relevanter Mechanismus in icap-flow | Status |
+|---|---|---|
+| A01 Broken Access Control | Nicht primär Library-Scope (keine AuthZ-Engine) | N/A |
+| A02 Cryptographic Failures | TLS-Unterstützung + Pool-Isolation nach TLS-Kontext | Partial (Caller muss TLS policy sauber setzen) |
+| A03 Injection | Service-/Header-CRLF-Guards, Header-Name/Value-Validierung | Mitigated |
+| A04 Insecure Design | Fail-secure Status-Mapping, typed exception taxonomy | Mitigated |
+| A05 Security Misconfiguration | Sichere Defaults für Parser-/Response-Limits, aber TLS optional | Partial |
+| A06 Vulnerable Components | `composer audit` + roave advisories | Mitigated |
+| A07 Identification/Auth Failures | Nicht primärer Scope (abhängig von Upstream/ICAP-Infra) | N/A |
+| A08 Software/Data Integrity Failures | Keine Signatur-/attestation-Pipeline im Repo | Partial |
+| A09 Logging/Monitoring Failures | Minimaler Log-Context + Leak-Guard-Test | Mitigated |
+| A10 SSRF | Host/Port kommen aus App-Konfiguration; kein direkter User-Input-Pfad im Core | Partial (Betriebsrichtlinie nötig) |
+
+### 4.4 Public-Sector-Compliance (EUPL/BSI/DSGVO/OpenCoDE)
+
+#### EUPL / Lizenz
+
+- EUPL-1.2 ist konsistent im Repo verankert; Header-Disziplin in Source/Test-Dateien ist sichtbar.
+
+#### BSI-Grundschutz / Betriebskontext
+
+- Das vorhandene Compliance-Mapping ist für technische Orientierung nützlich, aber kein formaler Nachweis.
+- Für Behördenbetrieb bleibt die Betriebsdokumentation (Netzsegmentierung, Schlüsselmanagement, Incident-Prozesse) außerhalb der Library zwingend.
+
+#### DSGVO Art. 32
+
+- Logging-Minimierung im Core unterstützt Datenschutzprinzipien.
+- Der eigentliche Datenschutz-Impact entsteht durch Integrationsentscheidungen (welche Dateiinhalte/Metadaten geloggt oder gespeichert werden).
+
+#### Digitale Souveränität
+
+- OSS-Stack ohne SaaS-Zwang ist positiv; für Beschaffungspfade kann SBOM/Provenance mittelfristig relevant werden.
+
+### 4.5 Phase-4-Entscheidung (präzise)
+
+- **Keine neuen P0-Blocker** aus dem Core-Codepfad identifiziert.
+- **P1 bestätigt:** Cross-process Cache-Konsistenz ist die wichtigste verbleibende technische Unsicherheit.
+- **P2 bestätigt:** SBOM/Provenance, globales Deadline-Modell und erweiterte Interop-Matrix sind die sinnvollsten nächsten Schritte.
