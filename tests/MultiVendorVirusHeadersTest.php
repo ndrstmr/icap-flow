@@ -23,7 +23,9 @@ use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
+use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Transport\TransportInterface;
@@ -128,4 +130,97 @@ it('picks the first header in the configured order when multiple are present', f
 it('rejects an empty virus-header list', function () {
     expect(fn () => (new Config('h'))->withVirusFoundHeaders([]))
         ->toThrow(InvalidArgumentException::class);
+});
+
+/**
+ * B01 — header field names are case-insensitive (RFC 3507 §4.3 via
+ * RFC 7230 §3.2). The raw responses below run through the real parser;
+ * every spelling of the virus header must yield the same verdict.
+ */
+function rawResponseWithVirusHeader(string $spelling): string
+{
+    $httpHead = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
+    return "ICAP/1.0 200 OK\r\n"
+        . "ISTag: \"b01\"\r\n"
+        . "{$spelling}: Eicar-Test-Signature\r\n"
+        . 'Encapsulated: res-hdr=0, res-body=' . strlen($httpHead) . "\r\n"
+        . "\r\n"
+        . $httpHead
+        . "0\r\n\r\n";
+}
+
+/**
+ * @param list<string> $virusHeaders
+ */
+function buildClientForRawResponse(string $raw, array $virusHeaders): IcapClient
+{
+    /** @var TransportInterface&\Mockery\MockInterface $transport */
+    $transport = m::mock(TransportInterface::class);
+    /** @var \Mockery\Expectation $t */
+    $t = $transport->shouldReceive('request');
+    $t->andReturn(\Amp\Future::complete($raw));
+
+    return new IcapClient(
+        (new Config('icap.example'))->withVirusFoundHeaders($virusHeaders),
+        $transport,
+        new RequestFormatter(),
+        new ResponseParser(),
+    );
+}
+
+/**
+ * Pairs of configured header name and the spelling the server sends.
+ *
+ * @return list<array{string, string}>
+ */
+function virusHeaderSpellings(): array
+{
+    return [
+        ['X-Virus-Name', 'x-virus-name'],
+        ['X-Virus-Name', 'X-VIRUS-NAME'],
+        ['x-virus-name', 'X-Virus-Name'],
+    ];
+}
+
+it('reports infected for every spelling of the virus header in a raw response', function () {
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () {
+        foreach (virusHeaderSpellings() as [$configured, $sent]) {
+            $res = buildClientForRawResponse(rawResponseWithVirusHeader($sent), [$configured])
+                ->request(new IcapRequest('RESPMOD', 'icap://icap.example/avscan'))
+                ->await();
+            expect($res->isInfected())->toBeTrue("{$sent} must match {$configured}")
+                ->and($res->getVirusName())->toBe('Eicar-Test-Signature');
+        }
+    });
+
+    m::close();
+});
+
+it('reports infected in the preview flow for every spelling of the virus header', function () {
+    $file = tempnam(sys_get_temp_dir(), 'icap_b01_');
+    if ($file === false) {
+        throw new RuntimeException('Failed to create temp file');
+    }
+    file_put_contents($file, str_repeat('X', 64));
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($file) {
+            foreach (virusHeaderSpellings() as [$configured, $sent]) {
+                // An 8-byte preview of the 64-byte file leaves the body
+                // unfinished, so the preview strategy judges the 200.
+                $res = buildClientForRawResponse(rawResponseWithVirusHeader($sent), [$configured])
+                    ->scanFileWithPreview('/avscan', $file, 8)
+                    ->await();
+                expect($res->isInfected())->toBeTrue("{$sent} must match {$configured}")
+                    ->and($res->getVirusName())->toBe('Eicar-Test-Signature');
+            }
+        });
+    } finally {
+        @unlink($file);
+    }
+
+    m::close();
 });

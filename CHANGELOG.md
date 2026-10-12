@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Virus headers and the other response headers the client evaluates
+  (`Encapsulated`, `Preview`, `ISTag`, `Options-TTL`, `Max-Connections`) are
+  now matched case-insensitively, for live and cached responses alike.
+  Before, a server sending `x-virus-name` instead of `X-Virus-Name` got an
+  infected file reported as clean, also in the preview flow. Conflicting
+  repeats of a single-valued field are rejected with
+  `IcapMalformedResponseException`; `IcapResponse::$headers` keeps the
+  server's spelling. *(B01)*
+
 ## [3.0.0] - 2026-05-01
 
 `v3.0.0` is a deliberately small breaking release. It carries no new features

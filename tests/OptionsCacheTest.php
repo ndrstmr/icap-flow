@@ -23,8 +23,10 @@ use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
 use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
+use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Transport\TransportInterface;
@@ -165,6 +167,49 @@ it('honours the Options-TTL header when storing', function () {
     $entry = $cache->get('icap.example:1344/avscan');
     expect($entry)->not->toBeNull()
         ->and($entry?->statusCode)->toBe(200);
+
+    m::close();
+});
+
+it('reads Options-TTL and ISTag in any spelling when storing', function () {
+    /** @var OptionsCacheInterface&\Mockery\MockInterface $cache */
+    $cache = m::mock(OptionsCacheInterface::class);
+    /** @var \Mockery\Expectation $get */
+    $get = $cache->shouldReceive('get');
+    $get->andReturnNull();
+    /** @var \Mockery\Expectation $set */
+    $set = $cache->shouldReceive('set');
+    $set->once();
+    $set->with('icap.example:1344/avscan', m::type(IcapResponse::class), 7, '"b01"');
+
+    [$client] = makeOptionsClient($cache, (new ResponseParser())->parse(
+        "ICAP/1.0 200 OK\r\noptions-ttl: 7\r\nistag: \"b01\"\r\nencapsulated: null-body=0\r\n\r\n",
+    ));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        $client->options('/avscan')->await();
+    });
+
+    m::close();
+    expect(true)->toBeTrue(); // Mockery verified; satisfy PHPUnit strict-mode
+});
+
+it('rejects an OPTIONS response with conflicting ISTag fields instead of caching it', function () {
+    $cache = new InMemoryOptionsCache();
+    [$client] = makeOptionsClient($cache, new IcapResponse(200, [
+        'ISTag'       => ['"old"'],
+        'istag'       => ['"new"'],
+        'Options-TTL' => ['60'],
+    ]));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        expect(fn () => $client->options('/avscan')->await())
+            ->toThrow(IcapMalformedResponseException::class);
+    });
+
+    expect($cache->get('icap.example:1344/avscan'))->toBeNull();
 
     m::close();
 });

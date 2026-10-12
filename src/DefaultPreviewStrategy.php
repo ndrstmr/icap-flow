@@ -77,17 +77,14 @@ final class DefaultPreviewStrategy implements PreviewStrategyInterface
     /**
      * Inspect the 200/206 response for vendor virus headers.
      *
-     * Returns ABORT_INFECTED if any configured virus header is present with a
-     * non-empty value, ABORT_CLEAN otherwise.
+     * Returns ABORT_INFECTED if any configured virus header is present, in
+     * any spelling, ABORT_CLEAN otherwise. Uses the same lookup as the scan
+     * verdict in {@see IcapClient}, so both paths agree.
      */
     private function classifyBodyResponse(IcapResponse $response): PreviewDecision
     {
-        foreach ($this->virusFoundHeaders as $header) {
-            if (isset($response->headers[$header]) && $response->headers[$header] !== []) {
-                return PreviewDecision::ABORT_INFECTED;
-            }
-        }
-
-        return PreviewDecision::ABORT_CLEAN;
+        return HeaderFields::first($response->headers, $this->virusFoundHeaders) !== null
+            ? PreviewDecision::ABORT_INFECTED
+            : PreviewDecision::ABORT_CLEAN;
     }
 }

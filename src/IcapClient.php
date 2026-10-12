@@ -28,6 +28,7 @@ use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Exception\IcapClientException;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
@@ -212,8 +213,8 @@ final class IcapClient implements IcapClientInterface
             // (RFC 3507 §4.10.2); fall back to 0 (no caching) when the
             // server didn't specify one.
             if ($this->optionsCache !== null) {
-                $ttl = (int) ($response->headers['Options-TTL'][0] ?? '0');
-                $istag = $response->headers['ISTag'][0] ?? null;
+                $ttl = (int) (HeaderFields::single($response->headers, 'Options-TTL') ?? '0');
+                $istag = HeaderFields::single($response->headers, 'ISTag');
                 $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
             }
 
@@ -516,6 +517,9 @@ final class IcapClient implements IcapClientInterface
      * header.
      *
      * @return int<1, max>
+     *
+     * @throws IcapMalformedResponseException When the cached
+     *         response carries conflicting `Preview` fields
      */
     private function resolvePreviewSize(string $service, ?int $previewSize): int
     {
@@ -527,8 +531,8 @@ final class IcapClient implements IcapClientInterface
         if ($this->optionsCache !== null) {
             $cacheKey = $this->config->host . ':' . $this->config->port . $service;
             $cached = $this->optionsCache->get($cacheKey);
-            if ($cached !== null && isset($cached->headers['Preview'][0])) {
-                $advertised = (int) $cached->headers['Preview'][0];
+            if ($cached !== null) {
+                $advertised = (int) (HeaderFields::single($cached->headers, 'Preview') ?? '0');
                 if ($advertised >= 1) {
                     /** @var int<1, max> $advertised */
                     return $advertised;
@@ -647,12 +651,7 @@ final class IcapClient implements IcapClientInterface
 
     private function extractVirusName(IcapResponse $response, Config $config): ?string
     {
-        foreach ($config->getVirusFoundHeaders() as $header) {
-            if (isset($response->headers[$header][0])) {
-                return $response->headers[$header][0];
-            }
-        }
-        return null;
+        return HeaderFields::first($response->headers, $config->getVirusFoundHeaders());
     }
 
     /**
