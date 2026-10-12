@@ -18,6 +18,7 @@
 
 declare(strict_types=1);
 
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\ResponseParser;
 
 /**
@@ -94,4 +95,29 @@ it('parses an OPTIONS response with Methods + Preview headers', function () {
         ->and($res->headers['Options-TTL'][0])->toBe('3600')
         ->and($res->headers['Preview'][0])->toBe('1024')
         ->and($res->headers['Allow'][0])->toBe('204');
+});
+
+it('decodes the encapsulated body when the Encapsulated field is spelled in lower case', function () {
+    $httpHead = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+    $raw = "ICAP/1.0 200 OK\r\n"
+        . 'encapsulated: res-hdr=0, res-body=' . strlen($httpHead) . "\r\n"
+        . "\r\n"
+        . $httpHead
+        . "5\r\nhello\r\n0\r\n\r\n";
+
+    expect((new ResponseParser())->parse($raw)->body)->toBe('hello');
+});
+
+it('rejects conflicting Encapsulated fields in different spellings and accepts an identical repeat', function () {
+    $httpHead = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+    $layout = 'res-hdr=0, res-body=' . strlen($httpHead);
+    $rest = "\r\n" . $httpHead . "5\r\nhello\r\n0\r\n\r\n";
+
+    expect(fn () => (new ResponseParser())->parse(
+        "ICAP/1.0 200 OK\r\nEncapsulated: null-body=0\r\nencapsulated: {$layout}\r\n{$rest}",
+    ))->toThrow(IcapMalformedResponseException::class);
+
+    expect((new ResponseParser())->parse(
+        "ICAP/1.0 200 OK\r\nEncapsulated: {$layout}\r\nENCAPSULATED: {$layout}\r\n{$rest}",
+    )->body)->toBe('hello');
 });

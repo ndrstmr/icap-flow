@@ -23,6 +23,7 @@ use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParserInterface;
@@ -150,6 +151,51 @@ it('uses the server-advertised Preview size from the OPTIONS cache when previewS
     expect($captured->headers['Preview'][0])->toBe('4096');
 
     @unlink($tmp);
+});
+
+it('uses the advertised Preview size from a cached OPTIONS response in any spelling', function () {
+    $captured = null;
+    [$client, $cache] = makePreviewSizeClient($captured);
+    $cache->set('icap.example:1344/avscan', new IcapResponse(200, ['preview' => ['4096']]), 3600);
+
+    $tmp = makeTinyFile();
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp) {
+            $client->scanFileWithPreview('/avscan', $tmp)->await();
+        });
+
+        expect($captured)->toBeInstanceOf(IcapRequest::class);
+        \assert($captured instanceof IcapRequest);
+        expect($captured->headers['Preview'][0])->toBe('4096');
+    } finally {
+        @unlink($tmp);
+    }
+});
+
+it('rejects a cached OPTIONS response whose Preview fields conflict', function () {
+    $captured = null;
+    [$client, $cache] = makePreviewSizeClient($captured);
+    $cache->set('icap.example:1344/avscan', new IcapResponse(200, [
+        'Preview' => ['64'],
+        'PREVIEW' => ['67108864'],
+    ]), 3600);
+
+    $tmp = makeTinyFile();
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp) {
+            expect(fn () => $client->scanFileWithPreview('/avscan', $tmp)->await())
+                ->toThrow(IcapMalformedResponseException::class);
+        });
+
+        // Nothing was formatted, so no preview went out.
+        expect($captured)->toBeNull();
+    } finally {
+        @unlink($tmp);
+    }
 });
 
 it('falls back to 1024 when the OPTIONS cache has no entry for the service', function () {

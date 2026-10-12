@@ -28,6 +28,8 @@ use Closure;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
+use Ndrstmr\Icap\HeaderFields;
 
 /**
  * In-process keep-alive pool of amphp sockets.
@@ -169,10 +171,13 @@ final class AmpConnectionPool implements ConnectionPoolInterface
      *     $pool->tuneFromOptions($result->originalResponse);
      *
      * @see \Ndrstmr\Icap\DTO\ScanResult::$originalResponse
+     *
+     * @throws IcapMalformedResponseException When the response carries
+     *         conflicting `Max-Connections` fields
      */
     public function tuneFromOptions(IcapResponse $response): void
     {
-        $maxConn = (int) ($response->headers['Max-Connections'][0] ?? '0');
+        $maxConn = (int) (HeaderFields::single($response->headers, 'Max-Connections') ?? '0');
         if ($maxConn >= 1) {
             $this->serverMaxConnections = $maxConn;
         }

@@ -22,6 +22,7 @@ namespace Ndrstmr\Icap\Transport;
 
 use Closure;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
+use Ndrstmr\Icap\HeaderFields;
 
 /**
  * Frames a single ICAP response off a stream of byte chunks.
@@ -143,19 +144,13 @@ final class ResponseFrameReader
 
     private function findEncapsulatedHeader(string $headBlock): ?string
     {
-        // RFC 7230 §3.2.4: obs-fold — a continuation line starts with
-        // at least one SP or HTAB and belongs to the previous header.
-        // Unfold before splitting so multi-line Encapsulated values
-        // (seen with c-icap) are parsed correctly.
-        $unfolded = (string) preg_replace('/\r?\n[ \t]+/', ' ', $headBlock);
+        // Same field parsing (including RFC 7230 §3.2.4 obs-fold, seen
+        // with c-icap) and lookup as ResponseParser, so framing and body
+        // extraction always agree on the layout: any spelling counts and
+        // conflicting repeats are rejected. Line 0 is the status line.
+        $lines = preg_split('/\r?\n/', $headBlock) ?: [];
 
-        $lines = preg_split('/\r?\n/', $unfolded) ?: [];
-        foreach ($lines as $line) {
-            if (preg_match('/^Encapsulated\s*:\s*(.+)$/i', $line, $m) === 1) {
-                return trim($m[1]);
-            }
-        }
-        return null;
+        return HeaderFields::single(HeaderFields::parse(array_slice($lines, 1)), 'Encapsulated');
     }
 
     /**

@@ -220,6 +220,45 @@ it('tuneFromOptions ignores a response without Max-Connections header', function
         ->and($created[2]->isClosed())->toBeFalse();
 });
 
+it('tuneFromOptions reads Max-Connections in any spelling and rejects conflicting fields', function () {
+    $created = createSocketQueue(3);
+    $queue = $created;
+
+    $config = new Config('icap.example');
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 8,
+        connector: function () use (&$queue): SocketInterface {
+            return array_shift($queue) ?? throw new RuntimeException('exhausted');
+        },
+    );
+
+    expect(fn () => $pool->tuneFromOptions(new \Ndrstmr\Icap\DTO\IcapResponse(200, [
+        'Max-Connections' => ['2'],
+        'max-connections' => ['50'],
+    ])))->toThrow(\Ndrstmr\Icap\Exception\IcapMalformedResponseException::class);
+
+    $pool->tuneFromOptions(new \Ndrstmr\Icap\DTO\IcapResponse(200, [
+        'max-connections' => ['2'],
+    ]));
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($pool, $config) {
+        $sockets = [
+            $pool->acquire($config),
+            $pool->acquire($config),
+            $pool->acquire($config),
+        ];
+        foreach ($sockets as $s) {
+            $pool->release($config, $s);
+        }
+    });
+
+    // Effective cap = min(8, 2) = 2 → third socket closed.
+    expect($created[2]->isClosed())->toBeTrue()
+        ->and($created[0]->isClosed())->toBeFalse()
+        ->and($created[1]->isClosed())->toBeFalse();
+});
+
 it('tuneFromOptions can be called multiple times to update the cap dynamically', function () {
     $config = new Config('icap.example');
     $socketIndex = 0;

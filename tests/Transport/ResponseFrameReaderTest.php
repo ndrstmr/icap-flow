@@ -205,6 +205,21 @@ it('handles multi-section Encapsulated with req-hdr + req-body (REQMOD)', functi
     expect($response)->toBe($bytes);
 });
 
+it('rejects conflicting Encapsulated fields instead of framing by the first one', function () {
+    $http = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n";
+    $bytes = "ICAP/1.0 200 OK\r\n"
+        . "encapsulated: null-body=0\r\n"
+        . 'Encapsulated: res-hdr=0, res-body=' . strlen($http) . "\r\n"
+        . "\r\n"
+        . $http
+        . "3\r\nabc\r\n0\r\n\r\n";
+
+    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+
+    expect(fn () => $reader->readFrom(makeChunkProducer([$bytes])))
+        ->toThrow(IcapMalformedResponseException::class);
+});
+
 /**
  * @param list<string> $chunks
  * @return Closure(): ?string
