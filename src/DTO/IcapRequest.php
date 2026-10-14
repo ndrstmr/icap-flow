@@ -38,14 +38,20 @@ final readonly class IcapRequest
     /**
      * @param string                  $method               ICAP method (OPTIONS, REQMOD, RESPMOD)
      * @param string                  $uri                  Fully-qualified ICAP URI, e.g. icap://host:1344/service
-     * @param array<string, string|string[]> $headers       ICAP headers (Host is filled in from $uri when missing);
-     *                                                       scalar values are promoted to a one-element list
+     * @param array<string, string|string[]> $headers       ICAP headers; a string value is promoted to a one-element
+     *                                                       list, any type other than a string or an array is
+     *                                                       refused. Host (from $uri) and Encapsulated are always
+     *                                                       computed by the formatter: caller values for them are
+     *                                                       ignored in any spelling
      * @param HttpRequest|null        $encapsulatedRequest  Encapsulated HTTP request (REQMOD)
      * @param HttpResponse|null       $encapsulatedResponse Encapsulated HTTP response (RESPMOD)
      * @param bool                    $previewIsComplete    When true, the body attached to the encapsulated HTTP
      *                                                      message represents the complete payload in a preview
      *                                                      scenario, so the terminator must be `0; ieof\r\n\r\n`
      *                                                      rather than `0\r\n\r\n` (RFC 3507 §4.5).
+     *
+     * @throws \InvalidArgumentException When a header value is neither a
+     *         string nor an array
      */
     public function __construct(
         public string $method,
@@ -55,7 +61,31 @@ final readonly class IcapRequest
         public ?HttpResponse $encapsulatedResponse = null,
         public bool $previewIsComplete = false,
     ) {
+        self::assertHeaderValueTypes($headers);
         $this->headers = array_map(fn ($v) => (array) $v, $headers);
+    }
+
+    /**
+     * Refuse header values the cast in the constructor would change: null
+     * would become no field at all, an object its properties. Callers
+     * without static analysis can pass any type, so the values are checked
+     * as such.
+     *
+     * @param array<mixed> $headers
+     *
+     * @throws \InvalidArgumentException When a value is neither a string nor
+     *         an array
+     */
+    private static function assertHeaderValueTypes(array $headers): void
+    {
+        foreach ($headers as $value) {
+            if (!is_string($value) && !is_array($value)) {
+                throw new \InvalidArgumentException(sprintf(
+                    'ICAP header values must be strings or lists of strings, got %s.',
+                    get_debug_type($value),
+                ));
+            }
+        }
     }
 
     /**

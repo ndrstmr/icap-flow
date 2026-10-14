@@ -261,7 +261,10 @@ final class IcapClient implements IcapClientInterface
         $request = new IcapRequest(
             method: 'RESPMOD',
             uri: $uri,
-            headers: $extraHeaders,
+            // The full request goes out without a preview handshake, so a
+            // caller Preview would announce one that never happens; it stays
+            // out in any spelling. Allow, e.g. 204, is valid here.
+            headers: HeaderFields::without($extraHeaders, ['Preview']),
             encapsulatedResponse: $httpResponse,
         );
 
@@ -500,7 +503,9 @@ final class IcapClient implements IcapClientInterface
         $fullRequest = new IcapRequest(
             method: 'RESPMOD',
             uri: $this->buildServiceUri($service),
-            headers: $extraHeaders,
+            // The full request is no preview: caller values for the preview
+            // headers stay out of it as well, in any spelling.
+            headers: HeaderFields::without($extraHeaders, ['Preview', 'Allow']),
             encapsulatedResponse: $fullResponse,
         );
         return $this->request($fullRequest, $cancellation)->await();
@@ -543,34 +548,15 @@ final class IcapClient implements IcapClientInterface
         return self::DEFAULT_PREVIEW_SIZE;
     }
 
+    /**
+     * Build the ICAP URI for $service on the configured server. Finding H
+     * and N04: user-controlled service paths could otherwise sneak CR/LF
+     * into the request line or move the URI authority. The check runs
+     * before any wire byte has been written.
+     */
     private function buildServiceUri(string $service): string
     {
-        $this->validateServicePath($service);
-        $host = $this->config->host;
-        if ($this->config->port !== 1344) {
-            $host .= ':' . $this->config->port;
-        }
-        return sprintf('icap://%s%s', $host, $service);
-    }
-
-    /**
-     * Guard $service against header/URI injection. Finding H of the
-     * consolidated review: user-controlled service paths can sneak
-     * CR/LF into the request line and inject additional ICAP headers
-     * before any wire byte has been written.
-     *
-     * RFC 3507 §4.2 allows only the abs_path production for the
-     * service; we enforce a conservative subset (no controls, no
-     * whitespace, no NUL) which is sufficient for every known ICAP
-     * server while leaving segment separators like '/' untouched.
-     */
-    private function validateServicePath(string $service): void
-    {
-        if (preg_match('/[\x00-\x20\x7F]/', $service) === 1) {
-            throw new \InvalidArgumentException(
-                'Service path contains control characters, whitespace or NUL; refusing to build ICAP URI: ' . var_export($service, true),
-            );
-        }
+        return IcapUri::forService($this->config->host, $this->config->port, $service);
     }
 
     /**
@@ -655,38 +641,25 @@ final class IcapClient implements IcapClientInterface
     }
 
     /**
-     * Reject header names or values that contain CR/LF, NUL or would
-     * otherwise break the wire format. Finding H, applied to
-     * user-supplied ICAP headers in addition to the service path.
+     * Reject header names or values that would break the wire format
+     * (Finding H, B04): names must be tokens, values strings without
+     * control characters. The formatter applies the same check; running
+     * it here as well makes the scan helpers fail before they open the
+     * file or start a request.
      *
      * @param array<string, string|string[]> $headers
      */
     private function validateIcapHeaders(array $headers): void
     {
-        foreach ($headers as $name => $value) {
-            // RFC 7230 §3.2.6 — header names must consist of tchar only:
-            // tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+"
-            //       / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
-            if (preg_match('/^[!#$%&\'*+\-.^_`|~0-9a-zA-Z]+$/', $name) !== 1) {
-                throw new \InvalidArgumentException(
-                    'ICAP header name contains invalid characters (RFC 7230 §3.2.6): ' . var_export($name, true),
-                );
-            }
-            foreach ((array) $value as $v) {
-                if (preg_match('/[\x00\r\n]/', $v) === 1) {
-                    throw new \InvalidArgumentException(
-                        sprintf('ICAP header %s carries a value with CR/LF/NUL; refusing to send.', $name),
-                    );
-                }
-            }
-        }
+        HeaderFields::validated($headers, 'ICAP');
     }
 
     /**
      * Merge caller-supplied headers with library-managed headers. The
-     * library-managed map always wins, keeping protocol-critical
-     * headers (Preview, Allow, Encapsulated, Host) out of caller
-     * control.
+     * library-managed map always wins, whatever the spelling of the
+     * caller's names, so protocol-critical headers (Preview, Allow) stay
+     * out of caller control and go out once. Host and Encapsulated are
+     * the formatter's.
      *
      * @param  array<string, string|string[]> $caller
      * @param  array<string, string[]>        $managed
@@ -695,7 +668,7 @@ final class IcapClient implements IcapClientInterface
     private function mergeHeaders(array $caller, array $managed): array
     {
         $merged = [];
-        foreach ($caller as $name => $value) {
+        foreach (HeaderFields::without($caller, array_keys($managed)) as $name => $value) {
             $merged[$name] = (array) $value;
         }
         foreach ($managed as $name => $value) {

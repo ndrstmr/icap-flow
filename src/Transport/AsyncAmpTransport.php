@@ -28,6 +28,7 @@ use Amp\Socket\Socket as SocketInterface;
 use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\IcapUri;
 
 use function Amp\async;
 
@@ -137,7 +138,7 @@ final class AsyncAmpTransport implements SessionAwareTransport
         }
 
         $tls = $config->getTlsContext();
-        $url = sprintf('tcp://%s:%d', $config->host, $config->port);
+        $url = IcapUri::tcp($config->host, $config->port);
         $context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
         if ($tls !== null) {
             $context = $context->withTlsContext($tls);

@@ -23,6 +23,7 @@ namespace Ndrstmr\Icap\Transport;
 use Amp\Cancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\IcapUri;
 
 /**
  * Blocking transport using plain PHP stream sockets.
@@ -63,7 +64,7 @@ final class SynchronousStreamTransport implements TransportInterface
 
         $errno = 0;
         $errstr = '';
-        $address = sprintf('tcp://%s:%d', $config->host, $config->port);
+        $address = IcapUri::tcp($config->host, $config->port);
         $stream = @stream_socket_client(
             $address,
             $errno,

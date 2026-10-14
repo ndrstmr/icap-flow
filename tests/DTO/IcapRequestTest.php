@@ -26,3 +26,24 @@ it('can be instantiated and mutated immutably', function () {
     expect($req2)->not->toBe($req)
         ->and($req2->headers['X-Test'])->toEqual(['1']);
 });
+
+it('keeps string and list header values and refuses any other type instead of casting it', function () {
+    $uri = 'icap://icap.example/scan';
+
+    $req = new IcapRequest('OPTIONS', $uri, ['X-One' => 'a', 'X-Two' => ['b', 'c']]);
+    expect($req->headers)->toBe(['X-One' => ['a'], 'X-Two' => ['b', 'c']]);
+
+    // A cast would turn null into no field at all and an object into its
+    // properties. Callers without static analysis can pass any PHP type,
+    // so these header maps go in untyped.
+    $withHeaders = fn (array $headers): IcapRequest => new IcapRequest('OPTIONS', $uri, $headers);
+    $cases = [
+        'null'   => ['X-Null' => null],
+        'object' => ['X-Object' => (object) ['value' => 'safe']],
+        'int'    => ['X-Count' => 5],
+    ];
+
+    foreach ($cases as $case => $headers) {
+        expect(fn () => $withHeaders($headers))->toThrow(InvalidArgumentException::class, '', $case);
+    }
+});

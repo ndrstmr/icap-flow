@@ -24,13 +24,17 @@ use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 
 /**
  * Reads ICAP header fields by name, ignoring case (RFC 3507 §4.3 via
- * RFC 7230 §3.2).
+ * RFC 7230 §3.2), and checks the fields the client sends.
  *
  * Header maps keep every name as the server spelled it, so one field can
  * sit under several keys ("X-Virus-Name", "x-virus-name"). Verdict,
  * preview, layout and capability reads go through this class, for parsed
  * and for cached responses alike, so the spelling never changes a verdict,
  * a preview size or a body layout.
+ *
+ * On the request side, caller fields pass {@see validated()} before they
+ * are serialized, and {@see without()} keeps fields the library computes
+ * itself out of the caller's reach in any spelling.
  *
  * @internal
  */
@@ -117,6 +121,86 @@ final class HeaderFields
         }
 
         return $values[0] ?? null;
+    }
+
+    /**
+     * Check header fields from a caller before they are serialized and
+     * return them as name => list of values. A name must be a token and
+     * every value a string that passes {@see isText()}: CR or LF would
+     * start a new header line, and the wire format cannot escape them, so
+     * such input is refused rather than cleaned up.
+     *
+     * @param  array<mixed>                $headers name => value or list of values
+     * @return array<string, list<string>>
+     *
+     * @throws \InvalidArgumentException When a name or a value cannot be sent
+     */
+    public static function validated(array $headers, string $kind): array
+    {
+        $checked = [];
+        foreach ($headers as $name => $values) {
+            if (!is_string($name) || !self::isToken($name)) {
+                throw new \InvalidArgumentException(sprintf(
+                    '%s header name must be a token (RFC 7230 §3.2.6): %s',
+                    $kind,
+                    var_export($name, true),
+                ));
+            }
+            foreach (is_array($values) ? $values : [$values] as $value) {
+                if (!is_string($value) || !self::isText($value)) {
+                    throw new \InvalidArgumentException(sprintf(
+                        '%s header %s needs string values without control characters; refusing to send.',
+                        $kind,
+                        $name,
+                    ));
+                }
+                $checked[$name][] = $value;
+            }
+        }
+
+        return $checked;
+    }
+
+    /**
+     * The map without the named fields, in any spelling. For fields the
+     * library computes itself: a caller value must neither replace them
+     * nor go out next to them under another spelling.
+     *
+     * @template T
+     *
+     * @param  array<string, T> $headers
+     * @param  list<string>     $names
+     * @return array<string, T>
+     */
+    public static function without(array $headers, array $names): array
+    {
+        $names = array_map(strtolower(...), $names);
+
+        return array_filter(
+            $headers,
+            static fn (string $field): bool => !in_array(strtolower($field), $names, true),
+            ARRAY_FILTER_USE_KEY,
+        );
+    }
+
+    /**
+     * Whether the value is a token (RFC 7230 §3.2.6), the syntax of
+     * header names and of ICAP and HTTP methods.
+     */
+    public static function isToken(string $value): bool
+    {
+        // \z instead of $, which also matches before a trailing newline.
+        return preg_match('/^[!#$%&\'*+\-.^_`|~0-9A-Za-z]+\z/', $value) === 1;
+    }
+
+    /**
+     * Whether the value holds only HTAB, SP, visible ASCII and obs-text,
+     * as header values and reason phrases must (RFC 7230 §3.2, §3.1.2).
+     * Any other control character could end the line early.
+     */
+    public static function isText(string $value): bool
+    {
+        return preg_match('/[\x00-\x08\x0A-\x1F\x7F]/', $value) !== 1;
     }
 
     /**

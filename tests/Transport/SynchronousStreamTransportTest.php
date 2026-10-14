@@ -18,8 +18,10 @@
 
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use PHPUnit\Framework\Assert;
 
 it('implements TransportInterface', function () {
     $t = new SynchronousStreamTransport();
@@ -38,5 +40,30 @@ it('throws connection exception on failure', function () {
         expect(fn () => $t->request($config, [])->await())->toThrow(IcapConnectionException::class);
     } finally {
         restore_error_handler();
+    }
+});
+
+it('connects to an IPv6 literal host (N04)', function () {
+    $server = @stream_socket_server('tcp://[::1]:0');
+    if ($server === false) {
+        Assert::markTestSkipped('IPv6 loopback is not available.');
+    }
+    $port = (int) substr((string) strrchr((string) stream_socket_get_name($server, false), ':'), 1);
+
+    try {
+        // Nobody can answer on this thread while the blocking client
+        // waits, so a zero stream timeout makes it give up at once. The
+        // request bytes on the server side show where it connected.
+        expect(fn () => (new SynchronousStreamTransport())
+            ->request(new Config('::1', $port, streamTimeout: 0.0), ["OPTIONS icap://[::1]/scan ICAP/1.0\r\n\r\n"])
+            ->await())
+            ->toThrow(IcapMalformedResponseException::class);
+
+        $peer = stream_socket_accept($server, 0);
+        \assert(is_resource($peer));
+        expect(fread($peer, 1024))->toBe("OPTIONS icap://[::1]/scan ICAP/1.0\r\n\r\n");
+        fclose($peer);
+    } finally {
+        fclose($server);
     }
 });

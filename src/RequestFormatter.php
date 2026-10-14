@@ -37,16 +37,28 @@ use Ndrstmr\Icap\DTO\IcapRequest;
  *      terminated by either `0\r\n\r\n` or `0; ieof\r\n\r\n` for a
  *      preview that already carries the complete payload (§4.5).
  *
+ * Methods, URI, request and status lines and every header name and value
+ * are checked when {@see format()} is called, before the first chunk
+ * exists. Invalid metadata throws {@see \InvalidArgumentException}, so not
+ * a single byte of such a request reaches the socket. Body bytes are
+ * binary and pass unchecked.
+ *
  * @see https://www.rfc-editor.org/rfc/rfc3507#section-4
  */
 final class RequestFormatter implements RequestFormatterInterface
 {
+    /**
+     * @throws \InvalidArgumentException When the request metadata cannot be
+     *         sent as given
+     */
     #[\Override]
     public function format(IcapRequest $request): iterable
     {
-        // Build encapsulated HTTP header block(s) eagerly so we know the
-        // `*-body` offset, which MUST appear in the Encapsulated header
-        // before the body is written on the wire (RFC 3507 §4.4.1).
+        // Render and check every header block before handing out the first
+        // chunk: an invalid request fails here, not after its ICAP head has
+        // reached the socket. The block lengths also give the `*-body`
+        // offset, which MUST appear in the Encapsulated header before the
+        // body is written on the wire (RFC 3507 §4.4.1).
         $reqHeaderBlock = $request->encapsulatedRequest !== null
             ? $this->renderHttpRequestHeaders($request->encapsulatedRequest)
             : '';
@@ -55,7 +67,6 @@ final class RequestFormatter implements RequestFormatterInterface
             : '';
 
         $bodySource = $this->resolveBodySource($request);
-        $hasBody = $bodySource !== null;
 
         $encapsulated = $this->buildEncapsulatedHeader(
             hasReqHeaders: $reqHeaderBlock !== '',
@@ -63,10 +74,28 @@ final class RequestFormatter implements RequestFormatterInterface
             hasResHeaders: $resHeaderBlock !== '',
             resHeaderLength: strlen($resHeaderBlock),
             bodyCarrier: $this->bodyCarrier($request),
-            hasBody: $hasBody,
+            hasBody: $bodySource !== null,
         );
 
-        yield $this->renderIcapHead($request, $encapsulated);
+        $icapHead = $this->renderIcapHead($request, $encapsulated);
+
+        return $this->emit($icapHead, $reqHeaderBlock, $resHeaderBlock, $bodySource, $request->previewIsComplete);
+    }
+
+    /**
+     * Yield the rendered header blocks, then stream the body.
+     *
+     * @param  string|resource|null $bodySource
+     * @return iterable<string>
+     */
+    private function emit(
+        string $icapHead,
+        string $reqHeaderBlock,
+        string $resHeaderBlock,
+        mixed $bodySource,
+        bool $previewIsComplete,
+    ): iterable {
+        yield $icapHead;
 
         if ($reqHeaderBlock !== '') {
             yield $reqHeaderBlock;
@@ -75,8 +104,8 @@ final class RequestFormatter implements RequestFormatterInterface
             yield $resHeaderBlock;
         }
 
-        if ($hasBody) {
-            yield from $this->chunkBody($bodySource, $request->previewIsComplete);
+        if ($bodySource !== null) {
+            yield from $this->chunkBody($bodySource, $previewIsComplete);
         }
     }
 
@@ -140,61 +169,82 @@ final class RequestFormatter implements RequestFormatterInterface
 
     private function renderIcapHead(IcapRequest $request, string $encapsulated): string
     {
-        $parts = parse_url($request->uri);
-        $host = $parts['host'] ?? '';
-        if (isset($parts['port'])) {
-            $host .= ':' . $parts['port'];
+        if (!HeaderFields::isToken($request->method)) {
+            throw new \InvalidArgumentException('ICAP method must be a token.');
         }
+        $host = IcapUri::authority($request->uri);
 
-        $requestLine = sprintf('%s %s ICAP/1.0', $request->method, $request->uri);
+        // Host and Encapsulated describe this very message, so they come
+        // from the URI and the computed byte layout only. A caller value
+        // for either is dropped in any spelling instead of replacing them
+        // or going out as a second field.
+        $headers = HeaderFields::without(
+            HeaderFields::validated($request->headers, 'ICAP'),
+            ['Host', 'Encapsulated'],
+        );
 
-        $headers = $request->headers;
-        if (!isset($headers['Host'])) {
-            $headers['Host'] = [$host];
-        }
-        // Encapsulated is computed by the formatter — any user-supplied
-        // value would contradict the actual byte layout.
-        $headers['Encapsulated'] = [$encapsulated];
-
-        $head = $requestLine . "\r\n";
-        // Emit Host first for readability, then the remaining headers in
-        // the order the caller supplied them, then Encapsulated last
-        // (it's the header ICAP parsers rely on).
-        $orderedNames = array_unique(array_merge(['Host'], array_keys($headers), ['Encapsulated']));
-        foreach ($orderedNames as $name) {
-            foreach ($headers[$name] as $value) {
-                $head .= $name . ': ' . $value . "\r\n";
-            }
-        }
-        $head .= "\r\n";
-
-        return $head;
+        // Host first for readability, then the remaining headers in the
+        // order the caller supplied them, then Encapsulated last (it's the
+        // header ICAP parsers rely on).
+        return sprintf('%s %s ICAP/1.0', $request->method, $request->uri) . "\r\n"
+            . 'Host: ' . $host . "\r\n"
+            . $this->renderFields($headers)
+            . 'Encapsulated: ' . $encapsulated . "\r\n"
+            . "\r\n";
     }
 
     private function renderHttpRequestHeaders(HttpRequest $req): string
     {
-        $block = sprintf('%s %s %s', $req->method, $req->requestTarget, $req->httpVersion) . "\r\n";
-        foreach ($req->headers as $name => $values) {
-            foreach ($values as $value) {
-                $block .= $name . ': ' . $value . "\r\n";
-            }
+        // request-line = method SP request-target SP HTTP-version (RFC 7230 §3.1.1)
+        if (!HeaderFields::isToken($req->method)
+            || preg_match('/^[^\x00-\x20\x7F]+\z/', $req->requestTarget) !== 1
+            || !$this->isHttpVersion($req->httpVersion)
+        ) {
+            throw new \InvalidArgumentException('Encapsulated HTTP request line is invalid (RFC 7230 §3.1.1).');
         }
-        $block .= "\r\n";
 
-        return $block;
+        return sprintf('%s %s %s', $req->method, $req->requestTarget, $req->httpVersion) . "\r\n"
+            . $this->renderFields(HeaderFields::validated($req->headers, 'HTTP'))
+            . "\r\n";
     }
 
     private function renderHttpResponseHeaders(HttpResponse $res): string
     {
-        $block = sprintf('%s %d %s', $res->httpVersion, $res->statusCode, $res->reasonPhrase) . "\r\n";
-        foreach ($res->headers as $name => $values) {
+        // status-line = HTTP-version SP status-code SP reason-phrase (RFC 7230 §3.1.2)
+        if (!$this->isHttpVersion($res->httpVersion)
+            || $res->statusCode < 100
+            || $res->statusCode > 999
+            || !HeaderFields::isText($res->reasonPhrase)
+        ) {
+            throw new \InvalidArgumentException('Encapsulated HTTP status line is invalid (RFC 7230 §3.1.2).');
+        }
+
+        return sprintf('%s %d %s', $res->httpVersion, $res->statusCode, $res->reasonPhrase) . "\r\n"
+            . $this->renderFields(HeaderFields::validated($res->headers, 'HTTP'))
+            . "\r\n";
+    }
+
+    /**
+     * @param array<string, list<string>> $headers
+     */
+    private function renderFields(array $headers): string
+    {
+        $block = '';
+        foreach ($headers as $name => $values) {
             foreach ($values as $value) {
                 $block .= $name . ': ' . $value . "\r\n";
             }
         }
-        $block .= "\r\n";
 
         return $block;
+    }
+
+    /**
+     * HTTP-version = HTTP-name "/" DIGIT "." DIGIT (RFC 7230 §2.6).
+     */
+    private function isHttpVersion(string $version): bool
+    {
+        return preg_match('#^HTTP/[0-9]\.[0-9]\z#', $version) === 1;
     }
 
     /**
