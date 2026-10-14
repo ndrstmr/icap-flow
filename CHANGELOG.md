@@ -16,6 +16,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repeats of a single-valued field are rejected with
   `IcapMalformedResponseException`; `IcapResponse::$headers` keeps the
   server's spelling. *(B01)*
+- Request metadata is checked before the first byte goes out. `RequestFormatter`,
+  and with it `request()`, rejects ICAP and encapsulated HTTP methods, URIs,
+  request and status lines and header fields that would break the wire format
+  (CR/LF and other control characters, non-token names, non-string values)
+  with `InvalidArgumentException`; `IcapRequest` refuses header values that
+  are neither a string nor an array instead of casting them. The scan helpers
+  apply the same header check; before, a header name ending in LF and values
+  with other control characters got through. `Host` and `Encapsulated` always
+  come from the formatter and `Preview`/`Allow` from the preview flow: caller
+  values for them are ignored in any spelling instead of replacing them or
+  going out twice, also in the full request after `100 Continue`. `scanFile()`
+  sends no preview and drops a caller `Preview` the same way; `Allow` and
+  other extra headers pass. *(B04)*
+- Service paths must be an absolute path with an optional query, and the
+  configured host must be a host name or an IP address, in the ICAP and in the
+  TCP URI. A missing leading slash, user info, a fragment or a `/` or `?` in
+  the host can no longer move the URI authority, path or query. IPv6 server
+  addresses are bracketed in ICAP and TCP URIs, so a host like `::1` now
+  connects. *(N04)*
 
 ## [3.0.0] - 2026-05-01
 

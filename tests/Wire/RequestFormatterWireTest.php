@@ -207,3 +207,68 @@ it('chunks a stream-resource body without buffering it as a single string', func
         ->toContain("a\r\nABCDEFGHIJ\r\n0\r\n\r\n")
         ->toContain("Encapsulated: res-hdr=0, res-body=");
 });
+
+/**
+ * B04 — every value that ends up in a header block is checked before the
+ * formatter hands out its first chunk, so an invalid request never leaves
+ * a half-written head on the socket.
+ */
+it('rejects invalid request metadata before producing a chunk', function () {
+    $uri = 'icap://icap.example.net/scan';
+    // Callers without static analysis can pass any PHP type, so these
+    // header maps go in untyped.
+    $withHeaders = fn (array $headers): IcapRequest => new IcapRequest('OPTIONS', $uri, $headers);
+
+    $cases = [
+        'ICAP method with a space'       => new IcapRequest('RESPMOD X', $uri),
+        'ICAP URI with CRLF'             => new IcapRequest('OPTIONS', "{$uri}\r\nX-Injected: yes"),
+        'ICAP URI with a fragment'       => new IcapRequest('OPTIONS', "{$uri}#part"),
+        'ICAP URI with user info'        => new IcapRequest('OPTIONS', 'icap://icap.example.net@evil.example/scan'),
+        'ICAP URI without scheme'        => new IcapRequest('OPTIONS', '/scan'),
+        'ICAP header name ending in LF'  => $withHeaders(["X-Bad\n" => ['1']]),
+        'ICAP header value with CRLF'    => $withHeaders(['X-User' => ["safe\r\nX-Injected: yes"]]),
+        'ICAP header value with DEL'     => $withHeaders(['X-User' => ["a\x7Fb"]]),
+        'ICAP header value of type int'  => $withHeaders(['X-Count' => [5]]),
+        'ICAP headers as a list'         => $withHeaders(['X-Bad: 1']),
+        'HTTP method with a space'       => new IcapRequest('REQMOD', $uri, encapsulatedRequest: new HttpRequest('GET /admin', '/')),
+        'HTTP request target with CRLF'  => new IcapRequest('REQMOD', $uri, encapsulatedRequest: new HttpRequest('GET', "/\r\nX-Http-Injected: yes")),
+        'HTTP version with CRLF'         => new IcapRequest('REQMOD', $uri, encapsulatedRequest: new HttpRequest('GET', '/', httpVersion: "HTTP/1.1\r\nX-Http-Injected: yes")),
+        'HTTP request header with LF'    => new IcapRequest('REQMOD', $uri, encapsulatedRequest: new HttpRequest('GET', '/', ['X-Http' => ["safe\nX-Http-Injected: yes"]])),
+        'HTTP status code out of range'  => new IcapRequest('RESPMOD', $uri, encapsulatedResponse: new HttpResponse(1000)),
+        'HTTP reason phrase with CR'     => new IcapRequest('RESPMOD', $uri, encapsulatedResponse: new HttpResponse(200, "OK\rX-Http-Injected: yes")),
+        'HTTP response header name'      => new IcapRequest('RESPMOD', $uri, encapsulatedResponse: new HttpResponse(200, headers: ['X Http' => ['1']])),
+        'HTTP response header with CRLF' => new IcapRequest('RESPMOD', $uri, encapsulatedResponse: new HttpResponse(200, headers: ['X-Http' => ["safe\r\nX-Http-Injected: yes"]], body: 'data')),
+    ];
+
+    foreach ($cases as $case => $request) {
+        $chunks = 0;
+        expect(function () use ($request, &$chunks) {
+            foreach ((new RequestFormatter())->format($request) as $chunk) {
+                $chunks++;
+            }
+        })->toThrow(InvalidArgumentException::class, '', $case);
+
+        expect($chunks)->toBe(0, $case);
+    }
+});
+
+it('computes Host and Encapsulated itself, whatever the caller sends in any spelling', function () {
+    $req = new IcapRequest(
+        method: 'OPTIONS',
+        uri: 'icap://icap.example.net/service',
+        headers: [
+            'Host'         => ['evil.example'],
+            'host'         => ['evil.example'],
+            'encapsulated' => ['req-body=0'],
+            'X-Keep'       => ['1'],
+        ],
+    );
+
+    $expected = "OPTIONS icap://icap.example.net/service ICAP/1.0\r\n"
+        . "Host: icap.example.net\r\n"
+        . "X-Keep: 1\r\n"
+        . "Encapsulated: null-body=0\r\n"
+        . "\r\n";
+
+    expect(wire((new RequestFormatter())->format($req)))->toBe($expected);
+});

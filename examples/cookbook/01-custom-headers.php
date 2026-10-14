@@ -9,9 +9,10 @@ use Ndrstmr\Icap\SynchronousIcapClient;
 /*
  * Custom ICAP request headers — useful for downstream policy decisions
  * (X-Client-IP, X-Authenticated-User, X-Server-IP). Header names and
- * values are validated for CR/LF/NUL before any byte is written, and
- * library-managed headers (Encapsulated/Host/Connection/Preview/Allow)
- * always take precedence over caller input.
+ * values are validated for CR/LF/NUL before any byte is written. The
+ * client sets Host and Encapsulated itself and drops caller values for
+ * them in any spelling; scanFile() sends no preview, so a caller Preview
+ * is dropped too.
  */
 
 $icap = SynchronousIcapClient::create();

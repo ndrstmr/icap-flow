@@ -45,51 +45,20 @@ Die beiden Pfade nicht zusammenlegen. Tests in `tests/PreviewContinueStrictTest.
 
 ## Header- und URI-Injection-Schutz
 
-`validateServicePath()` und `validateIcapHeaders()` rejecten CR/LF/NUL/Steuerzeichen, **bevor** der erste Byte das Socket erreicht. Findings H der v2-Konsolidierung.
+`RequestFormatter::format()` prüft jeden Request, bevor der erste Chunk entsteht: ICAP-Methode, URI (`IcapUri::authority()`), ICAP- und gekapselte HTTP-Header sowie HTTP-Request- und Statuszeile. Ungültige Metadaten werfen `\InvalidArgumentException`; kein Byte erreicht das Socket. Finding H der v2-Konsolidierung.
 
-```php
-private function validateServicePath(string $service): void
-{
-    if (preg_match('/[\x00-\x20\x7F]/', $service) === 1) {
-        throw new \InvalidArgumentException(
-            'Service path contains control characters, whitespace or NUL: '
-            . var_export($service, true),
-        );
-    }
-}
+- `HeaderFields::validated()` — Namen sind Token (RFC 7230 §3.2.6), Werte Strings ohne Steuerzeichen außer HTAB. CR/LF werden abgewiesen, nicht „escaped“. `IcapClient::validateIcapHeaders()` wendet dieselbe Prüfung in den Scan-Helfern schon vor dem Öffnen der Datei an.
+- `IcapUri::forService()` — Host, Port und Service-Pfad bleiben getrennte Komponenten: Host als Hostname oder IP-Adresse (IPv6 in Klammern), Service als absoluter Pfad mit optionaler Query, ohne Fragment. `IcapUri::tcp()` prüft den Host der Socket-Adresse genauso.
 
-private function validateIcapHeaders(array $headers): void
-{
-    foreach ($headers as $name => $value) {
-        if (preg_match('/[\x00-\x1F\x7F:]/', $name) === 1) {
-            throw new \InvalidArgumentException(
-                'ICAP header name contains control characters or separator: '
-                . var_export($name, true),
-            );
-        }
-        foreach ((array) $value as $v) {
-            if (preg_match('/[\x00\r\n]/', $v) === 1) {
-                throw new \InvalidArgumentException(
-                    sprintf('ICAP header %s carries CR/LF/NUL.', $name),
-                );
-            }
-        }
-    }
-}
-```
+**Korrektur zu Jules' Befund:** `HeaderFields::validated()` prüft jeden Eintrag eines Array-Werts einzeln. Jules' Behauptung, dass Array-Werte umgangen werden, ist faktisch falsch — **nicht** in den Plan aufnehmen.
 
-**Korrektur zu Jules' Befund:** Das `foreach ((array) $value as $v)` iteriert pro Array-Element. Jules' Behauptung, dass Array-Werte umgangen werden, ist faktisch falsch — **nicht** in den Plan aufnehmen.
+## Verwaltete Header — Library gewinnt immer
 
-**v2.2-Item (#22):** Header-Namen strenger gegen RFC-7230-§3.2.6-Token-Set prüfen. Nice-to-have, nicht sicherheitsblockierend.
+Caller-Werte für verwaltete Header fallen in jeder Schreibweise weg (`HeaderFields::without()`):
 
-## Header-Merge — Library gewinnt immer
-
-`mergeHeaders($caller, $managed)` schreibt zuerst Caller-Werte, dann Library-Werte. Library-Header können nicht überschrieben werden:
-
-- `Encapsulated` — wird vom Formatter gerechnet.
-- `Host` — wird aus `Config::host:port` gesetzt.
-- `Connection` — Library steuert Keep-Alive.
-- Im Preview-Flow zusätzlich: `Preview`, `Allow`.
+- `Host` und `Encapsulated` — setzt immer der Formatter, aus dem URI und aus den berechneten Offsets.
+- `Preview` und `Allow` — im Preview-Request setzt `IcapClient` `Preview: <n>` und `Allow: 204` über `mergeHeaders()`; der Legacy-Vollrequest nach `100 Continue` trägt keinen der beiden.
+- `scanFile()` sendet ohne Preview-Handshake und verwirft nur `Preview`; `Allow` und die übrigen `extraHeaders` gehen mit.
 
 Wer einen `extraHeaders`-Param mit `Encapsulated` ankommt, sieht seinen Wert nicht im Wire — das ist **gewollt**.
 

@@ -16,11 +16,17 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
+use Amp\Socket;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Transport\NullConnectionPool;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use PHPUnit\Framework\Assert;
+
+use function Amp\async;
 
 it('implements TransportInterface', function () {
     $t = new AsyncAmpTransport();
@@ -32,4 +38,38 @@ it('throws connection exception on invalid host', function () {
     $config = new Config('127.0.0.1', 1); // unlikely to be open
 
     expect(fn () => $t->request($config, [])->await())->toThrow(IcapConnectionException::class);
+});
+
+it('connects to an IPv6 literal host, with and without a pool (N04)', function () {
+    try {
+        $server = Socket\listen('[::1]:0');
+    } catch (Socket\SocketException) {
+        Assert::markTestSkipped('IPv6 loopback is not available.');
+    }
+    $address = $server->getAddress();
+    \assert($address instanceof Socket\InternetAddress);
+    $config = new Config('::1', $address->getPort());
+
+    // One connection per transport, each answered with a bare 204.
+    $answering = async(function () use ($server): void {
+        while (($peer = $server->accept()) !== null) {
+            $head = '';
+            while (!str_contains($head, "\r\n\r\n") && ($chunk = $peer->read()) !== null) {
+                $head .= $chunk;
+            }
+            $peer->write("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+        }
+    });
+
+    $pool = new AmpConnectionPool();
+    try {
+        foreach ([new AsyncAmpTransport(), new AsyncAmpTransport(new NullConnectionPool()), new AsyncAmpTransport($pool)] as $transport) {
+            $response = $transport->request($config, ["OPTIONS icap://[::1]/scan ICAP/1.0\r\nEncapsulated: null-body=0\r\n\r\n"])->await();
+            expect($response)->toStartWith('ICAP/1.0 204 No Content');
+        }
+    } finally {
+        $pool->close();
+        $server->close();
+    }
+    $answering->await();
 });

@@ -18,17 +18,25 @@
 
 declare(strict_types=1);
 
+use Amp\Socket;
 use Mockery as m;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
+use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Transport\AmpConnectionPool;
+use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\NullConnectionPool;
+use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
@@ -170,4 +178,143 @@ it('rejects whitespace in the service path', function () {
     $client = IcapClient::forServer('icap.example');
     expect(fn () => $client->options('/svc has space'))
         ->toThrow(InvalidArgumentException::class);
+});
+
+/**
+ * N04 — the service is an absolute path with an optional query, the host a
+ * host name or an IP address. Anything else would move the URI authority,
+ * path or query, or add a fragment.
+ */
+it('rejects service paths and hosts that would move the URI authority, path or query', function () {
+    [, $formatter, $transport, $parser, $client] = failSecureClient(new IcapResponse(200));
+
+    $services = [
+        'no leading slash'      => '.evil.example/scan',
+        'user info'             => '@evil.example/scan',
+        'fragment'              => '/scan#part',
+        'broken percent escape' => '/scan%zz',
+    ];
+    // "/" or "?" in the host would turn the service into another path or
+    // into a query, in the ICAP URI and in the socket address alike.
+    $hosts = [
+        'host with a path'  => 'scanner.example/other',
+        'host with a query' => 'scanner.example?query=',
+    ];
+    $pool = new AmpConnectionPool();
+    $socketTransports = [
+        'sync'                      => new SynchronousStreamTransport(),
+        'async'                     => new AsyncAmpTransport(),
+        'async, NullConnectionPool' => new AsyncAmpTransport(new NullConnectionPool()),
+        'async, AmpConnectionPool'  => new AsyncAmpTransport($pool),
+    ];
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $services, $hosts, $socketTransports, $formatter, $transport, $parser) {
+            foreach ($services as $case => $service) {
+                expect(fn () => $client->options($service)->await())
+                    ->toThrow(InvalidArgumentException::class, '', $case);
+            }
+            foreach ($hosts as $case => $host) {
+                $config = new Config($host);
+                expect(fn () => (new IcapClient($config, $transport, $formatter, $parser))->options('/scan')->await())
+                    ->toThrow(InvalidArgumentException::class, '', $case);
+                foreach ($socketTransports as $name => $socketTransport) {
+                    expect(fn () => $socketTransport->request($config, [])->await())
+                        ->toThrow(InvalidArgumentException::class, '', "{$case}, {$name}");
+                }
+            }
+        });
+    } finally {
+        $pool->close();
+    }
+
+    m::close();
+});
+
+it('builds the service URI with a query and a bracketed IPv6 host', function () {
+    $wire = '';
+    /** @var TransportInterface&\Mockery\MockInterface $transport */
+    $transport = m::mock(TransportInterface::class);
+    /** @var \Mockery\Expectation $t */
+    $t = $transport->shouldReceive('request');
+    $t->withArgs(
+        /** @param iterable<string> $chunks */
+        function (Config $config, iterable $chunks) use (&$wire): bool {
+            foreach ($chunks as $chunk) {
+                $wire .= $chunk;
+            }
+            return true;
+        },
+    );
+    $t->andReturn(\Amp\Future::complete("ICAP/1.0 200 OK\r\nEncapsulated: null-body=0\r\n\r\n"));
+
+    $client = new IcapClient(new Config('::1', 1345), $transport, new RequestFormatter(), new ResponseParser());
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        $client->options('/scan?mode=full&path=%2Fdata')->await();
+    });
+
+    expect($wire)->toBe(
+        "OPTIONS icap://[::1]:1345/scan?mode=full&path=%2Fdata ICAP/1.0\r\n"
+        . "Host: [::1]:1345\r\n"
+        . "Encapsulated: null-body=0\r\n"
+        . "\r\n",
+    );
+
+    m::close();
+});
+
+/**
+ * B04 — request() takes caller-built DTOs as they are. Invalid metadata
+ * must fail before the transport writes anything, not after the ICAP
+ * head is already on the socket.
+ */
+it('writes no byte to the socket when request() carries invalid metadata', function () {
+    $requests = [
+        'ICAP header' => new IcapRequest(
+            'RESPMOD',
+            'icap://icap.example/scan',
+            ['X-User' => ["safe\r\nX-Injected: yes"]],
+            encapsulatedResponse: new HttpResponse(200, body: 'data'),
+        ),
+        'HTTP header' => new IcapRequest(
+            'RESPMOD',
+            'icap://icap.example/scan',
+            encapsulatedResponse: new HttpResponse(200, headers: ['X-Http' => ["safe\r\nX-Http-Injected: yes"]], body: 'data'),
+        ),
+    ];
+
+    foreach ($requests as $case => $request) {
+        [$server, $socket] = Socket\createSocketPair();
+        $pool = new AmpConnectionPool(connector: fn () => $socket);
+        $client = new IcapClient(
+            new Config('icap.example', streamTimeout: 0.2),
+            new AsyncAmpTransport($pool),
+            new RequestFormatter(),
+            new ResponseParser(),
+        );
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $request, $server, $socket, $case) {
+                expect(fn () => $client->request($request)->await())
+                    ->toThrow(InvalidArgumentException::class, '', $case);
+
+                // With the client end closed, the server end yields whatever
+                // reached the wire and then the end of the stream.
+                $socket->close();
+                $received = '';
+                while (($chunk = $server->read()) !== null) {
+                    $received .= $chunk;
+                }
+                expect($received)->toBe('', $case);
+            });
+        } finally {
+            $socket->close();
+            $server->close();
+            $pool->close();
+        }
+    }
 });

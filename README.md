@@ -172,7 +172,7 @@ $result = $icap->scanFile('/avscan', '/path/to/upload.bin', [
 ]);
 ```
 
-Header names and values are validated against CR / LF / NUL / control characters — injection attempts raise `InvalidArgumentException` before any byte hits the socket. Library-managed headers (`Encapsulated`, `Host`, `Connection`, and inside the preview flow `Preview` / `Allow`) always take precedence over caller-supplied values.
+Header names and values are validated against CR / LF / NUL / control characters — injection attempts raise `InvalidArgumentException` before any byte hits the socket. The client sets `Host` and `Encapsulated` itself, and in `scanFileWithPreview()` also `Preview` / `Allow`; caller values for these are dropped in any spelling. `scanFile()` sends no preview, so it drops a caller `Preview` too, while `Allow` (e.g. `Allow: 204`) and all other headers pass through.
 
 ## Exception taxonomy
 

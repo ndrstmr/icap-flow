@@ -27,6 +27,7 @@ use Amp\Socket\Socket as SocketInterface;
 use Closure;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\IcapUri;
 
 /**
  * No-op connection pool: every {@see acquire()} opens a fresh TCP/TLS
@@ -77,7 +78,7 @@ final class NullConnectionPool implements ConnectionPoolInterface
     {
         return static function (Config $config, ?Cancellation $cancellation): SocketInterface {
             $tls = $config->getTlsContext();
-            $url = sprintf('tcp://%s:%d', $config->host, $config->port);
+            $url = IcapUri::tcp($config->host, $config->port);
             $context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
             if ($tls !== null) {
                 $context = $context->withTlsContext($tls);

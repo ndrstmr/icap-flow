@@ -21,7 +21,7 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 1. **Lage prüfen** — Roadmap-Anker ist `docs/review/review_v2-1/consolidated_v2.1_task-list.md`. Vor jeder substanziellen Änderung in `src/`, `tests/`, `examples/cookbook/` oder `.github/workflows/` dort den passenden Eintrag suchen (Milestone v2.1.1 / v2.1.2 / v2.2.0 / v3.0.0). Steht das Vorhaben dort nicht, mit dem User abklären, bevor Code wandert.
 2. **Test zuerst** — Bei jeder Verhaltensänderung erst Pest-Test schreiben, der heute rot ist (Wire/Transport/Security/Integration je nach Schicht). Erst dann Implementierung.
 3. **Designen** — Fail-Secure-Semantik in `IcapClient::interpretResponse()` halten. Public-API-Signaturen sind v2-BC-stabil; BC-Breaks gehen in den v3.0.0-Bucket der Task-Liste, nicht in einen Patch- oder Minor-Release.
-4. **Implementieren** — `final class`, `final readonly class` für DTOs, `declare(strict_types=1)`, `#[\Override]` auf jeder Interface-Implementierung. Header-/URI-Eingaben am Boundary validieren (`validateServicePath`, `validateIcapHeaders`). Keine Bodys puffern — Streaming via `RequestFormatter::format(): iterable<string>` und `ChunkedBodyEncoder`.
+4. **Implementieren** — `final class`, `final readonly class` für DTOs, `declare(strict_types=1)`, `#[\Override]` auf jeder Interface-Implementierung. Header-/URI-Eingaben am Boundary validieren (`IcapUri`, `HeaderFields::validated()` im `RequestFormatter`). Keine Bodys puffern — Streaming via `RequestFormatter::format(): iterable<string>` und `ChunkedBodyEncoder`.
 5. **Verifizieren** — Vor Übergabe alle vier Gates clean:
    ```bash
    composer cs-check                 # PSR-12 + EUPL-Header (php-cs-fixer dry-run)
@@ -54,8 +54,8 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 - PHPStan Level 9 + bleedingEdge ohne Baseline. Fehler werden gefixt, nicht ignoriert.
 - PSR-12 via `composer cs-fix`. Kein Hand-Format.
 - Fail-Secure-Statuscode-Auswertung **ausschließlich** in `IcapClient::interpretResponse()`. Externe Aufrufer rufen `request()` / `scanFile*()`, niemals direkt `executeRaw()`.
-- Header- und URI-Eingaben durch `validateServicePath()` und `validateIcapHeaders()` schicken, bevor irgendein Byte das Socket erreicht.
-- Library-verwaltete Header (`Encapsulated`, `Host`, `Connection`, `Preview`, `Allow`) gewinnen in `mergeHeaders()` immer — Caller-Werte werden nicht durchgelassen.
+- Header- und URI-Eingaben prüfen, bevor irgendein Byte das Socket erreicht: URIs über `IcapUri` (`forService()`, `authority()`, `tcp()`), Header über `HeaderFields::validated()`. `RequestFormatter::format()` prüft jeden Request, bevor der erste Chunk entsteht.
+- Verwaltete Header in jeder Schreibweise aus Caller-Input entfernen (`HeaderFields::without()`): `Host`/`Encapsulated` setzt immer der Formatter, `Preview`/`Allow` der Preview-Flow über `mergeHeaders()`; `scanFile()` verwirft `Preview`, `Allow` geht dort mit.
 - BC-Promise: Public-API von `IcapClient`, `SynchronousIcapClient`, `Config`, `IcapClientInterface`, `TransportInterface`, `PreviewStrategyInterface`, `OptionsCacheInterface`, `ConnectionPoolInterface` und alle Exception-Klassen sind v2-stabil. BC-Breaks gehen in den v3.0.0-Bucket.
 
 ### DARF NICHT

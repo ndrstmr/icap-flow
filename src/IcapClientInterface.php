@@ -65,8 +65,10 @@ interface IcapClientInterface
      * Scan a local file via RESPMOD.
      *
      * @param array<string, string|string[]> $extraHeaders Extra ICAP request
-     *        headers, e.g. `['X-Client-IP' => '203.0.113.5']`. Library-managed
-     *        headers (`Host`, `Encapsulated`, `Connection`) always take precedence.
+     *        headers, e.g. `['X-Client-IP' => '203.0.113.5']`. `Host` and
+     *        `Encapsulated` are always set by the client; caller values for
+     *        them are dropped in any spelling. No preview is sent, so a
+     *        caller `Preview` is dropped as well; `Allow` passes.
      * @return Future<ScanResult>
      */
     public function scanFile(

@@ -30,6 +30,7 @@ use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\HeaderFields;
+use Ndrstmr\Icap\IcapUri;
 
 /**
  * In-process keep-alive pool of amphp sockets.
@@ -222,7 +223,7 @@ final class AmpConnectionPool implements ConnectionPoolInterface
     {
         return static function (Config $config, ?Cancellation $cancellation): SocketInterface {
             $tls = $config->getTlsContext();
-            $url = sprintf('tcp://%s:%d', $config->host, $config->port);
+            $url = IcapUri::tcp($config->host, $config->port);
             $context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
             if ($tls !== null) {
                 $context = $context->withTlsContext($tls);
