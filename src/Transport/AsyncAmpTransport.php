@@ -50,14 +50,12 @@ use function Amp\async;
  * on the server closing the socket.
  *
  * **Connection pooling (v2.1+).** When constructed with a
- * {@see ConnectionPoolInterface}, the transport calls
- * `acquire()` instead of opening a fresh TCP/TLS connection and
- * `release()` instead of closing the socket. The socket is closed
- * (rather than returned) when:
- *   - the framing reader threw — the socket might be in an
- *     inconsistent state and we play safe;
- *   - the server's response carries `Connection: close` (RFC 7230
- *     §6.1) — we honour the close intent.
+ * {@see ConnectionPoolInterface}, the transport calls `acquire()`
+ * instead of opening a fresh TCP/TLS connection. A socket goes back
+ * with `release()` only when the caller of a {@see openSession()}
+ * session has validated the whole exchange; every other way out closes
+ * it. {@see request()} returns the raw response string, before any
+ * status or verdict has been checked, so it always closes the socket.
  * Without a pool the transport opens a fresh socket per request and
  * closes it after — identical to the v2.0 behaviour.
  *
@@ -83,23 +81,17 @@ final class AsyncAmpTransport implements SessionAwareTransport
         /** @var \Amp\Future<string> $future */
         $future = async(function () use ($config, $rawRequest, $cancellation): string {
             $session = $this->openSession($config, $cancellation);
-            $closeForced = false;
             try {
                 $session->write($rawRequest);
-                $response = $session->readResponse();
-                if ($this->serverWantsClose($response)) {
-                    $closeForced = true;
-                }
-                return $response;
-            } catch (\Throwable $e) {
-                $closeForced = true;
-                throw $e;
+
+                return $session->readResponse();
             } finally {
-                if ($closeForced) {
-                    $session->close();
-                } else {
-                    $session->release();
-                }
+                // The caller gets a string no one has validated yet: a
+                // 100 Continue, an error status or bytes the framing
+                // reader dropped are indistinguishable from a clean
+                // answer here. Reuse needs a validated exchange, which
+                // only a session offers.
+                $session->close();
             }
         });
 
@@ -156,18 +148,5 @@ final class AsyncAmpTransport implements SessionAwareTransport
                 $e,
             );
         }
-    }
-
-    /**
-     * Cheap heuristic for `Connection: close` in the ICAP head. We
-     * don't fully reparse here — the response parser does that — but
-     * we want to keep the socket-disposal decision local to the
-     * transport.
-     */
-    private function serverWantsClose(string $response): bool
-    {
-        $headEnd = strpos($response, "\r\n\r\n");
-        $head = $headEnd === false ? $response : substr($response, 0, $headEnd);
-        return preg_match('/^Connection:\s*close\s*$/im', $head) === 1;
     }
 }

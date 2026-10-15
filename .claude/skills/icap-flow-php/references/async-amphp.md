@@ -76,41 +76,43 @@ $socket = $this->acquireSocket($config, $effective);
 
 ```php
 $session = $this->transport->openSession($this->config, $cancellation);
+$reusable = false;   // Standard: schließen
 try {
     $session->write($this->formatter->format($previewRequest));
     $previewIcapResponse = $this->parser->parse($session->readResponse());
+    $serverCloses = HeaderFields::hasToken($previewIcapResponse->headers, 'Connection', 'close');
 
     if ($previewIsComplete) {
-        $session->release();   // sauber zurück in den Pool
-        return $this->interpretResponse($previewIcapResponse, $this->config);
+        $result = $this->interpretResponse($previewIcapResponse, $this->config);
+        $reusable = !$serverCloses;
+        return $result;
     }
 
     $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
 
     if ($decision !== PreviewDecision::CONTINUE_SENDING) {
-        $session->release();   // 100/204-Pfad: Socket protokoll-sauber
-        return new ScanResult(
-            isInfected: $decision === PreviewDecision::ABORT_INFECTED,
-            virusName: /* ... */,
-            originalResponse: $previewIcapResponse,
-        );
+        $result = new ScanResult(/* ... */);
+        $reusable = !$serverCloses;
+        return $result;
     }
 
     // §4.5 continuation: NUR die Chunked-Body-Reste, kein neuer ICAP-Head.
-    $session->write((new ChunkedBodyEncoder())->encode($remainder));
+    $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream($stream));
 
     $finalIcapResponse = $this->parser->parse($session->readResponse());
-    $session->release();
-    return $this->interpretResponse($finalIcapResponse, $this->config);
-} catch (\Throwable $e) {
-    $session->close();   // off-script — Socket darf NIE in den Pool
-    throw $e;
+    $result = $this->interpretResponse($finalIcapResponse, $this->config);
+    $reusable = !$serverCloses
+        && !HeaderFields::hasToken($finalIcapResponse->headers, 'Connection', 'close');
+    return $result;
+} finally {
+    $reusable ? $session->release() : $session->close();
 }
 ```
 
 Faustregeln:
-- `release()` nur, wenn der Austausch protokoll-sauber war **und** der Server kein `Connection: close` gesendet hat.
-- Jeder `\Throwable`-Pfad endet in `close()`. Ein halb gesprochener Socket darf den nächsten Pool-User nicht sehen.
+- `release()` erst nach geprüftem Frame, erlaubtem Status/Verdikt und ohne `close`-Token in `Connection` einer Antwort des Austauschs.
+- Jeder Exception-Pfad und jeder nicht freigegebene Austausch endet in `close()`. Ein halb gesprochener Socket darf den nächsten Pool-User nicht sehen.
+- `release()` ist der letzte Schritt: danach ist die Session beendet, ein `close()` im Fehlerpfad wäre wirkungslos.
 
 ## Streaming, kein Buffering
 
@@ -136,7 +138,7 @@ if ($tls !== null) {
 return Socket\connect($url, $context, $cancellation);
 ```
 
-**v2.1.1-Bug (Item #2):** Der Pool-Key in `AmpConnectionPool::key()` enthält **nicht** den TLS-Context. Multi-Tenant mit unterschiedlichen Cert-Chains teilen sich heute den Stack — das ist eine Cross-Tenant-Leakage. Übergangs-Fix: `spl_object_hash($tls)` als Suffix; deterministischer Hash kommt v2.2.
+**Pool-Key:** `AmpConnectionPool::key()` hängt ein vom Pool vergebenes, nie wiederverwendetes Token je `ClientTlsContext`-Objekt an (`\WeakMap`, B07). Gleiche Objekte teilen Sockets, verschiedene nie — auch nicht, nachdem das Original freigegeben wurde.
 
 ## Connection-Pool
 

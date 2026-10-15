@@ -140,7 +140,7 @@ $client = new IcapClient(
 
 ### Connection pool
 
-For long-running workers (RoadRunner, Swoole, ReactPHP) the async transport can reuse sockets via a connection pool:
+For long-running workers (RoadRunner, Swoole, ReactPHP) the async transport can reuse sockets via a connection pool. A socket goes back to the pool only after a validated exchange, which today is the strict preview flow of `scanFileWithPreview()`; every other request closes its socket, with a pool as well:
 
 ```php
 use Ndrstmr\Icap\Cache\InMemoryOptionsCache;

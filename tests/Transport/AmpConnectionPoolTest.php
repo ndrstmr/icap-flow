@@ -19,10 +19,17 @@
 declare(strict_types=1);
 
 use Amp\Socket;
+use Amp\Socket\BindContext;
+use Amp\Socket\Certificate;
+use Amp\Socket\ClientTlsContext;
+use Amp\Socket\ServerTlsContext;
 use Amp\Socket\Socket as SocketInterface;
+use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
+
+use function Amp\async;
 
 uses(AsyncTestCase::class);
 
@@ -263,4 +270,146 @@ it('isolates idle sockets per host:port', function () {
         expect($pool->acquire($configB))->toBe($h2);
         expect($pool->acquire($configA))->toBe($h1);
     });
+});
+
+/**
+ * B07 — the pool key must not rest on an object identity PHP may hand to
+ * the next object. connectTls() connects with a clone when the peer name
+ * is empty, so nothing keeps the configured context alive; once it is
+ * collected, its object hash can belong to a context that trusts other
+ * authorities. Real default connector, local TLS server, peer and peer
+ * name verification enabled.
+ */
+it('does not hand a socket to another trust context after the original context was collected', function () {
+    $dir = sys_get_temp_dir() . '/icap-pool-tls-' . bin2hex(random_bytes(6));
+    if (!mkdir($dir, 0700)) {
+        throw new RuntimeException('Cannot create the TLS fixture directory.');
+    }
+    $cnfPath = $dir . '/openssl.cnf';
+    $certPath = $dir . '/cert.pem';
+    $keyPath = $dir . '/key.pem';
+
+    $server = null;
+    $pool = null;
+    $socket = null;
+    $peer = null;
+    $second = null;
+    $refused = null;
+
+    try {
+        // A self-signed certificate for 127.0.0.1 that may act as its own CA.
+        file_put_contents($cnfPath, <<<'CONF'
+[req]
+distinguished_name=dn
+req_extensions=san
+prompt=no
+[dn]
+CN=127.0.0.1
+[san]
+subjectAltName=IP:127.0.0.1
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign
+CONF);
+        $key = openssl_pkey_new(['private_key_bits' => 2048]);
+        if ($key === false) {
+            throw new RuntimeException('Cannot create the TLS fixture key.');
+        }
+        $options = ['digest_alg' => 'sha256', 'config' => $cnfPath];
+        $csr = openssl_csr_new(['commonName' => '127.0.0.1'], $key, $options + ['req_extensions' => 'san']);
+        if (!$csr instanceof OpenSSLCertificateSigningRequest) {
+            throw new RuntimeException('Cannot create the TLS fixture request.');
+        }
+        $cert = openssl_csr_sign($csr, null, $key, 1, $options + ['x509_extensions' => 'san']);
+        if ($cert === false || !openssl_x509_export($cert, $certPem) || !openssl_pkey_export($key, $keyPem)) {
+            throw new RuntimeException('Cannot create the TLS fixture certificate.');
+        }
+        file_put_contents($certPath, $certPem);
+        file_put_contents($keyPath, $keyPem);
+
+        $server = Socket\listen('127.0.0.1:0', (new BindContext())->withTlsContext(
+            (new ServerTlsContext())->withDefaultCertificate(new Certificate($certPath, $keyPath)),
+        ));
+        $address = $server->getAddress();
+        \assert($address instanceof Socket\InternetAddress);
+        $port = $address->getPort();
+
+        $accepted = async(static function () use ($server): ?SocketInterface {
+            $client = $server->accept(new TimeoutCancellation(5));
+            $client?->setupTls(new TimeoutCancellation(5));
+
+            return $client;
+        });
+
+        // The empty peer name makes connectTls() connect with a clone.
+        $tls = (new ClientTlsContext())->withCaFile($certPath);
+        $original = WeakReference::create($tls);
+        $hash = spl_object_hash($tls);
+        $config = new Config('127.0.0.1', $port, tlsContext: $tls);
+
+        $pool = new AmpConnectionPool();
+        $socket = $pool->acquire($config, new TimeoutCancellation(5));
+        $peer = $accepted->await();
+        $pool->release($config, $socket);
+
+        unset($tls, $config);
+        gc_collect_cycles();
+        expect($original->get())->toBeNull('precondition: the configured context is collected');
+
+        // Keep allocating until a context takes over the object hash.
+        $held = [];
+        $other = null;
+        while (count($held) < 1000) {
+            $candidate = new ClientTlsContext(); // trusts the system roots, not the fixture CA
+            if (spl_object_hash($candidate) === $hash) {
+                $other = $candidate;
+                break;
+            }
+            $held[] = $candidate;
+        }
+        expect($other)->not->toBeNull('precondition: the object hash is handed to a new context');
+
+        $refused = async(static function () use ($server): void {
+            // A fresh connection is refused on the client side; answer it
+            // without waiting for its outcome.
+            $late = $server->accept(new TimeoutCancellation(5));
+            try {
+                $late?->setupTls(new TimeoutCancellation(5));
+            } catch (Throwable) {
+                // expected: the client does not trust this certificate
+            } finally {
+                $late?->close();
+            }
+        });
+
+        // This context does not trust the certificate, so the only valid
+        // outcome is a TLS failure: no socket at all, neither the idle one
+        // nor a new one. Any other error fails the test.
+        $failure = null;
+        try {
+            $second = $pool->acquire(new Config('127.0.0.1', $port, tlsContext: $other), new TimeoutCancellation(5));
+        } catch (Socket\TlsException $e) {
+            $failure = $e;
+        }
+
+        expect($failure)->toBeInstanceOf(Socket\TlsException::class, 'the untrusting context must be refused, not served a socket');
+    } finally {
+        $second?->close();
+        $socket?->close();
+        if ($peer instanceof SocketInterface) {
+            $peer->close();
+        }
+        $server?->close();
+        $pool?->close();
+        if ($refused !== null) {
+            try {
+                $refused->await();
+            } catch (Throwable) {
+                // nothing left to clean up
+            }
+        }
+        foreach ([$cnfPath, $certPath, $keyPath] as $file) {
+            @unlink($file);
+        }
+        @rmdir($dir);
+    }
 });

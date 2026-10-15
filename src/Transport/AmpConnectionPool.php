@@ -22,6 +22,7 @@ namespace Ndrstmr\Icap\Transport;
 
 use Amp\Cancellation;
 use Amp\Socket;
+use Amp\Socket\ClientTlsContext;
 use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
 use Closure;
@@ -54,6 +55,11 @@ final class AmpConnectionPool implements ConnectionPoolInterface
     private array $idle = [];
 
     private bool $closed = false;
+
+    /** @var \WeakMap<ClientTlsContext, int> */
+    private \WeakMap $tlsTokens;
+
+    private int $lastTlsToken = 0;
 
     /** @var Closure(Config, ?Cancellation): SocketInterface */
     private Closure $connector;
@@ -95,6 +101,7 @@ final class AmpConnectionPool implements ConnectionPoolInterface
 
         $this->connector = $connector ?? self::defaultConnector();
         $this->clock = $clock ?? static fn (): float => microtime(true);
+        $this->tlsTokens = new \WeakMap();
     }
 
     #[\Override]
@@ -202,18 +209,26 @@ final class AmpConnectionPool implements ConnectionPoolInterface
         $key = $config->host . ':' . $config->port;
         $tls = $config->getTlsContext();
         if ($tls !== null) {
-            // spl_object_hash() is a deliberate transitional choice: it
-            // guarantees that two *different* ClientTlsContext instances
-            // always produce different pool keys, preventing cross-tenant
-            // socket reuse (CVE-class finding, v2.1.1-A).  The caller is
-            // responsible for not sharing TlsContext objects across tenants.
-            // v2.2 will switch to a deterministic hash derived from the
-            // context's peer name, cert path, and CA bundle so that
-            // equivalent contexts can still share idle connections.
-            $key .= ':tls:' . spl_object_hash($tls);
+            $key .= ':tls:' . $this->tlsToken($tls);
         }
 
         return $key;
+    }
+
+    /**
+     * The pool's own identity for a TLS context: one number per context
+     * object, handed out once and never again. An object hash would not do:
+     * it is recycled as soon as the context is collected, and connectTls()
+     * connects with a clone of a context without peer name, so nothing keeps
+     * the original alive while its idle socket is. The next context to take
+     * over the hash would then be served the old socket (B07).
+     *
+     * The counter only grows. Past PHP_INT_MAX the increment throws a
+     * TypeError instead of wrapping, so an identity is never issued twice.
+     */
+    private function tlsToken(ClientTlsContext $tls): int
+    {
+        return $this->tlsTokens[$tls] ??= ++$this->lastTlsToken;
     }
 
     /**

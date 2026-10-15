@@ -35,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the host can no longer move the URI authority, path or query. IPv6 server
   addresses are bracketed in ICAP and TCP URIs, so a host like `::1` now
   connects. *(N04)*
+- `AmpConnectionPool` no longer identifies a TLS context by its object hash.
+  Once a context was collected, its hash could belong to a later context that
+  trusts other authorities, and that context was served the idle socket the
+  first one had opened. Each context object now gets a token the pool never
+  issues twice. *(B07)*
+- A socket goes back to the connection pool only after the exchange was
+  validated. `AsyncAmpTransport::request()` hands out the raw response before
+  status or verdict are checked, so it now always closes its socket, with or
+  without a pool. The strict preview flow releases after status and verdict
+  are checked and closes on an exception, a `100 Continue` after `ieof`, an
+  unexpected status and a `close` token in `Connection` (any spelling, also in
+  `keep-alive, close`), including interim and preview responses. Reuse is
+  therefore limited to `scanFileWithPreview()` on a session-capable transport
+  until the lease contract lands. *(M06, first stage)*
 
 ## [3.0.0] - 2026-05-01
 

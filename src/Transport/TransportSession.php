@@ -56,8 +56,10 @@ interface TransportSession
 
     /**
      * Return the socket to the underlying pool when one is configured;
-     * otherwise close it. Idempotent in the sense that further calls
-     * are no-ops.
+     * otherwise close it. Call it only after the whole exchange has been
+     * validated (frame, status, verdict, no `Connection: close`): a
+     * released socket is out of reach of {@see close()}. Idempotent in
+     * the sense that further calls are no-ops.
      */
     public function release(): void;
 

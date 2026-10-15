@@ -96,61 +96,34 @@ $config->withVirusFoundHeaders([
 
 konfiguriert. Neue Vendor-Header **immer** in die Liste, **nicht** als Sonderfall in `extractVirusName()`.
 
-## Connection-Pool — Pool-Key (v2.1.1 P0)
+## Connection-Pool — Pool-Key
 
-Heute (verbuggt):
+`AmpConnectionPool::key()` bildet `host:port` und, mit TLS, `:tls:<token>`. Das Token ist eine pro Pool vergebene, nur wachsende Nummer je `ClientTlsContext`-Objekt (`\WeakMap<ClientTlsContext, int>`), die nie ein zweites Mal ausgegeben wird:
+
 ```php
-private function key(Config $config): string
-{
-    return $config->host . ':' . $config->port;
-}
+$key .= ':tls:' . ($this->tlsTokens[$tls] ??= ++$this->lastTlsToken);
 ```
 
-Multi-Tenant mit verschiedenen TLS-Configs teilen sich denselben Stack — das ist Cross-Tenant-Leakage. Übergangs-Fix für v2.1.1:
-```php
-private function key(Config $config): string
-{
-    $key = $config->host . ':' . $config->port;
-    $tls = $config->getTlsContext();
-    if ($tls !== null) {
-        $key .= ':' . spl_object_hash($tls);
-    }
-    return $key;
-}
-```
-
-`spl_object_hash` ist ein bewusster Übergang — `AmpConnectionPool` muss in v2.2 auf einen deterministischen Hash umsteigen (Cert-PEM oder Konfigfingerprint). Der Cross-TLS-Isolations-Test in `tests/Transport/AmpConnectionPoolTest.php` muss **vor** dem Fix rot, **nach** dem Fix grün sein.
+Kein `spl_object_hash()`/Objektadresse als Identität: `connectTls()` verbindet bei leerem Peer-Namen mit einem Klon, das Original kann vor dem Idle-Socket freigegeben werden, und sein Hash gehört dann dem nächsten Kontext (B07). Der Test in `tests/Transport/AmpConnectionPoolTest.php` läuft mit echtem Default-Connector und lokalem TLS-Server.
 
 ## Socket-Disposal nach Austausch
 
+Standard ist `close()`. Zurück in den Pool geht ein Socket nur über eine Session, nachdem der Client Frame, Status und Verdikt geprüft hat und keine Antwort des Austauschs `close` in `Connection` trug (Tokenliste, jede Schreibweise: `HeaderFields::hasToken()`):
+
 ```php
+$reusable = false;
 try {
-    $session->write($rawRequest);
-    $response = $session->readResponse();
-
-    if ($this->serverWantsClose($response)) {
-        $closeForced = true;
-    }
-
-    return $response;
-} catch (\Throwable $e) {
-    $closeForced = true;
-    throw $e;
+    // write(), readResponse(), parse(), interpretResponse() ...
+    $reusable = !$serverCloses;
+    return $result;
 } finally {
-    if ($closeForced) {
-        $session->close();
-    } else {
-        $session->release();
-    }
+    $reusable ? $session->release() : $session->close();
 }
 ```
 
-Auslöser für hartes `close()`:
-- `Connection: close` im ICAP-Head.
-- Beliebige `\Throwable` während `write()` oder `readResponse()`.
-- Framing-Fehler (`ResponseFrameReader` wirft).
-
-Alles andere → `release()` — der Socket geht zurück in den Pool.
+- `AsyncAmpTransport::request()` liefert einen ungeprüften String und schließt deshalb immer.
+- Exceptions, unerlaubte Status (100 nach `ieof`, 3xx, 4xx/5xx) und Framing-Fehler schließen.
+- Wiederverwendung mit vollständigem Lease-/Restbyte-Vertrag folgt mit AP-10/AP-11.
 
 ## OPTIONS-Cache
 
