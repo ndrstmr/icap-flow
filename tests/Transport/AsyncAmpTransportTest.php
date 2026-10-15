@@ -73,3 +73,53 @@ it('connects to an IPv6 literal host, with and without a pool (N04)', function (
     }
     $answering->await();
 });
+
+/**
+ * M06 — request() returns the raw response string, so nothing has checked
+ * status or verdict when the transport would give the socket back. It
+ * closes the socket, with a pool as well: the pool must connect anew.
+ */
+it('closes the socket after request() instead of returning it to the pool', function () {
+    $replies = [
+        'plain 204'         => "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n",
+        'interim 100'       => "ICAP/1.0 100 Continue\r\n\r\n",
+        'keep-alive, close' => "ICAP/1.0 204 No Content\r\nConnection: keep-alive, close\r\nEncapsulated: null-body=0\r\n\r\n",
+    ];
+
+    foreach ($replies as $case => $reply) {
+        [$serverEnd, $clientEnd] = Socket\createSocketPair();
+        $connections = 0;
+        $pool = new AmpConnectionPool(
+            connector: function () use ($clientEnd, &$connections) {
+                $connections++;
+                return $clientEnd;
+            },
+        );
+        $transport = new AsyncAmpTransport($pool);
+        $config = new Config('icap.example', streamTimeout: 2.0);
+
+        $answering = async(function () use ($serverEnd, $reply): void {
+            $head = '';
+            while (!str_contains($head, "\r\n\r\n") && ($chunk = $serverEnd->read()) !== null) {
+                $head .= $chunk;
+            }
+            $serverEnd->write($reply);
+        });
+
+        try {
+            $response = $transport->request($config, ["OPTIONS icap://icap.example/scan ICAP/1.0\r\nEncapsulated: null-body=0\r\n\r\n"])->await();
+            $answering->await();
+            expect($response)->toBe($reply, $case);
+
+            // Closed, not just missing from the pool: a socket left open
+            // and unreferenced would pass the connection count as well.
+            expect($clientEnd->isClosed())->toBeTrue($case);
+            $pool->acquire($config);
+            expect($connections)->toBe(2, $case);
+        } finally {
+            $clientEnd->close();
+            $serverEnd->close();
+            $pool->close();
+        }
+    }
+});

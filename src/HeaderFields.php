@@ -124,6 +124,26 @@ final class HeaderFields
     }
 
     /**
+     * Whether a list field carries the token, whatever the spelling of the
+     * field name and of the token. `Connection: keep-alive, close` carries
+     * `close` (RFC 7230 §3.2.2, §6.1); several fields count as one list.
+     *
+     * @param array<string, string[]> $headers
+     */
+    public static function hasToken(array $headers, string $name, string $token): bool
+    {
+        foreach (self::values($headers, $name) as $value) {
+            foreach (explode(',', $value) as $item) {
+                if (strcasecmp(trim($item, " \t"), $token) === 0) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Check header fields from a caller before they are serialized and
      * return them as name => list of values. A name must be a token and
      * every value a string that passes {@see isText()}: CR or LF would

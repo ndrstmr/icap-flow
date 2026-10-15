@@ -20,6 +20,9 @@ declare(strict_types=1);
 
 use Amp\Socket;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
+use Ndrstmr\Icap\Exception\IcapProtocolException;
+use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
@@ -238,4 +241,85 @@ it('streams the body remainder in chunks without buffering the entire post-previ
         ->and($phase2)->not->toContain('ICAP/1.0');
 
     unlink($tmp);
+});
+
+/**
+ * M06 — a socket goes back to the pool only when the whole exchange was
+ * valid and the server did not announce a close. Each case ends with the
+ * pool opening a new connection, except the two plain 204 controls, which
+ * prove that a clean exchange is still reused.
+ */
+it('returns the socket to the pool only after a validated exchange', function () {
+    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+    $interim = "ICAP/1.0 100 Continue\r\n\r\n";
+    $cases = [
+        // label => [payload, replies in order, exception class, socket reused]
+        'control: 204 to the preview'                    => ['abcdefgh', [$clean], null, true],
+        'control: 204 after ieof'                        => ['abc', [$clean], null, true],
+        '204 to the preview, Connection: close'          => ['abcdefgh', ["ICAP/1.0 204 No Content\r\nConnection: close\r\nEncapsulated: null-body=0\r\n\r\n"], null, false],
+        '204 after ieof, connection: Close'              => ['abc', ["ICAP/1.0 204 No Content\r\nconnection: Close\r\nEncapsulated: null-body=0\r\n\r\n"], null, false],
+        'final 204, Connection: keep-alive, close'       => ['abcdefgh', [$interim, "ICAP/1.0 204 No Content\r\nConnection: keep-alive, close\r\nEncapsulated: null-body=0\r\n\r\n"], null, false],
+        'interim 100, Connection: close'                 => ['abcdefgh', ["ICAP/1.0 100 Continue\r\nConnection: close\r\n\r\n", $clean], null, false],
+        'malformed header line'                          => ['abcdefgh', ["ICAP/1.0 204 No Content\r\nno colon here\r\nEncapsulated: null-body=0\r\n\r\n"], IcapMalformedResponseException::class, false],
+        '100 Continue after ieof'                        => ['abc', [$interim], IcapProtocolException::class, false],
+        'unexpected status after the continuation'       => ['abcdefgh', [$interim, "ICAP/1.0 302 Found\r\nEncapsulated: null-body=0\r\n\r\n"], IcapProtocolException::class, false],
+        'server error after the continuation'            => ['abcdefgh', [$interim, "ICAP/1.0 500 Server Error\r\nEncapsulated: null-body=0\r\n\r\n"], IcapServerException::class, false],
+    ];
+
+    foreach ($cases as $case => [$payload, $replies, $exception, $reused]) {
+        [$serverEnd, $clientEnd] = Socket\createSocketPair();
+        $connections = 0;
+        $pool = new AmpConnectionPool(
+            connector: function () use ($clientEnd, &$connections) {
+                $connections++;
+                return $clientEnd;
+            },
+        );
+        $config = new Config('icap.example', streamTimeout: 2.0);
+        $client = new IcapClient($config, new AsyncAmpTransport($pool), new RequestFormatter(), new ResponseParser());
+
+        $tmp = tempnam(sys_get_temp_dir(), 'icap');
+        file_put_contents($tmp, $payload);
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp, $serverEnd, $replies, $exception, $case) {
+                $server = \Amp\async(static function () use ($serverEnd, $replies): void {
+                    foreach ($replies as $reply) {
+                        // The request, or its continuation, ends with the zero chunk.
+                        $buf = '';
+                        while (!str_ends_with($buf, "0\r\n\r\n") && !str_ends_with($buf, "ieof\r\n\r\n")) {
+                            $chunk = $serverEnd->read();
+                            if ($chunk === null) {
+                                return;
+                            }
+                            $buf .= $chunk;
+                        }
+                        $serverEnd->write($reply);
+                    }
+                });
+
+                if ($exception === null) {
+                    expect($client->scanFileWithPreview('/svc', $tmp, 4)->await()->isInfected())->toBeFalse($case);
+                } else {
+                    expect(fn () => $client->scanFileWithPreview('/svc', $tmp, 4)->await())
+                        ->toThrow($exception, '', $case);
+                }
+                $server->await();
+            });
+
+            // A released socket stays open in the pool and comes straight
+            // back; any other one is closed and the pool connects anew. The
+            // closed state is checked itself: a socket left open and
+            // unreferenced would pass the connection count as well.
+            expect($clientEnd->isClosed())->toBe(!$reused, $case);
+            $pool->acquire($config);
+            expect($connections)->toBe($reused ? 1 : 2, $case);
+        } finally {
+            @unlink($tmp);
+            $clientEnd->close();
+            $serverEnd->close();
+            $pool->close();
+        }
+    }
 });

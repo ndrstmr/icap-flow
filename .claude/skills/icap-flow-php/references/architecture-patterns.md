@@ -145,11 +145,11 @@ Decorator-Regel: **gleiches Interface, kein erweitertes Interface**. Wer `Retryi
 
 ### Session-Object
 - `TransportSession` (Interface) + `AmpTransportSession` (Impl) für Strict-§4.5-Preview-Continue.
-- Lifecycle: `openSession()` → `write()` → `readResponse()` → entweder `release()` (zurück in den Pool) oder `close()` (hartes Schließen bei Fehler).
+- Lifecycle: `openSession()` → `write()` → `readResponse()` → `release()` (zurück in den Pool) nur nach geprüftem Austausch, sonst `close()`; Standard ist `close()`.
 
 ### Object-Pool
 - `AmpConnectionPool` mit LIFO-Stack pro `host:port[:tls]`-Key.
-- Pool-Key-Bug ist **v2.1.1 P0**: heute fehlt der TLS-Context-Fingerprint, deshalb können sich Multi-Tenant-TLS-Configs gegenseitig den Socket klauen. Fix in `src/Transport/AmpConnectionPool.php:130-133` + Cross-TLS-Test.
+- Pool-Key: `host:port` plus, mit TLS, ein nie wiederverwendetes Token je `ClientTlsContext`-Objekt (`\WeakMap`); kein `spl_object_hash()` als Identität (B07).
 - Geplant v2.2: `maxIdleAge` (Default 30 s) und Eviction-Sweep.
 
 ### Null-Object

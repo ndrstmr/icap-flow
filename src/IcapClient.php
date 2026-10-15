@@ -384,30 +384,37 @@ final class IcapClient implements IcapClientInterface
         );
 
         $session = $this->transport->openSession($this->config, $cancellation);
+        // The socket is closed unless the exchange ended in a verdict that
+        // passed every check below and no response asked for a close. An
+        // exception, a status the flow does not allow or a 100 after `ieof`
+        // leaves $reusable false, and the socket is never offered to the
+        // pool, where the next user could see misaligned bytes.
+        $reusable = false;
         try {
             $session->write($this->formatter->format($previewRequest));
             $previewIcapResponse = $this->parser->parse($session->readResponse());
+            $serverCloses = HeaderFields::hasToken($previewIcapResponse->headers, 'Connection', 'close');
 
             if ($previewIsComplete) {
-                $session->release();
-                return $this->interpretResponse($previewIcapResponse, $this->config);
+                $result = $this->interpretResponse($previewIcapResponse, $this->config);
+                $reusable = !$serverCloses;
+                return $result;
             }
 
             $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
 
             if ($decision !== PreviewDecision::CONTINUE_SENDING) {
                 // Server's intermediate response is the verdict — nothing
-                // to send on this socket. Release back to the pool;
-                // sockets that have only seen a 100 are still in good
-                // protocol state.
-                $session->release();
-                return new ScanResult(
+                // to send on this socket.
+                $result = new ScanResult(
                     isInfected: $decision === PreviewDecision::ABORT_INFECTED,
                     virusName: $decision === PreviewDecision::ABORT_INFECTED
                         ? $this->extractVirusName($previewIcapResponse, $this->config)
                         : null,
                     originalResponse: $previewIcapResponse,
                 );
+                $reusable = !$serverCloses;
+                return $result;
             }
 
             // §4.5 continuation: ONLY the chunked body remainder, no
@@ -418,14 +425,16 @@ final class IcapClient implements IcapClientInterface
             $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream($stream));
 
             $finalIcapResponse = $this->parser->parse($session->readResponse());
-            $session->release();
-            return $this->interpretResponse($finalIcapResponse, $this->config);
-        } catch (\Throwable $e) {
-            // The exchange went off-script — never offer this socket
-            // back to the pool, the next user could see misaligned
-            // bytes.
-            $session->close();
-            throw $e;
+            $result = $this->interpretResponse($finalIcapResponse, $this->config);
+            $reusable = !$serverCloses
+                && !HeaderFields::hasToken($finalIcapResponse->headers, 'Connection', 'close');
+            return $result;
+        } finally {
+            if ($reusable) {
+                $session->release();
+            } else {
+                $session->close();
+            }
         }
     }
 

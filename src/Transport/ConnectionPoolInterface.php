@@ -28,9 +28,11 @@ use Ndrstmr\Icap\Config;
  * Process-local cache of TCP/TLS connections to ICAP servers.
  *
  * The transport calls {@see acquire()} before sending the request
- * and {@see release()} after the response has been framed. The pool
- * decides whether to hand out an existing idle socket or open a new
- * one, and whether to keep a returned socket idle or close it.
+ * and {@see release()} only after the caller has validated the whole
+ * exchange; a socket whose exchange was not validated is closed by the
+ * transport and never offered. The pool decides whether to hand out an
+ * existing idle socket or open a new one, and whether to keep a
+ * returned socket idle or close it.
  *
  * The default implementation is {@see AmpConnectionPool}; the no-op
  * variant {@see NullConnectionPool} opens a fresh connection on every
