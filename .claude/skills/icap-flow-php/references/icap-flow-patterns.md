@@ -43,6 +43,8 @@ Strict-Pfad: Preview + Continuation auf demselben Socket, **ein** logischer ICAP
 
 Die beiden Pfade nicht zusammenlegen. Tests in `tests/PreviewContinueStrictTest.php` (Strict) und `tests/IcapClientTest.php` (Legacy) prüfen sie unabhängig.
 
+Beide lesen das Preview über `readPreview()`: 0..1 MiB (`MAX_PREVIEW_SIZE`), Größe aus `fstat()` am Handle, `ieof` erst nach beobachtetem EOF und passender Länge. Der Rest (Strict) und der Vollbody (`scanFile()`, Legacy-Vollrequest) gehen mit genau der angekündigten `Content-Length` raus: Der Formatter reicht sie an `ChunkedBodyEncoder::encode()` weiter, Unter- und Überlänge werfen vor dem Abschlusschunk (nicht bei einem Teil-Preview: `Preview` ohne `ieof`, seine `Content-Length` beschreibt den ganzen Body). `Preview: 0` ist gültig und geht mit `res-body` und `0\r\n\r\n` raus (`RequestFormatter::isEmptyPreview()`), nie als `null-body`. Gecachte `Preview`-Werte: Dezimalprüfung vor dem Cast, gültig und zu groß → Cap, ungültig → `IcapMalformedResponseException`, fehlend → 1024.
+
 ## Header- und URI-Injection-Schutz
 
 `RequestFormatter::format()` prüft jeden Request, bevor der erste Chunk entsteht: ICAP-Methode, URI (`IcapUri::authority()`), ICAP- und gekapselte HTTP-Header sowie HTTP-Request- und Statuszeile. Ungültige Metadaten werfen `\InvalidArgumentException`; kein Byte erreicht das Socket. Finding H der v2-Konsolidierung.

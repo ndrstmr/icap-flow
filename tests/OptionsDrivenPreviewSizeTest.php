@@ -28,6 +28,7 @@ use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\TransportSession;
 
@@ -322,14 +323,226 @@ it('honours an explicit previewSize even when the OPTIONS cache has a different 
     @unlink($tmp);
 });
 
-it('rejects previewSize of zero or negative when passed explicitly', function () {
+/**
+ * B06 — an announced preview is read into memory in one piece, so its size is
+ * bounded: 0 to 1 MiB, checked before the file or a socket is touched.
+ */
+it('rejects an explicit previewSize outside 0..1 MiB before the file is opened', function () {
     $captured = null;
     [$client] = makePreviewSizeClient($captured);
+    $path = ScriptedSource::add('bounds', 'abc');
 
-    $tmp = makeTinyFile();
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $path) {
+            foreach ([-1, 1048577] as $size) {
+                expect(fn () => $client->scanFileWithPreview('/avscan', $path, $size)->await())
+                    ->toThrow(InvalidArgumentException::class, '', (string) $size);
+            }
+        });
 
-    expect(fn () => $client->scanFileWithPreview('/avscan', $tmp, 0))
-        ->toThrow(InvalidArgumentException::class);
+        // Nothing was opened, nothing was formatted.
+        expect(ScriptedSource::$opened)->toBe(0);
+        expect($captured)->toBeNull();
+    } finally {
+        ScriptedSource::reset();
+    }
+});
 
-    @unlink($tmp);
+/**
+ * `Preview: 0` is a valid preview (the server decides on the headers, RFC 3507
+ * §4.5); it must not be read with fread(…, 0), and 1 MiB is the largest size.
+ */
+it('accepts an explicit previewSize of 0 and of exactly 1 MiB', function () {
+    foreach ([0, 1048576] as $size) {
+        $captured = null;
+        [$client] = makePreviewSizeClient($captured);
+        $tmp = makeTinyFile();
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp, $size) {
+                $client->scanFileWithPreview('/avscan', $tmp, $size)->await();
+            });
+
+            if (!$captured instanceof IcapRequest) {
+                throw new RuntimeException('No request was formatted for previewSize ' . $size);
+            }
+            expect($captured->headers['Preview'])->toBe([(string) $size], (string) $size);
+
+            $body = $captured->encapsulatedResponse?->body;
+            if ($size === 0) {
+                // 64 bytes follow the empty preview.
+                expect($captured->previewIsComplete)->toBeFalse();
+                expect($body)->toBe('');
+            } else {
+                expect($captured->previewIsComplete)->toBeTrue();
+                expect($body)->toBe(str_repeat('X', 64));
+            }
+            expect($captured->encapsulatedResponse?->headers['Content-Length'] ?? null)->toBe(['64'], (string) $size);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+});
+
+/**
+ * B06 — a `Preview` value from a cached OPTIONS response is untrusted text.
+ * It is read as a non-negative decimal before any integer cast; a valid value
+ * above 1 MiB is clamped to it, and 0 stays 0.
+ */
+it('clamps a cached Preview value to 1 MiB and keeps 0', function () {
+    $cases = [
+        ['0', '0'],
+        ['000', '0'],
+        ['1048576', '1048576'],
+        ['1048577', '1048576'],
+        ['16777216', '1048576'],
+    ];
+
+    foreach ($cases as [$advertised, $expected]) {
+        $captured = null;
+        [$client, $cache] = makePreviewSizeClient($captured);
+        $cache->set('icap.example:1344/avscan', new IcapResponse(200, ['Preview' => [$advertised]]), 3600);
+        $tmp = makeTinyFile();
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp) {
+                $client->scanFileWithPreview('/avscan', $tmp)->await();
+            });
+
+            if (!$captured instanceof IcapRequest) {
+                throw new RuntimeException('No request was formatted for Preview ' . $advertised);
+            }
+            expect($captured->headers['Preview'])->toBe([$expected], 'advertised ' . $advertised);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+});
+
+it('rejects a cached Preview value that is not a non-negative decimal', function () {
+    foreach (['abc', '-1', '1.5', '0x10', '1e3', '', ' 5', '+5'] as $advertised) {
+        $captured = null;
+        [$client, $cache] = makePreviewSizeClient($captured);
+        $cache->set('icap.example:1344/avscan', new IcapResponse(200, ['Preview' => [$advertised]]), 3600);
+        $tmp = makeTinyFile();
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp, $advertised) {
+                expect(fn () => $client->scanFileWithPreview('/avscan', $tmp)->await())
+                    ->toThrow(IcapMalformedResponseException::class, '', var_export($advertised, true));
+            });
+
+            // Rejected before anything was formatted or sent.
+            expect($captured)->toBeNull();
+        } finally {
+            @unlink($tmp);
+        }
+    }
+});
+
+/**
+ * B06 — the failure this guards against is fatal, so it runs in a child
+ * process with a small memory limit and a deadline held by the parent. A
+ * cached `Preview: 99999999999999999999` on a file of one byte used to make
+ * the client ask PHP for that many bytes.
+ */
+it('survives a huge cached Preview value in a memory-limited child process', function () {
+    $file = tempnam(sys_get_temp_dir(), 'icap_preview_');
+    if ($file === false) {
+        throw new RuntimeException('Failed to create temp file');
+    }
+    file_put_contents($file, 'x');
+
+    $script = <<<'PHP'
+require getenv('ICAP_AUTOLOAD');
+
+$transport = new class implements Ndrstmr\Icap\Transport\TransportInterface {
+    public string $preview = 'none';
+
+    public function request(Ndrstmr\Icap\Config $config, iterable $rawRequest, ?Amp\Cancellation $cancellation = null): Amp\Future
+    {
+        $wire = '';
+        foreach ($rawRequest as $chunk) {
+            $wire .= $chunk;
+        }
+        if (preg_match('/Preview: (\d+)/', $wire, $m) === 1) {
+            $this->preview = $m[1];
+        }
+
+        return Amp\Future::complete("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+    }
+};
+
+$cache = new Ndrstmr\Icap\Cache\InMemoryOptionsCache();
+$cache->set('icap.example:1344/svc', new Ndrstmr\Icap\DTO\IcapResponse(200, ['Preview' => [getenv('ICAP_PREVIEW')]]), 3600);
+
+$client = new Ndrstmr\Icap\IcapClient(
+    new Ndrstmr\Icap\Config('icap.example'),
+    $transport,
+    new Ndrstmr\Icap\RequestFormatter(),
+    new Ndrstmr\Icap\ResponseParser(),
+    optionsCache: $cache,
+);
+$client->scanFileWithPreview('/svc', getenv('ICAP_FILE'))->await();
+echo $transport->preview;
+PHP;
+
+    $environment = array_merge(getenv(), [
+        'ICAP_AUTOLOAD' => dirname(__DIR__) . '/vendor/autoload.php',
+        'ICAP_FILE'     => $file,
+        'ICAP_PREVIEW'  => '99999999999999999999',
+    ]);
+    $process = proc_open(
+        [PHP_BINARY, '-d', 'memory_limit=32M', '-r', $script],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+        null,
+        $environment,
+    );
+    if (!is_resource($process)) {
+        throw new RuntimeException('Cannot start the child process.');
+    }
+
+    $stdout = '';
+    $stderr = '';
+    $exitCode = -1;
+    $timedOut = false;
+
+    try {
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+        $deadline = microtime(true) + 20.0;
+
+        while (true) {
+            $stdout .= (string) stream_get_contents($pipes[1]);
+            $stderr .= (string) stream_get_contents($pipes[2]);
+            $status = proc_get_status($process);
+            if (!$status['running']) {
+                $exitCode = $status['exitcode'];
+                break;
+            }
+            if (microtime(true) > $deadline) {
+                $timedOut = true;
+                proc_terminate($process, 9);
+                break;
+            }
+            usleep(10_000);
+        }
+        $stdout .= (string) stream_get_contents($pipes[1]);
+        $stderr .= (string) stream_get_contents($pipes[2]);
+    } finally {
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        @unlink($file);
+    }
+
+    expect($timedOut)->toBeFalse();
+    expect($exitCode)->toBe(0, 'child stderr: ' . substr($stderr, 0, 300));
+    // The clamped size went out, and no allocation followed the advertised one.
+    expect($stdout)->toBe('1048576');
 });

@@ -21,13 +21,18 @@ declare(strict_types=1);
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
+use Amp\Future;
 use Mockery as m;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
+use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedSource;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
@@ -89,7 +94,10 @@ it('scanFile() forwards a user-supplied Cancellation', function () {
     $tmp = tempnam(sys_get_temp_dir(), 'icap');
     file_put_contents($tmp, 'payload');
 
-    $userCancellation = (new DeferredCancellation())->getCancellation();
+    // A DeferredCancellation cancels when it is destroyed, so the owner has
+    // to stay alive: the token must be a live one, not a cancelled one.
+    $deferred = new DeferredCancellation();
+    $userCancellation = $deferred->getCancellation();
 
     /** @var \Mockery\Expectation $f */
     $f = $formatter->shouldReceive('format');
@@ -110,13 +118,15 @@ it('scanFile() forwards a user-supplied Cancellation', function () {
 
     $client = new IcapClient($config, $transport, $formatter, $parser);
 
-    /** @var AsyncTestCase $this */
-    $this->runAsyncTest(function () use ($client, $tmp, $userCancellation, &$seen) {
-        $client->scanFile('/svc', $tmp, [], $userCancellation)->await();
-        expect($seen)->toBe($userCancellation);
-    });
-
-    unlink($tmp);
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp, $userCancellation, &$seen) {
+            $client->scanFile('/svc', $tmp, [], $userCancellation)->await();
+            expect($seen)->toBe($userCancellation);
+        });
+    } finally {
+        @unlink($tmp);
+    }
     m::close();
 });
 
@@ -156,4 +166,94 @@ it('propagates cancellation as Amp\\CancelledException when the cancellation fir
     });
 
     m::close();
+});
+
+/**
+ * M08 — a cancellation that was requested before the call opens no file, and
+ * one that fires while the request is in flight still gives the handle back.
+ */
+it('opens no file for a cancellation that was already requested', function () {
+    $deferred = new DeferredCancellation();
+    $deferred->cancel();
+    $client = new IcapClient(
+        new Config('icap.example'),
+        new ScriptedTransport(),
+        new RequestFormatter(),
+        new ResponseParser(),
+    );
+
+    try {
+        $path = ScriptedSource::add('pre-cancelled', 'payload');
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $path, $deferred) {
+            expect(fn () => $client->scanFile('/svc', $path, [], $deferred->getCancellation())->await())
+                ->toThrow(CancelledException::class);
+            expect(fn () => $client->scanFileWithPreview('/svc', $path, 4, [], $deferred->getCancellation())->await())
+                ->toThrow(CancelledException::class);
+        });
+
+        expect(ScriptedSource::$opened)->toBe(0);
+    } finally {
+        ScriptedSource::reset();
+    }
+});
+
+it('gives the file handle back when the cancellation fires during the request', function () {
+    // Failed futures and exceptions keep their trace arguments, and with them
+    // the stream: the handle has to be closed regardless.
+    $keepArgs = ini_set('zend.exception_ignore_args', '0');
+    $held = [];
+
+    try {
+        foreach (['scanFile', 'scanFileWithPreview'] as $method) {
+            $deferred = new DeferredCancellation();
+            $transport = new class ($deferred) implements TransportInterface {
+                public function __construct(private DeferredCancellation $deferred)
+                {
+                }
+
+                #[\Override]
+                public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
+                {
+                    foreach ($rawRequest as $_) {
+                        // a real transport writes every chunk
+                    }
+                    $this->deferred->cancel();
+                    $cancellation?->throwIfRequested();
+
+                    return Future::complete("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+                }
+            };
+            $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
+            $path = ScriptedSource::add('in-flight', 'payload');
+            $cancellation = $deferred->getCancellation();
+
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $method, $path, $cancellation, &$held) {
+                $future = $method === 'scanFile'
+                    ? $client->scanFile('/svc', $path, [], $cancellation)
+                    : $client->scanFileWithPreview('/svc', $path, 4, [], $cancellation);
+                $held[] = $future;
+
+                $cancelled = false;
+                try {
+                    $future->await();
+                } catch (CancelledException $e) {
+                    $held[] = $e;
+                    $cancelled = true;
+                }
+
+                expect($cancelled)->toBeTrue($method);
+                expect(ScriptedSource::$opened)->toBe(1, $method);
+                expect(ScriptedSource::$closed)->toBe(1, $method);
+            });
+
+            ScriptedSource::reset();
+        }
+    } finally {
+        ScriptedSource::reset();
+        if ($keepArgs !== false) {
+            ini_set('zend.exception_ignore_args', $keepArgs);
+        }
+    }
 });

@@ -49,6 +49,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `keep-alive, close`), including interim and preview responses. Reuse is
   therefore limited to `scanFileWithPreview()` on a session-capable transport
   until the lease contract lands. *(M06, first stage)*
+- A preview size can no longer decide an allocation. An explicit
+  `scanFileWithPreview()` size must lie between 0 and 1 MiB and is checked
+  before the file or a socket is opened. A `Preview` value from a cached
+  OPTIONS response is read as a non-negative decimal before any integer cast:
+  a larger valid value is clamped to 1 MiB and anything that is not a decimal
+  is rejected with `IcapMalformedResponseException`. Before, a cached
+  `Preview: 67108864` made a one-byte file ask PHP for 64 MiB and killed the
+  process, and a value too large for an integer was cast to something else.
+  `Preview: 0` is valid now and goes out as a body section holding only
+  `0\r\n\r\n`, never as `null-body`; before, an explicit 0 was refused and a
+  cached 0 was replaced by 1024. *(B06)*
+- A source that fails no longer ends a body. `ChunkedBodyEncoder` writes the
+  terminator, and `ieof`, only after the end of the stream was observed: a
+  failing read, an empty read before the end and a rewind that is needed but
+  fails raise a `\RuntimeException`, where they used to end the loop and send
+  the shortened body as complete. *(B08)*
+- `scanFile()` and `scanFileWithPreview()` take the file size from the open
+  handle instead of a second path lookup, refuse a handle without one instead
+  of announcing `Content-Length: 0`, and send `ieof` only after the end of the
+  file was observed at the length the handle reported. A file that grew or
+  shrank behind that size now fails the scan before the final chunk, in the
+  preview, in the rest of a strict preview flow and in the whole body of
+  `scanFile()` and of the full request after a preview, instead of ending as a
+  complete body of another size with a clean result. The check lives in
+  `RequestFormatter`: a stream body whose message announces a single plain
+  `Content-Length` has to deliver exactly that many bytes, so it holds for a
+  stream passed to `request()` as well, and for a preview that ends in `ieof`;
+  a preview that carries only the start of the body is exempt, since its
+  `Content-Length` still describes the whole body, and a body without such a
+  field is sent as before. A change that keeps the size is not detected; binding the verdict
+  to an immutable object remains open. *(M07, first stage)*
+- `scanFile()` and `scanFileWithPreview()` close the file they opened when the
+  operation ends, whatever the outcome and also while failed Futures and
+  their trace arguments are still referenced, and a cancellation requested
+  before the call opens no file. `scanFile()` now opens its file inside the
+  returned Future, so an unreadable file fails the Future instead of throwing
+  at the call, as `scanFileWithPreview()` already did. The handle is also
+  closed when the size lookup on it throws. A stream the caller passes in a
+  request body stays open. *(M08)*
 
 ## [3.0.0] - 2026-05-01
 

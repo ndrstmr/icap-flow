@@ -43,6 +43,16 @@ use Ndrstmr\Icap\DTO\IcapRequest;
  * a single byte of such a request reaches the socket. Body bytes are
  * binary and pass unchecked.
  *
+ * A stream body can only be measured while it is read. When its message
+ * announces a length in a single plain `Content-Length` field, the stream
+ * has to deliver exactly that many bytes: the chunks are produced lazily,
+ * and a stream that is shorter or longer raises a \RuntimeException before
+ * the final chunk is written, instead of ending as a complete body of
+ * another size. That holds for a whole body and for a preview that ends in
+ * `ieof`. A preview that carries only the start of the body is not held to
+ * it: the field still describes the whole body, which follows after
+ * `100 Continue`. A message without such a field is sent as it is.
+ *
  * @see https://www.rfc-editor.org/rfc/rfc3507#section-4
  */
 final class RequestFormatter implements RequestFormatterInterface
@@ -67,6 +77,7 @@ final class RequestFormatter implements RequestFormatterInterface
             : '';
 
         $bodySource = $this->resolveBodySource($request);
+        $bodyLength = is_resource($bodySource) ? $this->announcedLength($request) : null;
 
         $encapsulated = $this->buildEncapsulatedHeader(
             hasReqHeaders: $reqHeaderBlock !== '',
@@ -79,13 +90,21 @@ final class RequestFormatter implements RequestFormatterInterface
 
         $icapHead = $this->renderIcapHead($request, $encapsulated);
 
-        return $this->emit($icapHead, $reqHeaderBlock, $resHeaderBlock, $bodySource, $request->previewIsComplete);
+        return $this->emit(
+            $icapHead,
+            $reqHeaderBlock,
+            $resHeaderBlock,
+            $bodySource,
+            $bodyLength,
+            $request->previewIsComplete,
+        );
     }
 
     /**
      * Yield the rendered header blocks, then stream the body.
      *
      * @param  string|resource|null $bodySource
+     * @param  int|null             $bodyLength bytes a stream body has to deliver
      * @return iterable<string>
      */
     private function emit(
@@ -93,6 +112,7 @@ final class RequestFormatter implements RequestFormatterInterface
         string $reqHeaderBlock,
         string $resHeaderBlock,
         mixed $bodySource,
+        ?int $bodyLength,
         bool $previewIsComplete,
     ): iterable {
         yield $icapHead;
@@ -105,7 +125,7 @@ final class RequestFormatter implements RequestFormatterInterface
         }
 
         if ($bodySource !== null) {
-            yield from $this->chunkBody($bodySource, $previewIsComplete);
+            yield from $this->chunkBody($bodySource, $bodyLength, $previewIsComplete);
         }
     }
 
@@ -114,13 +134,80 @@ final class RequestFormatter implements RequestFormatterInterface
      */
     private function resolveBodySource(IcapRequest $request): mixed
     {
+        $message = $this->bodyMessage($request);
+        if ($message !== null) {
+            return $message->body;
+        }
+        return $this->isEmptyPreview($request) ? '' : null;
+    }
+
+    /**
+     * The encapsulated message whose body goes out. A response body wins
+     * over a request body when both are present.
+     */
+    private function bodyMessage(IcapRequest $request): HttpRequest|HttpResponse|null
+    {
         if ($request->encapsulatedResponse?->body !== null && $request->encapsulatedResponse->body !== '') {
-            return $request->encapsulatedResponse->body;
+            return $request->encapsulatedResponse;
         }
         if ($request->encapsulatedRequest?->body !== null && $request->encapsulatedRequest->body !== '') {
-            return $request->encapsulatedRequest->body;
+            return $request->encapsulatedRequest;
         }
         return null;
+    }
+
+    /**
+     * The length the message that carries the body announces for it: a single
+     * `Content-Length` value, in any spelling of the field, that is a plain
+     * decimal number. Several differing values or anything else leave the
+     * message without an announced length, and its stream is not held to one.
+     * Neither is the stream of a partial preview: it is the start of the body
+     * that the field describes, not all of it.
+     */
+    private function announcedLength(IcapRequest $request): ?int
+    {
+        if ($this->isPartialPreview($request)) {
+            return null;
+        }
+
+        $message = $this->bodyMessage($request);
+        if ($message === null) {
+            return null;
+        }
+
+        $values = array_values(array_unique(
+            HeaderFields::values(HeaderFields::validated($message->headers, 'HTTP'), 'Content-Length'),
+        ));
+        if (count($values) !== 1 || preg_match('/^[0-9]{1,18}\z/', $values[0]) !== 1) {
+            return null;
+        }
+
+        return (int) $values[0];
+    }
+
+    /**
+     * Whether the body of a request is only the start of the message: it
+     * announces a `Preview` and does not end in `ieof` (RFC 3507 §4.5). The
+     * rest follows after `100 Continue`.
+     */
+    private function isPartialPreview(IcapRequest $request): bool
+    {
+        return !$request->previewIsComplete
+            && HeaderFields::first($request->headers, ['Preview']) !== null;
+    }
+
+    /**
+     * `Preview: 0` announces a body whose preview is empty: its chunk stream
+     * ends at once and the server answers `100 Continue` for the rest
+     * (RFC 3507 §4.5). An empty string must not read as "no body" there: the
+     * message would go out as `null-body`, and a server could answer 204 for
+     * a body it was never offered.
+     */
+    private function isEmptyPreview(IcapRequest $request): bool
+    {
+        return !$request->previewIsComplete
+            && HeaderFields::first($request->headers, ['Preview']) === '0'
+            && ($request->encapsulatedResponse?->body === '' || $request->encapsulatedRequest?->body === '');
     }
 
     /**
@@ -132,7 +219,8 @@ final class RequestFormatter implements RequestFormatterInterface
      */
     private function bodyCarrier(IcapRequest $request): string
     {
-        if ($request->encapsulatedResponse?->body !== null && $request->encapsulatedResponse->body !== '') {
+        $response = $request->encapsulatedResponse;
+        if ($response?->body !== null && ($response->body !== '' || $this->isEmptyPreview($request))) {
             return 'res-body';
         }
         return 'req-body';
@@ -254,10 +342,11 @@ final class RequestFormatter implements RequestFormatterInterface
      * same encoding rules.
      *
      * @param string|resource $body
+     * @param int|null        $length bytes a stream body has to deliver
      * @return iterable<string>
      */
-    private function chunkBody(mixed $body, bool $previewIsComplete): iterable
+    private function chunkBody(mixed $body, ?int $length, bool $previewIsComplete): iterable
     {
-        return (new ChunkedBodyEncoder())->encode($body, $previewIsComplete);
+        return (new ChunkedBodyEncoder())->encode($body, $previewIsComplete, $length);
     }
 }
