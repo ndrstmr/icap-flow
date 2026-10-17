@@ -229,7 +229,7 @@ final class HeaderFields
      * @param  array<string, string[]> $headers
      * @return list<string>
      */
-    private static function values(array $headers, string $name): array
+    public static function values(array $headers, string $name): array
     {
         $values = [];
         foreach ($headers as $field => $fieldValues) {

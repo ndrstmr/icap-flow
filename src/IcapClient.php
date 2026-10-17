@@ -227,10 +227,22 @@ final class IcapClient implements IcapClientInterface
     /**
      * Scan a local file via RESPMOD by wrapping it in a synthesized HTTP
      * response envelope (Content-Type: application/octet-stream,
-     * Content-Length: <filesize>). The file contents are streamed into
-     * the encapsulated body, so the full file never lives in memory.
+     * Content-Length: <size of the open file>). The file contents are
+     * streamed into the encapsulated body, so the full file never lives in
+     * memory.
      *
-     * @throws \RuntimeException When the file cannot be opened
+     * The file is opened inside the returned Future, after a cancellation
+     * that was already requested has been honoured, and closed again when
+     * the operation ends, whatever the outcome (M08). The size comes from
+     * the open handle; a handle without one is an error, never an empty
+     * file (M07). The body goes out with exactly that many bytes: a file
+     * that grew or shrank since is an error before the final chunk, never a
+     * body of another size that looks complete. The caller's own streams
+     * (see {@see request()}) are not touched.
+     *
+     * The Future fails with a \RuntimeException when the file cannot be
+     * opened or sized, cannot be read to its end, or does not have the size
+     * its handle reported.
      */
     #[\Override]
     public function scanFile(
@@ -243,32 +255,39 @@ final class IcapClient implements IcapClientInterface
         $this->validateIcapHeaders($extraHeaders);
         $uri = $this->buildServiceUri($service);
 
-        $stream = fopen($filePath, 'rb');
-        if ($stream === false) {
-            throw new \RuntimeException('Unable to open file: ' . $filePath);
-        }
-        $size = filesize($filePath);
+        /** @var Future<ScanResult> $future */
+        $future = \Amp\async(function () use ($uri, $filePath, $extraHeaders, $cancellation): ScanResult {
+            // A cancellation that was already requested opens no file.
+            $cancellation?->throwIfRequested();
 
-        $httpResponse = new HttpResponse(
-            statusCode: 200,
-            headers: [
-                'Content-Type'   => ['application/octet-stream'],
-                'Content-Length' => [(string) ($size !== false ? $size : 0)],
-            ],
-            body: $stream,
-        );
+            [$stream, $size] = $this->openSource($filePath);
+            try {
+                $httpResponse = new HttpResponse(
+                    statusCode: 200,
+                    headers: [
+                        'Content-Type'   => ['application/octet-stream'],
+                        'Content-Length' => [(string) $size],
+                    ],
+                    body: $stream,
+                );
 
-        $request = new IcapRequest(
-            method: 'RESPMOD',
-            uri: $uri,
-            // The full request goes out without a preview handshake, so a
-            // caller Preview would announce one that never happens; it stays
-            // out in any spelling. Allow, e.g. 204, is valid here.
-            headers: HeaderFields::without($extraHeaders, ['Preview']),
-            encapsulatedResponse: $httpResponse,
-        );
+                $request = new IcapRequest(
+                    method: 'RESPMOD',
+                    uri: $uri,
+                    // The full request goes out without a preview handshake, so a
+                    // caller Preview would announce one that never happens; it stays
+                    // out in any spelling. Allow, e.g. 204, is valid here.
+                    headers: HeaderFields::without($extraHeaders, ['Preview']),
+                    encapsulatedResponse: $httpResponse,
+                );
 
-        return $this->request($request, $cancellation);
+                return $this->request($request, $cancellation)->await();
+            } finally {
+                fclose($stream);
+            }
+        });
+
+        return $future;
     }
 
     /**
@@ -278,7 +297,21 @@ final class IcapClient implements IcapClientInterface
      * the request is terminated with `0; ieof\r\n\r\n` (RFC 3507 §4.5)
      * and no continuation round-trip is necessary.
      *
-     * @throws \RuntimeException When the file cannot be opened
+     * The preview size is 0 to 1 MiB (1048576 bytes) (B06); `0` sends the
+     * headers alone. A size outside that range is refused with an
+     * \InvalidArgumentException before the file or a socket is touched.
+     * `ieof` is sent only after the end of the file was observed and its
+     * length matches what the open handle reported (M07), and the rest of
+     * the file, in the strict flow and in the full request of the two-request
+     * flow, goes out with exactly that length as well. Like
+     * {@see scanFile()}, the file is opened inside the returned Future and
+     * closed when the operation ends.
+     *
+     * The Future fails with a \RuntimeException when the file cannot be
+     * opened, sized or read, or has another length than its handle
+     * reported.
+     *
+     * @throws \InvalidArgumentException When $previewSize is outside 0..1 MiB
      */
     #[\Override]
     public function scanFileWithPreview(
@@ -288,24 +321,23 @@ final class IcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
-        if ($previewSize !== null && $previewSize < 1) {
-            throw new \InvalidArgumentException('Preview size must be >= 1, got: ' . $previewSize);
+        if ($previewSize !== null && ($previewSize < 0 || $previewSize > self::MAX_PREVIEW_SIZE)) {
+            throw new \InvalidArgumentException(sprintf(
+                'Preview size must be between 0 and %d bytes, got: %d',
+                self::MAX_PREVIEW_SIZE,
+                $previewSize,
+            ));
         }
         $this->validateIcapHeaders($extraHeaders);
 
         $previewSize = $this->resolvePreviewSize($service, $previewSize);
 
-        /** @var int<1, max> $previewSize */
         /** @var Future<ScanResult> $future */
         $future = \Amp\async(function () use ($service, $filePath, $previewSize, $extraHeaders, $cancellation): ScanResult {
-            $fileSize = filesize($filePath);
-            if ($fileSize === false) {
-                throw new \RuntimeException('Unable to stat file: ' . $filePath);
-            }
-            $stream = fopen($filePath, 'rb');
-            if ($stream === false) {
-                throw new \RuntimeException('Unable to open file: ' . $filePath);
-            }
+            // A cancellation that was already requested opens no file.
+            $cancellation?->throwIfRequested();
+
+            [$stream, $fileSize] = $this->openSource($filePath);
 
             try {
                 if ($this->transport instanceof SessionAwareTransport) {
@@ -355,13 +387,8 @@ final class IcapClient implements IcapClientInterface
         ?Cancellation $cancellation,
     ): ScanResult {
         \assert($this->transport instanceof SessionAwareTransport);
-        \assert($previewSize >= 1);
 
-        $previewBytes = fread($stream, $previewSize);
-        if ($previewBytes === false) {
-            throw new \RuntimeException('Unable to read preview from file stream.');
-        }
-        $previewIsComplete = $fileSize <= $previewSize;
+        [$previewBytes, $previewIsComplete] = $this->readPreview($stream, $fileSize, $previewSize);
 
         $previewEnvelope = new HttpResponse(
             statusCode: 200,
@@ -421,8 +448,12 @@ final class IcapClient implements IcapClientInterface
             // new ICAP head. The original RESPMOD envelope still wraps
             // the entire scan. Stream from the current position (past the
             // preview bytes) in CHUNK_SIZE blocks — never buffer the
-            // entire remainder in memory (v2.1.2 OOM fix).
-            $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream($stream));
+            // entire remainder in memory (v2.1.2 OOM fix). The rest has the
+            // length the envelope announced, or the exchange fails (M07).
+            $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream(
+                $stream,
+                $fileSize - strlen($previewBytes),
+            ));
 
             $finalIcapResponse = $this->parser->parse($session->readResponse());
             $result = $this->interpretResponse($finalIcapResponse, $this->config);
@@ -455,13 +486,7 @@ final class IcapClient implements IcapClientInterface
         array $extraHeaders,
         ?Cancellation $cancellation,
     ): ScanResult {
-        \assert($previewSize >= 1);
-
-        $previewBytes = fread($stream, $previewSize);
-        if ($previewBytes === false) {
-            throw new \RuntimeException('Unable to read preview from file stream.');
-        }
-        $previewIsComplete = $fileSize <= $previewSize;
+        [$previewBytes, $previewIsComplete] = $this->readPreview($stream, $fileSize, $previewSize);
 
         $previewEnvelope = new HttpResponse(
             statusCode: 200,
@@ -500,7 +525,12 @@ final class IcapClient implements IcapClientInterface
             );
         }
 
-        rewind($stream);
+        // The preview left the stream behind its first bytes; the full
+        // request needs the file from its start. A stream that cannot go
+        // back would send the rest of the file as if it were the whole.
+        if (!rewind($stream)) {
+            throw new \RuntimeException('Unable to rewind the file stream for the full request.');
+        }
         $fullResponse = new HttpResponse(
             statusCode: 200,
             headers: [
@@ -523,6 +553,14 @@ final class IcapClient implements IcapClientInterface
     private const int DEFAULT_PREVIEW_SIZE = 1024;
 
     /**
+     * Largest preview the client announces and reads: 1 MiB. A preview is
+     * read into memory in one piece, so a size taken from the caller or from
+     * a cached OPTIONS response must never decide an allocation unchecked
+     * (B06). A limit of this client, not of RFC 3507.
+     */
+    private const int MAX_PREVIEW_SIZE = 1_048_576;
+
+    /**
      * Resolve the effective preview size. When the caller passes null,
      * the OPTIONS cache is consulted for the server's advertised
      * `Preview` header (RFC 3507 §4.10.2). Falls back to
@@ -530,15 +568,13 @@ final class IcapClient implements IcapClientInterface
      * cache has no entry, or the cached response lacks a `Preview`
      * header.
      *
-     * @return int<1, max>
-     *
-     * @throws IcapMalformedResponseException When the cached
-     *         response carries conflicting `Preview` fields
+     * @throws IcapMalformedResponseException When the cached response
+     *         carries conflicting `Preview` fields, or a `Preview` value
+     *         that is not a non-negative decimal integer
      */
     private function resolvePreviewSize(string $service, ?int $previewSize): int
     {
         if ($previewSize !== null) {
-            /** @var int<1, max> $previewSize */
             return $previewSize;
         }
 
@@ -546,15 +582,134 @@ final class IcapClient implements IcapClientInterface
             $cacheKey = $this->config->host . ':' . $this->config->port . $service;
             $cached = $this->optionsCache->get($cacheKey);
             if ($cached !== null) {
-                $advertised = (int) (HeaderFields::single($cached->headers, 'Preview') ?? '0');
-                if ($advertised >= 1) {
-                    /** @var int<1, max> $advertised */
-                    return $advertised;
+                $advertised = HeaderFields::single($cached->headers, 'Preview');
+                if ($advertised !== null) {
+                    return $this->boundedPreviewSize($advertised);
                 }
             }
         }
 
         return self::DEFAULT_PREVIEW_SIZE;
+    }
+
+    /**
+     * A `Preview` value from a cached OPTIONS response is untrusted text. It
+     * is checked as a non-negative decimal before any integer cast, so a
+     * value that does not fit an int cannot wrap into something else; a
+     * valid value above the limit is clamped to it, and `0` stays `0`.
+     *
+     * @throws IcapMalformedResponseException When the value is not a
+     *         non-negative decimal integer
+     */
+    private function boundedPreviewSize(string $advertised): int
+    {
+        if (preg_match('/^[0-9]+\z/', $advertised) !== 1) {
+            throw new IcapMalformedResponseException(
+                'Cached OPTIONS response carries a Preview value that is not a non-negative decimal integer.',
+            );
+        }
+
+        $digits = ltrim($advertised, '0');
+        if (strlen($digits) > strlen((string) self::MAX_PREVIEW_SIZE)) {
+            return self::MAX_PREVIEW_SIZE;
+        }
+
+        return min((int) $digits, self::MAX_PREVIEW_SIZE);
+    }
+
+    /**
+     * Open a file for reading and take its size from the open handle. The
+     * handle is what gets read: a second lookup of the path can describe
+     * another file by then, and a size that cannot be established is an
+     * error, not an empty file (M07).
+     *
+     * @return array{resource, int}
+     *
+     * @throws \RuntimeException When the file cannot be opened or sized
+     */
+    private function openSource(string $filePath): array
+    {
+        $stream = @fopen($filePath, 'rb');
+        if ($stream === false) {
+            throw new \RuntimeException('Unable to open file: ' . $filePath);
+        }
+
+        // The caller's `finally` closes the handle only once it has it. Until
+        // then any failure closes it here, a throwing lookup included: the
+        // trace of that exception holds the handle for as long as the
+        // exception is kept.
+        try {
+            $stat = fstat($stream);
+            if ($stat === false || $stat['size'] < 0) {
+                throw new \RuntimeException('Unable to determine the size of file: ' . $filePath);
+            }
+
+            return [$stream, $stat['size']];
+        } catch (\Throwable $e) {
+            fclose($stream);
+            throw $e;
+        }
+    }
+
+    /**
+     * Read the preview from the start of the opened source and decide from
+     * what the stream itself delivers whether it is the whole body. A
+     * preview that is complete (`ieof`) needs the end of the stream to be
+     * observed and to match the size the handle reported, not an end
+     * inferred from a size measured earlier (M07). A failing or stalling
+     * read is an error, not a shorter preview (B08).
+     *
+     * @param  resource $stream
+     * @return array{string, bool} the preview bytes and whether they are the whole body
+     *
+     * @throws \RuntimeException When the source cannot be read, or ends
+     *         at another length than its handle reported
+     */
+    private function readPreview(mixed $stream, int $fileSize, int $previewSize): array
+    {
+        $complete = $fileSize <= $previewSize;
+        $wanted = $complete ? $fileSize : $previewSize;
+
+        $bytes = '';
+        while (strlen($bytes) < $wanted) {
+            $block = $this->readSource($stream, max(1, $wanted - strlen($bytes)));
+            if ($block === null) {
+                throw new \RuntimeException(sprintf(
+                    'The file ended after %d of the %d bytes its handle reported.',
+                    strlen($bytes),
+                    $fileSize,
+                ));
+            }
+            $bytes .= $block;
+        }
+
+        if ($complete && $this->readSource($stream, 1) !== null) {
+            throw new \RuntimeException(sprintf(
+                'The file holds more than the %d bytes its handle reported.',
+                $fileSize,
+            ));
+        }
+
+        return [$bytes, $complete];
+    }
+
+    /**
+     * One read from the source: the next bytes, or null at its confirmed end.
+     *
+     * @param  resource    $stream
+     * @param  int<1, max> $length bytes to ask for
+     *
+     * @throws \RuntimeException When the read fails or makes no progress
+     *         before the end
+     */
+    private function readSource(mixed $stream, int $length): ?string
+    {
+        $block = fread($stream, $length);
+        if ($block === false || ($block === '' && !feof($stream))) {
+            throw new \RuntimeException('Unable to read the file stream to its end.');
+        }
+
+        return $block === '' ? null : $block;
     }
 
     /**

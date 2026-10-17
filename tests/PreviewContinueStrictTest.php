@@ -27,6 +27,7 @@ use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 
@@ -317,6 +318,150 @@ it('returns the socket to the pool only after a validated exchange', function ()
             expect($connections)->toBe($reused ? 1 : 2, $case);
         } finally {
             @unlink($tmp);
+            $clientEnd->close();
+            $serverEnd->close();
+            $pool->close();
+        }
+    }
+});
+
+/**
+ * `Preview: 0` on the real wire (RFC 3507 §4.5): the preview request carries
+ * its body section with nothing in it, so the server can answer `100 Continue`
+ * for a message it knows has a body, and the whole file follows after that.
+ */
+it('sends a zero-byte preview with its body section, then the whole file after 100 Continue', function () {
+    [$serverEnd, $clientEnd] = Socket\createSocketPair();
+    $pool = new AmpConnectionPool(connector: fn () => $clientEnd);
+    $client = new IcapClient(
+        new Config('icap.example', streamTimeout: 2.0),
+        new AsyncAmpTransport($pool),
+        new RequestFormatter(),
+        new ResponseParser(),
+    );
+
+    $tmp = tempnam(sys_get_temp_dir(), 'icap');
+    file_put_contents($tmp, 'abcdefgh');
+    $observed = ['preview' => '', 'rest' => ''];
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp, $serverEnd, &$observed) {
+            $server = \Amp\async(static function () use ($serverEnd, &$observed): void {
+                $buf = '';
+                while (!str_ends_with($buf, "\r\n\r\n0\r\n\r\n")) {
+                    $chunk = $serverEnd->read();
+                    if ($chunk === null) {
+                        return;
+                    }
+                    $buf .= $chunk;
+                }
+                $observed['preview'] = $buf;
+                $serverEnd->write("ICAP/1.0 100 Continue\r\n\r\n");
+
+                $buf = '';
+                while (!str_ends_with($buf, "0\r\n\r\n")) {
+                    $chunk = $serverEnd->read();
+                    if ($chunk === null) {
+                        return;
+                    }
+                    $buf .= $chunk;
+                }
+                $observed['rest'] = $buf;
+                $serverEnd->write("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+            });
+
+            expect($client->scanFileWithPreview('/svc', $tmp, 0)->await()->isInfected())->toBeFalse();
+            $server->await();
+        });
+
+        expect($observed['preview'])->toContain("Preview: 0\r\n");
+        expect($observed['preview'])->toContain("Content-Length: 8\r\n");
+        expect($observed['preview'])->toContain('res-body=');
+        expect($observed['preview'])->not->toContain('null-body');
+        expect($observed['rest'])->toBe("8\r\nabcdefgh\r\n0\r\n\r\n");
+    } finally {
+        @unlink($tmp);
+        $clientEnd->close();
+        $serverEnd->close();
+        $pool->close();
+    }
+});
+
+/**
+ * B08, M07 — the continuation ends in its terminator only when the end of the
+ * source was observed and matches what the handle announced. A read that
+ * fails or stands still, or a source of another length, closes the socket
+ * with the body unterminated; before, the server got the shortened rest
+ * together with its `0\r\n\r\n` and could answer 204 for a file it had only
+ * seen in part.
+ */
+it('does not terminate the continuation of a source that failed or changed size', function () {
+    $cont = "ICAP/1.0 100 Continue\r\n\r\n";
+    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+    $data = str_repeat('R', 20001);
+
+    $cases = [
+        // label => [source, error expected]
+        'control: the whole file'              => [fn () => ScriptedSource::add('s', $data), false],
+        'read error in the rest'               => [fn () => ScriptedSource::add('s', $data, failAfter: 10000), true],
+        'no progress in the rest'              => [fn () => ScriptedSource::add('s', $data, stallAfter: 10000), true],
+        'more bytes than the handle reported'  => [fn () => ScriptedSource::add('s', $data, size: 15001), true],
+        'fewer bytes than the handle reported' => [fn () => ScriptedSource::add('s', $data, size: 25001), true],
+    ];
+
+    foreach ($cases as $case => [$source, $fails]) {
+        [$serverEnd, $clientEnd] = Socket\createSocketPair();
+        $pool = new AmpConnectionPool(connector: fn () => $clientEnd);
+        $client = new IcapClient(
+            new Config('icap.example', streamTimeout: 2.0),
+            new AsyncAmpTransport($pool),
+            new RequestFormatter(),
+            new ResponseParser(),
+        );
+        $rest = '';
+
+        try {
+            $path = $source();
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $path, $serverEnd, $cont, $clean, $fails, $case, &$rest) {
+                $server = \Amp\async(static function () use ($serverEnd, $cont, $clean, &$rest): void {
+                    $buf = '';
+                    while (!str_ends_with($buf, "4\r\nRRRR\r\n0\r\n\r\n")) {
+                        $chunk = $serverEnd->read();
+                        if ($chunk === null) {
+                            return;
+                        }
+                        $buf .= $chunk;
+                    }
+                    $serverEnd->write($cont);
+
+                    // The rest, until the client's terminator or its close.
+                    while (($chunk = $serverEnd->read()) !== null) {
+                        $rest .= $chunk;
+                        if (str_ends_with($rest, "0\r\n\r\n")) {
+                            $serverEnd->write($clean);
+                            return;
+                        }
+                    }
+                });
+
+                if ($fails) {
+                    expect(fn () => $client->scanFileWithPreview('/svc', $path, 4)->await())
+                        ->toThrow(RuntimeException::class, '', $case);
+                } else {
+                    expect($client->scanFileWithPreview('/svc', $path, 4)->await()->isInfected())->toBeFalse($case);
+                }
+                $server->await();
+            });
+
+            // The wire and the handles as they are, before any cleanup.
+            expect(str_ends_with($rest, "0\r\n\r\n"))->toBe(!$fails, $case);
+            expect($clientEnd->isClosed())->toBe($fails, $case);
+            expect(ScriptedSource::$opened)->toBe(1, $case);
+            expect(ScriptedSource::$closed)->toBe(1, $case);
+        } finally {
+            ScriptedSource::reset();
             $clientEnd->close();
             $serverEnd->close();
             $pool->close();

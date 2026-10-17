@@ -272,3 +272,141 @@ it('computes Host and Encapsulated itself, whatever the caller sends in any spel
 
     expect(wire((new RequestFormatter())->format($req)))->toBe($expected);
 });
+
+/**
+ * `Preview: 0` is a zero-byte preview (RFC 3507 §4.5): the chunk stream that
+ * carries nothing yet ends at once, and the server answers `100 Continue` for
+ * the rest. An empty string must not turn that message into `null-body`: the
+ * server would be told there is no body and could answer 204 for a file it
+ * was never offered.
+ */
+it('keeps the body section of a zero-byte preview', function () {
+    $httpBlock = "HTTP/1.1 200 OK\r\n"
+        . "Content-Type: application/octet-stream\r\n"
+        . "Content-Length: 5\r\n"
+        . "\r\n";
+    $response = new HttpResponse(
+        statusCode: 200,
+        headers: ['Content-Type' => ['application/octet-stream'], 'Content-Length' => ['5']],
+        body: '',
+    );
+
+    $preview = new IcapRequest(
+        method: 'RESPMOD',
+        uri: 'icap://icap.example.net/scan',
+        headers: ['Preview' => ['0'], 'Allow' => ['204']],
+        encapsulatedResponse: $response,
+    );
+    $expected = "RESPMOD icap://icap.example.net/scan ICAP/1.0\r\n"
+        . "Host: icap.example.net\r\n"
+        . "Preview: 0\r\n"
+        . "Allow: 204\r\n"
+        . 'Encapsulated: res-hdr=0, res-body=' . strlen($httpBlock) . "\r\n"
+        . "\r\n"
+        . $httpBlock
+        . "0\r\n\r\n";
+
+    expect(wire((new RequestFormatter())->format($preview)))->toBe($expected);
+
+    // A file without bytes has no body, whatever the preview size says.
+    $emptyFile = new IcapRequest(
+        method: 'RESPMOD',
+        uri: 'icap://icap.example.net/scan',
+        headers: ['Preview' => ['0'], 'Allow' => ['204']],
+        encapsulatedResponse: $response,
+        previewIsComplete: true,
+    );
+
+    expect(wire((new RequestFormatter())->format($emptyFile)))
+        ->toContain('Encapsulated: res-hdr=0, null-body=' . strlen($httpBlock))
+        ->toEndWith($httpBlock);
+});
+
+/**
+ * M07 — a stream body goes out with the length its message announces in
+ * Content-Length, which is how the receiver frames it. A stream that has
+ * grown or shrunk since the length was taken fails before the final chunk,
+ * and nothing past the announced length is sent. That holds for a whole body
+ * and for a preview that ends in `ieof`. A preview that carries only the
+ * start of the body is no measure of it: its Content-Length still describes
+ * the whole body, which follows after `100 Continue` (RFC 3507 §4.5). A
+ * message that announces no length is sent as before.
+ */
+it('sends a stream body only with the Content-Length its message announces', function () {
+    $drain = static function (iterable $chunks): array {
+        $wire = '';
+        $error = null;
+        try {
+            foreach ($chunks as $chunk) {
+                $wire .= $chunk;
+            }
+        } catch (RuntimeException $e) {
+            $error = $e;
+        }
+
+        return [$wire, $error];
+    };
+
+    $cases = [
+        // label => [message that carries the body, Content-Length fields, stream content,
+        //           Preview field (null: no preview), ends in ieof, wire ends with, fails]
+        'response, as announced'                   => ['response', ['5'], 'hello', null, false, "5\r\nhello\r\n0\r\n\r\n", false],
+        'response, shorter'                        => ['response', ['5'], 'hel', null, false, "3\r\nhel\r\n", true],
+        'response, longer'                         => ['response', ['5'], 'hello world', null, false, "5\r\nhello\r\n", true],
+        'request, as announced'                    => ['request', ['5'], 'hello', null, false, "5\r\nhello\r\n0\r\n\r\n", false],
+        'request, shorter'                         => ['request', ['5'], 'hel', null, false, "3\r\nhel\r\n", true],
+        'request, longer'                          => ['request', ['5'], 'hello world', null, false, "5\r\nhello\r\n", true],
+        'no length announced'                      => ['response', [], 'hello world', null, false, "b\r\nhello world\r\n0\r\n\r\n", false],
+        'response, preview of 4 of 8'              => ['response', ['8'], 'abcd', '4', false, "4\r\nabcd\r\n0\r\n\r\n", false],
+        'request, preview of 4 of 8'               => ['request', ['8'], 'abcd', '4', false, "4\r\nabcd\r\n0\r\n\r\n", false],
+        'response, preview of 0 of 8'              => ['response', ['8'], '', '0', false, "0\r\n\r\n", false],
+        'request, preview of 0 of 8'               => ['request', ['8'], '', '0', false, "0\r\n\r\n", false],
+        'response, complete preview, as announced' => ['response', ['8'], 'abcdefgh', '8', true, "8\r\nabcdefgh\r\n0; ieof\r\n\r\n", false],
+        'response, complete preview, shorter'      => ['response', ['8'], 'abcd', '8', true, "4\r\nabcd\r\n", true],
+        'response, complete preview, longer'       => ['response', ['8'], 'abcdefghijk', '8', true, "8\r\nabcdefgh\r\n", true],
+        'request, complete preview, as announced'  => ['request', ['8'], 'abcdefgh', '8', true, "8\r\nabcdefgh\r\n0; ieof\r\n\r\n", false],
+        'request, complete preview, shorter'       => ['request', ['8'], 'abcd', '8', true, "4\r\nabcd\r\n", true],
+        'request, complete preview, longer'        => ['request', ['8'], 'abcdefghijk', '8', true, "8\r\nabcdefgh\r\n", true],
+    ];
+
+    foreach ($cases as $case => [$carrier, $lengths, $content, $preview, $complete, $tail, $fails]) {
+        $stream = fopen('php://temp', 'r+');
+        if ($stream === false) {
+            throw new RuntimeException('Unable to open temp stream');
+        }
+
+        try {
+            fwrite($stream, $content);
+            rewind($stream);
+
+            $headers = $lengths === [] ? [] : ['Content-Length' => $lengths];
+            $icapHeaders = $preview === null ? [] : ['Preview' => [$preview]];
+            $request = $carrier === 'response'
+                ? new IcapRequest(
+                    method: 'RESPMOD',
+                    uri: 'icap://icap.example.net/scan',
+                    headers: $icapHeaders,
+                    encapsulatedResponse: new HttpResponse(200, headers: $headers, body: $stream),
+                    previewIsComplete: $complete,
+                )
+                : new IcapRequest(
+                    method: 'REQMOD',
+                    uri: 'icap://icap.example.net/scan',
+                    headers: $icapHeaders,
+                    encapsulatedRequest: new HttpRequest('POST', '/upload', headers: $headers, body: $stream),
+                    previewIsComplete: $complete,
+                );
+
+            [$wire, $error] = $drain((new RequestFormatter())->format($request));
+
+            expect(str_ends_with($wire, $tail))->toBeTrue($case);
+            if ($fails) {
+                expect($error)->toBeInstanceOf(RuntimeException::class, $case);
+            } else {
+                expect($error)->toBeNull($case);
+            }
+        } finally {
+            fclose($stream);
+        }
+    }
+});

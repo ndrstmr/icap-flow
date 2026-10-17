@@ -155,7 +155,8 @@ $pool = new AmpConnectionPool(
 $transport = new AsyncAmpTransport($pool);
 
 // Optional: pass an OPTIONS cache so the client auto-negotiates
-// preview size and honours Options-TTL / ISTag invalidation.
+// preview size (0 to 1 MiB; larger advertised values are clamped, malformed
+// ones rejected) and honours Options-TTL / ISTag invalidation.
 $cache = new InMemoryOptionsCache();
 // For cross-process caching (Redis, APCu) use Psr16OptionsCache
 // or Psr6OptionsCache instead.

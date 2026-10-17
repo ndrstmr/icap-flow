@@ -121,7 +121,7 @@ Faustregeln:
 2. encapsulated HTTP-Header-Block
 3. Chunked-Body (HTTP/1.1) inkl. Terminator (`0\r\n\r\n` regulär, `0; ieof\r\n\r\n` bei Preview-Complete).
 
-Niemals den Body in einen einzigen String puffern. Das `scanFile()`-Beispiel reicht den `fopen($path, 'rb')`-Stream als `body` in den `HttpResponse` und lässt den Encoder daraus Chunks ziehen.
+Niemals den Body in einen einzigen String puffern. `scanFile()` öffnet die Datei innerhalb des Futures (`fopen()`, dann `fstat()` am Handle), reicht den Stream als `body` in den `HttpResponse` und lässt den Encoder daraus Chunks ziehen; den eigenen Handle schließt es in `finally`. Übergebene Streams liest der Client nur. Der Encoder terminiert (`0\r\n\r\n` / `0; ieof`) erst nach bestätigtem EOF; Lesefehler, leerer Read vor dem Ende oder ein nötiger, fehlgeschlagener Rewind werfen. Kündigt die Nachricht eine einzelne `Content-Length` an, muss der Stream genau so viele Bytes liefern (der Formatter reicht sie an den Encoder), sonst wirft er vor dem Abschlusschunk (außer bei einem Teil-Preview: `Preview` ohne `ieof`).
 
 **v2.1.2-Bug (Item #7):** Die heutige Strict-§4.5-Continuation in `IcapClient.php:399` macht `stream_get_contents($stream)` und puffert dadurch die Datei nach Preview komplett in RAM. Fix: `ChunkedBodyEncoder::encodeRemainderFromStream($stream)` ergänzen und den `stream_get_contents`-Call ersetzen. Memory-Watermark-Test (2-GB-Stream unter `php -d memory_limit=128M`) gehört in den gleichen PR.
 

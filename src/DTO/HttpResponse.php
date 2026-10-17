@@ -26,7 +26,11 @@ namespace Ndrstmr\Icap\DTO;
  *
  * Body is either a string (treated as raw bytes) or a stream resource the
  * {@see \Ndrstmr\Icap\RequestFormatter} reads chunk-by-chunk to avoid
- * buffering the whole payload in memory.
+ * buffering the whole payload in memory. A stream passed in stays the
+ * caller's: it is read, never closed. When the headers announce a
+ * `Content-Length`, the stream has to deliver exactly that many bytes, or
+ * sending the request fails before the final chunk. A preview that carries
+ * only the start of the body is the exception: the field describes all of it.
  */
 final readonly class HttpResponse
 {
