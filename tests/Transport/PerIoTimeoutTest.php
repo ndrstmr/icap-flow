@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use Amp\Socket;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
@@ -65,8 +66,7 @@ it('per-IO timeout resets between preview phases — slow server does not trigge
     $tmp = tempnam(sys_get_temp_dir(), 'icap');
     file_put_contents($tmp, str_repeat('X', 200));
 
-    /** @var AsyncTestCase $this */
-    $this->runAsyncTest(function () use ($client, $tmp, $serverEnd) {
+    $scenario = function () use ($client, $tmp, $serverEnd) {
         $server = \Amp\async(static function () use ($serverEnd): void {
             // Phase 1 — read preview, answer 100 Continue.
             $buf = '';
@@ -107,7 +107,103 @@ it('per-IO timeout resets between preview phases — slow server does not trigge
         $server->await();
 
         expect($result->isInfected())->toBeFalse();
+    };
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest($scenario);
+    } finally {
+        // Also when the run is red: the temp file and both ends of the pair.
+        @unlink($tmp);
+        $clientEnd->close();
+        $serverEnd->close();
+        $pool->close();
+    }
+});
+
+/**
+ * B05 — the window of a write is the window of the whole call: one deadline for all its chunks,
+ * not one per chunk, and a new window for the next call.
+ */
+it('gives one write call one deadline for all its chunks and every call a window of its own', function () {
+    // The peer takes every chunk at once; the pauses between chunks are the producer's.
+    $chunks = static function (int $count): \Generator {
+        for ($i = 0; $i < $count; $i++) {
+            \Amp\delay(0.05);
+            yield "chunk {$i}\r\n";
+        }
+    };
+    [$peer, $client] = Socket\createSocketPair();
+    $pool = new AmpConnectionPool(connector: fn () => $client);
+    $session = (new AsyncAmpTransport($pool))->openSession(new Config('icap.example', streamTimeout: 0.25));
+    $draining = \Amp\async(static function () use ($peer): void {
+        while ($peer->read() !== null) {
+        }
     });
 
-    unlink($tmp);
+    try {
+        // Two calls of about 0.15 s: each fits a window of 0.25 s, both together do not.
+        $session->write($chunks(3));
+        $session->write($chunks(3));
+        $healthy = !$client->isClosed();
+
+        // One call of about 0.4 s: no chunk waits long, the call as a whole is over its window.
+        $thrown = null;
+        try {
+            $session->write($chunks(8));
+        } catch (\Throwable $e) {
+            $thrown = $e;
+        }
+
+        expect($healthy)->toBeTrue();
+        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
+        expect($client->isClosed())->toBeTrue();
+    } finally {
+        $client->close();
+        $peer->close();
+        $pool->close();
+        $draining->await();
+    }
+});
+
+it('reports a window that passes while the producer is still finishing, instead of returning as if all was sent', function () {
+    // Every byte is out; the producer is slow to say it has no more. It waits, or it blocks the
+    // event loop, and then the timer of the window cannot say anything: the clock does.
+    $producers = [
+        'a producer that waits' => static function (): \Generator {
+            yield "chunk\r\n";
+            \Amp\delay(0.3);
+        },
+        'a producer that blocks the event loop' => static function (): \Generator {
+            yield "chunk\r\n";
+            usleep(300_000);
+        },
+    ];
+
+    foreach ($producers as $case => $chunks) {
+        [$peer, $client] = Socket\createSocketPair();
+        $pool = new AmpConnectionPool(connector: fn () => $client);
+        $session = (new AsyncAmpTransport($pool))->openSession(new Config('icap.example', streamTimeout: 0.1));
+        $draining = \Amp\async(static function () use ($peer): void {
+            while ($peer->read() !== null) {
+            }
+        });
+
+        try {
+            $thrown = null;
+            try {
+                $session->write($chunks());
+            } catch (\Throwable $e) {
+                $thrown = $e;
+            }
+
+            expect($thrown)->toBeInstanceOf(IcapTimeoutException::class, $case);
+            expect($client->isClosed())->toBeTrue($case);
+        } finally {
+            $client->close();
+            $peer->close();
+            $pool->close();
+            $draining->await();
+        }
+    }
 });

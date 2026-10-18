@@ -88,6 +88,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the call, as `scanFileWithPreview()` already did. The handle is also
   closed when the size lookup on it throws. A stream the caller passes in a
   request body stays open. *(M08)*
+- Writing a request is bounded now. `AmpTransportSession::write()` handed
+  its chunks to `Socket::write()`, which takes no cancellation: against a
+  server that stopped reading, the call stayed suspended for good, holding
+  session, socket and upload source, and neither `streamTimeout` nor the
+  caller's `Cancellation` ended it. Every `write()` call now has one window
+  of `streamTimeout` seconds for all its chunks (the preview and the
+  continuation of a strict preview flow each get their own), looks at the
+  caller's cancellation before it pulls the first chunk and around every
+  write, and ends a stalled write by closing the socket. Whenever the
+  producer hands a chunk back (an empty one too) and before the call
+  returns, the window is checked on a monotonic clock as well, so a slow
+  producer, or one that blocks the event loop, can neither run on past the
+  window nor finish the write after it. A call that was cancelled beforehand
+  pulls nothing from the producer and sends nothing. A write that ends in a
+  cancellation, in the timeout or in any other failure closes the session
+  for good, so a later `release()` cannot hand a half-sent request to the
+  pool. *(B05)*
+- The transport's own timeouts surface as `IcapTimeoutException`: the window
+  for acquiring the socket (pool, connect, TLS handshake), for writing the
+  request and for reading the response. A cancellation by the caller, also a
+  `TimeoutCancellation` of theirs, stays an `Amp\CancelledException`. A
+  connection cancelled beforehand does not reach the connector, and a socket
+  it hands back after the caller gave up or the window passed is closed, not
+  used. Before, both came out as `CancelledException`, so a caller who gave
+  up could not be told from a server that was too slow, and the async
+  transport never threw `IcapTimeoutException`; code that caught
+  `CancelledException` to detect the transport's timeout has to catch
+  `IcapTimeoutException` as well. A read that ends early closes the session
+  too, and timers and cancellation subscriptions are removed explicitly on
+  every way out, also while the exception of a failed Future and its trace
+  arguments are still referenced. A connect that exceeds `socketTimeout`
+  still raises `IcapConnectionException`, and the deadline over retries and
+  backoff remains open. *(M10, first stage)*
 
 ## [3.0.0] - 2026-05-01
 

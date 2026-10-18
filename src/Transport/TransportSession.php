@@ -39,8 +39,16 @@ namespace Ndrstmr\Icap\Transport;
 interface TransportSession
 {
     /**
-     * Push request bytes onto the socket. Honours the cancellation
-     * token the session was opened with.
+     * Push request bytes onto the socket, all chunks of the call within one
+     * window of `streamTimeout` seconds and under the cancellation token the
+     * session was opened with. A call that does not finish ends the session
+     * for good (it is closed, and {@see release()} cannot pool it): a
+     * cancellation by the caller, also a `TimeoutCancellation`, throws
+     * `Amp\CancelledException`, the window passing throws
+     * {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}. Both are looked
+     * at whenever the producer hands a chunk back, an empty one too, and
+     * before the call returns: a producer that is slow, or blocks the event
+     * loop, cannot extend the window or finish the call after it.
      *
      * @param iterable<string> $chunks
      */
@@ -50,7 +58,8 @@ interface TransportSession
      * Read one fully-framed ICAP response from the socket. The
      * underlying {@see ResponseFrameReader} stops as soon as the
      * message is complete, leaving any trailing bytes in the kernel
-     * buffer for the next call.
+     * buffer for the next call. Window, cancellation and failure behave as
+     * for {@see write()}.
      */
     public function readResponse(): string;
 

@@ -7,7 +7,7 @@ icap-flow nutzt **amphp v3** (`amphp/socket: ^2.3`) und **Revolt EventLoop**. Sy
 - `Amp\Future<T>` ist das Promise-Äquivalent — `await()` blockiert die aktuelle Fiber, bis der Wert da ist.
 - `\Amp\async(fn (): T => ...)` startet eine neue Fiber und gibt ein `Future<T>` zurück. So entstehen alle public-async-Methoden im `IcapClient`.
 - `Amp\Cancellation` ist der zentrale Abbruch-Mechanismus. Jede public Methode des `IcapClient` nimmt ein optionales `?Cancellation` als letzten Parameter — Patches müssen dieses Muster halten.
-- `CompositeCancellation` kombiniert User-Cancellation und Library-internes `TimeoutCancellation`; was zuerst feuert, gewinnt.
+- Cancellation des Aufrufers und Library-Timeout bilden je IO-Phase (Erwerb in `openSession()`, `write()`, `readResponse()`) ein Fenster: ein `DeferredCancellation`, ausgelöst von `EventLoop::delay()` (`streamTimeout`) und einer Subscription auf der User-Cancellation. Der Cancel des Aufrufers bleibt `Amp\CancelledException`, das eigene Fenster ist `IcapTimeoutException`.
 
 ## Standardsignatur einer öffentlichen Async-Methode
 
@@ -57,18 +57,50 @@ public function executeRaw(IcapRequest $request, ?Cancellation $cancellation = n
 }
 ```
 
-In `AsyncAmpTransport::openSession()` werden User-Cancellation und `TimeoutCancellation` zu einem `CompositeCancellation` verschmolzen — das ist die Stelle, an der Library-Timeout und User-Abbruch zusammenfließen:
+In `AsyncAmpTransport::openSession()` (Erwerb: Pool, Connect, TLS) und in `AmpTransportSession::inWindow()` (für `write()` und `readResponse()`) fließen Library-Timeout und User-Abbruch zu einem Fenster zusammen. Timer und Subscription werden in `finally` ausdrücklich entfernt: `TimeoutCancellation` und `CompositeCancellation` räumen erst im Destruktor auf, und eine gehaltene Exception hält die Argumente ihrer Frames, damit beide, am Leben.
 
 ```php
-$timeoutCancellation = new TimeoutCancellation($config->getStreamTimeout());
-$effective = $cancellation === null
-    ? $timeoutCancellation
-    : new CompositeCancellation($cancellation, $timeoutCancellation);
+$cancellation?->throwIfRequested();       // vorab gecancelt: Pool und Connector bleiben unberührt
+$endsAt = hrtime(true) + $config->getStreamTimeout() * 1e9;
+$window = new DeferredCancellation();
+$expired = false;
+$deadline = EventLoop::delay($config->getStreamTimeout(), function () use (&$expired, $window): void {
+    $expired = true;
+    $window->cancel();
+});
+$watch = $cancellation?->subscribe(static function () use ($window): void {
+    $window->cancel();
+});
+$socket = null;
 
-$socket = $this->acquireSocket($config, $effective);
+try {
+    $socket = $this->acquireSocket($config, $window->getCancellation());
+
+    // Ein Connector muss den Token nicht beachten; blockiert er den Event-Loop, feuert der Timer nicht.
+    $cancellation?->throwIfRequested();
+    if (hrtime(true) >= $endsAt) {
+        $expired = true;
+        $window->cancel();
+    }
+    $window->getCancellation()->throwIfRequested();
+} catch (\Throwable $e) {
+    $socket?->close();                    // ein nach Abbruch gelieferter Socket wird nicht benutzt
+    if ($e instanceof CancelledException) {
+        $cancellation?->throwIfRequested();   // der Cancel des Aufrufers bleibt, wie er ist
+        if ($expired) {
+            throw new IcapTimeoutException(/* ... */);
+        }
+    }
+    throw $e;
+} finally {
+    EventLoop::cancel($deadline);
+    if ($cancellation !== null && $watch !== null) {
+        $cancellation->unsubscribe($watch);
+    }
+}
 ```
 
-**v2.2-Caveat (Item #19):** Im Strict-§4.5-Pfad ist dieses Timeout heute Session-Lifetime, nicht Per-IO. Beim Touch dieser Stelle entweder Per-IO-Reset einbauen **oder** den Caveat in der PHPDoc dokumentieren.
+**Per-IO, nicht Session-Lifetime:** Jeder `write()`- und `readResponse()`-Aufruf bekommt ein neues Fenster; bei `write()` gilt es für alle Chunks des Aufrufs und wird dort, wo der Producer die Kontrolle zurückgibt (jeder Chunk, auch ein leerer; nach jedem Write; vor der Rückgabe), zusätzlich an einer monotonen Endzeit geprüft, weil der Timer nicht feuert, solange ein Producer den Event-Loop hält. `Socket::write()` hat keinen Cancellation-Parameter: ein unter Backpressure festhängender Write endet nur, indem die Session (der Socket) geschlossen wird. Ein Aufruf, der nicht fertig wird, schließt die Session dauerhaft; `release()` danach poolt nichts.
 
 ## Sessions — Strict-§4.5-Preview-Continue
 
@@ -196,8 +228,7 @@ Der synchrone Pfad ist **nicht** `SessionAwareTransport`, also fällt `scanFileW
 | `\Amp\async()` | Public-Async-Methode | `IcapClient::request()`, `options()`, `scanFileWithPreview()` |
 | `Future<T>::await()` | In Fiber blockierend warten | Fast alle async-Methoden |
 | `Cancellation` Param | Externes Abbrechen | Pflicht-Last-Param public-API |
-| `CompositeCancellation` | User + Lib-Timeout kombinieren | `AsyncAmpTransport::openSession()` |
-| `TimeoutCancellation` | Lib-internes Streaming-Timeout | `AsyncAmpTransport`, `Config::getStreamTimeout()` |
+| `DeferredCancellation` + `EventLoop::delay()` | User-Abbruch + Lib-Fenster je IO-Phase | `AsyncAmpTransport::openSession()`, `AmpTransportSession::inWindow()`, `Config::getStreamTimeout()` |
 | `SessionAwareTransport` | Multi-IO auf einem Socket | Strict-§4.5-Pfad |
 | `Socket\connect()` / `connectTls()` | Plain / TLS | `AsyncAmpTransport::acquireSocket()` |
 | `\Amp\delay()` | Cancellation-aware Sleep | `RetryingIcapClient`-Backoff |
