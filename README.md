@@ -182,7 +182,7 @@ Every exception this library throws implements `Ndrstmr\Icap\Exception\IcapExcep
 | Exception | Trigger |
 |---|---|
 | `IcapConnectionException` | TCP-level failure (refused, timeout, TLS handshake, ...) |
-| `IcapTimeoutException` | Stream cancellation timed out |
+| `IcapTimeoutException` | The `streamTimeout` window of a phase passed: acquiring the connection, writing the request or reading the response. A cancellation by the caller is not mapped; it stays `Amp\CancelledException` |
 | `IcapProtocolException` | RFC-3507 violation (e.g. status 100 outside preview, malformed `Encapsulated`) |
 | `IcapMalformedResponseException` (extends `IcapProtocolException`) | Server response can't be parsed (no separator, header line without `:`, oversize lines) |
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |

@@ -22,9 +22,12 @@ use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Future;
+use Amp\Socket;
+use Amp\TimeoutCancellation;
 use Mockery as m;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
@@ -33,7 +36,13 @@ use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
+use Ndrstmr\Icap\Transport\AmpConnectionPool;
+use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Revolt\EventLoop;
+
+use function Amp\async;
+use function Amp\delay;
 
 uses(AsyncTestCase::class);
 
@@ -252,6 +261,151 @@ it('gives the file handle back when the cancellation fires during the request', 
         }
     } finally {
         ScriptedSource::reset();
+        if ($keepArgs !== false) {
+            ini_set('zend.exception_ignore_args', $keepArgs);
+        }
+    }
+});
+
+/**
+ * B05 / M10 (first stage) — a scan that is stuck in writing its request ends with the caller's
+ * cancellation or at the stream timeout, and gives file and socket back.
+ *
+ * The server end of a real socket pair stops reading. A watchdog closes the test's own sockets
+ * if the scan hangs, so a regression fails an assertion instead of stalling the run.
+ */
+
+/**
+ * @param (\Closure(): void)|null $afterStall acts once the scan is stuck
+ *
+ * @return array{hung: bool, stalled: bool, outcome: \Throwable|null, opened: int, closed: int, clientClosed: bool, reconnected: bool}
+ */
+function stalledScan(string $method, float $streamTimeout, ?Cancellation $caller = null, ?\Closure $afterStall = null): array
+{
+    [$peer, $client] = Socket\createSocketPair();
+    $connections = 0;
+    $pool = new AmpConnectionPool(connector: function () use ($client, &$connections): Socket\Socket {
+        $connections++;
+
+        return $client;
+    });
+    $icap = new IcapClient(
+        new Config('icap.example', streamTimeout: $streamTimeout),
+        new AsyncAmpTransport($pool),
+        new RequestFormatter(),
+        new ResponseParser(),
+    );
+    $path = ScriptedSource::add('stalled', str_repeat('A', 4 * 1024 * 1024));
+    $hung = false;
+    $watchdog = EventLoop::delay(3.0, function () use (&$hung, $client, $peer): void {
+        $hung = true;
+        $client->close();
+        $peer->close();
+    });
+    $outcome = null;
+    $ended = false;
+
+    try {
+        // For the preview flow the server reads the preview, says 100 Continue and reads nothing
+        // after that: the stall is in the continuation.
+        $server = $method === 'scanFileWithPreview' ? async(static function () use ($peer): void {
+            $head = '';
+            while (!str_contains($head, "0\r\n\r\n")) {
+                $chunk = $peer->read(new TimeoutCancellation(2.0));
+                if ($chunk === null) {
+                    return;
+                }
+                $head .= $chunk;
+            }
+            $peer->write("ICAP/1.0 100 Continue\r\n\r\n");
+        }) : null;
+
+        $scan = async(function () use ($icap, $method, $path, $caller, &$outcome, &$ended): void {
+            try {
+                $future = $method === 'scanFile'
+                    ? $icap->scanFile('/svc', $path, [], $caller)
+                    : $icap->scanFileWithPreview('/svc', $path, 4, [], $caller);
+                $future->await();
+            } catch (\Throwable $e) {
+                $outcome = $e;
+            } finally {
+                $ended = true;
+            }
+        });
+        $server?->await();
+        delay(0.1);
+        $stalled = !$ended;
+        if ($afterStall !== null) {
+            $afterStall();
+        }
+        $scan->await();
+
+        $clientClosed = $client->isClosed();
+        $pool->acquire(new Config('icap.example'))->close();
+
+        return [
+            'hung' => $hung,
+            'stalled' => $stalled,
+            'outcome' => $outcome,
+            'opened' => ScriptedSource::$opened,
+            'closed' => ScriptedSource::$closed,
+            'clientClosed' => $clientClosed,
+            'reconnected' => $connections === 2,
+        ];
+    } finally {
+        EventLoop::cancel($watchdog);
+        ScriptedSource::reset();
+        $client->close();
+        $peer->close();
+        $pool->close();
+    }
+}
+
+it('ends a scan stuck in writing its request when the caller cancels, and gives file and socket back', function () {
+    // Failed futures keep their trace arguments, and with them the file handle.
+    $keepArgs = ini_set('zend.exception_ignore_args', '0');
+    $held = [];
+
+    try {
+        foreach (['scanFile', 'scanFileWithPreview'] as $method) {
+            $deferred = new DeferredCancellation();
+
+            $run = stalledScan($method, 30.0, $deferred->getCancellation(), fn () => $deferred->cancel());
+            $held[] = $run['outcome'];
+
+            expect($run['stalled'])->toBeTrue($method);
+            expect($run['hung'])->toBeFalse($method);
+            expect($run['outcome'])->toBeInstanceOf(CancelledException::class, $method);
+            expect($run['opened'])->toBe(1, $method);
+            expect($run['closed'])->toBe(1, $method);
+            expect($run['clientClosed'])->toBeTrue($method);
+            expect($run['reconnected'])->toBeTrue($method);
+        }
+    } finally {
+        if ($keepArgs !== false) {
+            ini_set('zend.exception_ignore_args', $keepArgs);
+        }
+    }
+});
+
+it('ends a scan stuck in writing its request at the stream timeout as IcapTimeoutException', function () {
+    $keepArgs = ini_set('zend.exception_ignore_args', '0');
+    $held = [];
+
+    try {
+        foreach (['scanFile', 'scanFileWithPreview'] as $method) {
+            $run = stalledScan($method, 0.4);
+            $held[] = $run['outcome'];
+
+            expect($run['stalled'])->toBeTrue($method);
+            expect($run['hung'])->toBeFalse($method);
+            expect($run['outcome'])->toBeInstanceOf(IcapTimeoutException::class, $method);
+            expect($run['opened'])->toBe(1, $method);
+            expect($run['closed'])->toBe(1, $method);
+            expect($run['clientClosed'])->toBeTrue($method);
+            expect($run['reconnected'])->toBeTrue($method);
+        }
+    } finally {
         if ($keepArgs !== false) {
             ini_set('zend.exception_ignore_args', $keepArgs);
         }

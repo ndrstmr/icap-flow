@@ -21,14 +21,16 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Transport;
 
 use Amp\Cancellation;
-use Amp\CompositeCancellation;
+use Amp\CancelledException;
+use Amp\DeferredCancellation;
 use Amp\Socket;
 use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
-use Amp\TimeoutCancellation;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapUri;
+use Revolt\EventLoop;
 
 use function Amp\async;
 
@@ -41,9 +43,11 @@ use function Amp\async;
  * keep a hostile server from exhausting the client's memory.
  *
  * The optional user-supplied {@see Cancellation} is combined with the
- * transport's internal {@see TimeoutCancellation} via a
- * {@see CompositeCancellation}; whichever fires first aborts the
- * read/write loop with `Amp\CancelledException`.
+ * transport's own `streamTimeout` window for each phase (acquiring the
+ * socket, writing the request, reading the response); whichever comes
+ * first ends the phase. The caller's cancellation — also one that is a
+ * `TimeoutCancellation` — ends it with `Amp\CancelledException`, the
+ * transport's own window with {@see IcapTimeoutException}.
  *
  * Response framing is done by {@see ResponseFrameReader} so the read
  * loop terminates as soon as the message is complete — no dependency
@@ -101,17 +105,62 @@ final class AsyncAmpTransport implements SessionAwareTransport
     #[\Override]
     public function openSession(Config $config, ?Cancellation $cancellation = null): TransportSession
     {
-        // Use a one-shot timeout for socket acquisition only.
-        $acquireCancellation = new TimeoutCancellation($config->getStreamTimeout());
-        $effectiveAcquire = $cancellation === null
-            ? $acquireCancellation
-            : new CompositeCancellation($cancellation, $acquireCancellation);
+        // Cancelled before it began: neither the pool nor the connector is asked.
+        $cancellation?->throwIfRequested();
 
-        $socket = $this->acquireSocket($config, $effectiveAcquire);
+        // Waiting for the pool, connecting and the TLS handshake share one window of
+        // streamTimeout seconds. Timer and subscription are removed on every way out, not
+        // left to destructors: an exception that is still referenced keeps the arguments of
+        // its stack frames, and with them the cancellation, alive.
+        $endsAt = hrtime(true) + $config->getStreamTimeout() * 1e9;
+        $window = new DeferredCancellation();
+        $expired = false;
+        $deadline = EventLoop::delay($config->getStreamTimeout(), function () use (&$expired, $window): void {
+            $expired = true;
+            $window->cancel();
+        });
+        $watch = $cancellation?->subscribe(static function () use ($window): void {
+            $window->cancel();
+        });
+        $socket = null;
 
-        // The session creates a fresh TimeoutCancellation per IO call
-        // (write / readResponse), so each individual operation gets
-        // the full streamTimeout window — no session-lifetime timer.
+        try {
+            $socket = $this->acquireSocket($config, $window->getCancellation());
+
+            // A connector need not honour the token it was given, and one that holds the event
+            // loop leaves the timer no chance to fire. A socket it hands back after the caller
+            // gave up or the window passed is not used.
+            $cancellation?->throwIfRequested();
+            if (hrtime(true) >= $endsAt) {
+                $expired = true;
+                $window->cancel();
+            }
+            $window->getCancellation()->throwIfRequested();
+        } catch (\Throwable $e) {
+            $socket?->close();
+
+            if ($e instanceof CancelledException) {
+                // The caller's cancellation stays what it is; only the transport's own
+                // window passing becomes an IcapTimeoutException.
+                $cancellation?->throwIfRequested();
+                if ($expired) {
+                    throw new IcapTimeoutException(sprintf(
+                        'No connection was set up within the stream timeout of %s seconds.',
+                        $config->getStreamTimeout(),
+                    ));
+                }
+            }
+
+            throw $e;
+        } finally {
+            EventLoop::cancel($deadline);
+            if ($cancellation !== null && $watch !== null) {
+                $cancellation->unsubscribe($watch);
+            }
+        }
+
+        // The session gives each IO call (write / readResponse) the full
+        // streamTimeout window — no session-lifetime timer.
         return new AmpTransportSession(
             config: $config,
             socket: $socket,
