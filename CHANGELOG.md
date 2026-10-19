@@ -121,6 +121,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments are still referenced. A connect that exceeds `socketTimeout`
   still raises `IcapConnectionException`, and the deadline over retries and
   backoff remains open. *(M10, first stage)*
+- The synchronous transport no longer loses part of a request, waits for ever
+  on a peer that stopped reading, or takes a timeout for the end of the
+  response. `SynchronousStreamTransport` ignored what `fwrite()` returned, so
+  a short write or a failed one left a hole in the request and the next chunk
+  went out behind it. Each chunk is now sent completely, carrying on at the
+  offset a short write reached; a write that returns `false` ends the call
+  with `IcapConnectionException`. A blocking `send()` is bounded by the stream
+  timeout on Linux only (on macOS it never returns while the peer does not
+  read), so the request now goes out through a non-blocking socket that is
+  waited for with `stream_select()`: a peer that takes nothing for a whole
+  `streamTimeout` ends the call with `IcapTimeoutException` on every platform,
+  and one that reads slowly is waited for. `streamTimeout` keeps its fraction
+  of a second (it was cut to whole seconds, so 0.5 became 0), and a value of
+  zero, below zero or not finite gives up at once instead of waiting for ever.
+  A read that timed out is reported as `IcapTimeoutException`; before, a
+  silent server ended as an `IcapMalformedResponseException` about a
+  connection closed too early, which a real end of the stream with an
+  incomplete frame still is. A failed read is an `IcapConnectionException`.
+  The caller's cancellation is also looked at after connecting and between the
+  parts of a short write and the waits for a full buffer; a wait that is
+  already running is not interrupted, so use `AsyncAmpTransport` where that
+  matters. *(M09)*
 
 ## [3.0.0] - 2026-05-01
 
