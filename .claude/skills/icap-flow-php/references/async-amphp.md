@@ -206,7 +206,7 @@ v2.2-Erweiterungen, die auf der Roadmap stehen:
 
 ## Synchroner Pfad
 
-`SynchronousStreamTransport` nutzt `stream_socket_client` und blockt direkt. `SynchronousIcapClient` ist nur ein `await()`-Wrapper:
+`SynchronousStreamTransport` nutzt `stream_socket_client` und blockt direkt. Jeder Chunk geht ganz hinaus oder der Aufruf wirft; ein abgelaufenes Stream-Timeout ist `IcapTimeoutException`, nie ein EOF. Der Request geht über einen nicht blockierenden Socket hinaus (`stream_select()` mit Frist je Stillstand), das Lesen blockierend mit Stream-Timeout; ein laufender Wait ist durch den Cancel des Aufrufers nicht unterbrechbar (siehe CLAUDE.md). `SynchronousIcapClient` ist nur ein `await()`-Wrapper:
 
 ```php
 public function scanFile(
