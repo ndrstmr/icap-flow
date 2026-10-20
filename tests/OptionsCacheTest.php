@@ -23,7 +23,10 @@ use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
 use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
+use Ndrstmr\Icap\Exception\IcapProtocolException;
+use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
@@ -319,6 +322,94 @@ it('uses one key for a service, in options() and in the preview size lookup', fu
     expect(preg_match('/^[0-9a-f]{64}\z/', $cache->sets[0]))->toBe(1);
     expect($transport->requests[1])->toContain("Preview: 4096\r\n");
     expect($transport->requests[2])->toContain("Preview: 1024\r\n");
+});
+
+/*
+ * N02: options() accepts a 200 and nothing else, for the answer of the server
+ * and for the answer from the cache alike. What it rejects is not stored, and
+ * a cached entry it would reject is not handed out as a success.
+ */
+it('does not store an answer that options() rejects and asks the server again', function () {
+    // status => the exception options() raises for it
+    $cases = [
+        100 => IcapProtocolException::class,
+        101 => IcapProtocolException::class,
+        204 => IcapProtocolException::class,
+        206 => IcapProtocolException::class,
+        302 => IcapProtocolException::class,
+        400 => IcapClientException::class,
+        503 => IcapServerException::class,
+        600 => IcapProtocolException::class,
+    ];
+
+    foreach ($cases as $status => $exception) {
+        $reply = "ICAP/1.0 {$status} Reply\r\nOptions-TTL: 60\r\nISTag: \"v1\"\r\nPreview: 4096\r\nEncapsulated: null-body=0\r\n\r\n";
+        $cache = new RecordingOptionsCache();
+        $transport = new ScriptedTransport([$reply, $reply]);
+        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+        $outcomes = [];
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, &$outcomes) {
+            for ($call = 0; $call < 2; $call++) {
+                try {
+                    $client->options('/avscan')->await();
+                    $outcomes[] = null;
+                } catch (Throwable $e) {
+                    $outcomes[] = $e::class;
+                }
+            }
+        });
+
+        expect($outcomes)->toBe([$exception, $exception], "status {$status}");
+        expect($cache->sets)->toBe([], "status {$status}");
+        expect($transport->requests)->toHaveCount(2, "status {$status}");
+    }
+});
+
+it('does not hand out a cached answer that options() would reject', function () {
+    // status => the exception options() raises for the cached answer, null when it is handed out
+    $cases = [
+        200 => null,
+        100 => IcapProtocolException::class,
+        101 => IcapProtocolException::class,
+        204 => IcapProtocolException::class,
+        206 => IcapProtocolException::class,
+        302 => IcapProtocolException::class,
+        400 => IcapClientException::class,
+        503 => IcapServerException::class,
+        600 => IcapProtocolException::class,
+    ];
+
+    foreach ($cases as $status => $exception) {
+        $cached = new IcapResponse($status, ['Options-TTL' => ['60'], 'Preview' => ['4096']]);
+        /** @var OptionsCacheInterface&\Mockery\MockInterface $cache */
+        $cache = m::mock(OptionsCacheInterface::class);
+        /** @var \Mockery\Expectation $get */
+        $get = $cache->shouldReceive('get');
+        $get->andReturn($cached);
+        $cache->shouldNotReceive('set');
+        $transport = new ScriptedTransport();
+        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+        $thrown = null;
+        $returned = null;
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, &$thrown, &$returned) {
+            try {
+                $returned = $client->options('/avscan')->await();
+            } catch (Throwable $e) {
+                $thrown = $e;
+            }
+        });
+
+        expect($thrown === null ? null : $thrown::class)->toBe($exception, "status {$status}");
+        expect($returned)->toBe($exception === null ? $cached : null, "status {$status}");
+        // Served from the cache, or rejected from it: the server is not asked either way.
+        expect($transport->requests)->toBe([], "status {$status}");
+    }
+
+    m::close();
 });
 
 /**

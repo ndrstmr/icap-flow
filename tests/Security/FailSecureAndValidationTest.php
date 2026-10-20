@@ -35,8 +35,6 @@ use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
-use Ndrstmr\Icap\Transport\NullConnectionPool;
-use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
@@ -120,6 +118,64 @@ it('maps 5xx responses to IcapServerException with the real status code', functi
     m::close();
 });
 
+/**
+ * N02 — the answer to OPTIONS is a 200 (RFC 3507 §4.10.2). A 204 or 206
+ * belongs to the adaptation of a message, and a 1xx, 3xx or 6xx is no answer
+ * to OPTIONS at all: none of them tells the client what the service can do,
+ * so none may come back as a capability description. 4xx and 5xx keep their
+ * types.
+ */
+it('accepts only a 200 as the answer to OPTIONS and types every other status', function () {
+    // status => the exception options() raises, null when the response comes back as it is
+    $cases = [
+        200 => null,
+        100 => IcapProtocolException::class,
+        101 => IcapProtocolException::class,
+        199 => IcapProtocolException::class,
+        201 => IcapProtocolException::class,
+        204 => IcapProtocolException::class,
+        206 => IcapProtocolException::class,
+        299 => IcapProtocolException::class,
+        302 => IcapProtocolException::class,
+        399 => IcapProtocolException::class,
+        400 => IcapClientException::class,
+        404 => IcapClientException::class,
+        499 => IcapClientException::class,
+        500 => IcapServerException::class,
+        503 => IcapServerException::class,
+        599 => IcapServerException::class,
+        600 => IcapProtocolException::class,
+        999 => IcapProtocolException::class,
+    ];
+
+    foreach ($cases as $status => $exception) {
+        $canned = new IcapResponse($status, ['Options-TTL' => ['60'], 'Preview' => ['4096']]);
+        [, , , , $client] = failSecureClient($canned);
+
+        $thrown = null;
+        $returned = null;
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, &$thrown, &$returned) {
+            try {
+                $returned = $client->options('/svc')->await();
+            } catch (Throwable $e) {
+                $thrown = $e;
+            }
+        });
+
+        // The exact class: a subclass of IcapProtocolException would be another answer.
+        expect($thrown === null ? null : $thrown::class)->toBe($exception, "status {$status}");
+        if ($exception === null) {
+            expect($returned)->toBe($canned, "status {$status}");
+        } else {
+            expect($returned)->toBeNull("status {$status}")
+                ->and($thrown?->getCode())->toBe($status, "status {$status}");
+        }
+    }
+
+    m::close();
+});
+
 it('treats a 200 response with no virus header as clean', function () {
     [, , , , $client] = failSecureClient(new IcapResponse(200));
 
@@ -186,7 +242,7 @@ it('rejects whitespace in the service path', function () {
  * path or query, or add a fragment.
  */
 it('rejects service paths and hosts that would move the URI authority, path or query', function () {
-    [, $formatter, $transport, $parser, $client] = failSecureClient(new IcapResponse(200));
+    [, , , , $client] = failSecureClient(new IcapResponse(200));
 
     $services = [
         'no leading slash'      => '.evil.example/scan',
@@ -195,38 +251,23 @@ it('rejects service paths and hosts that would move the URI authority, path or q
         'broken percent escape' => '/scan%zz',
     ];
     // "/" or "?" in the host would turn the service into another path or
-    // into a query, in the ICAP URI and in the socket address alike.
+    // into a query, in the ICAP URI and in the socket address alike. Since N01
+    // no Config holds such a host, so neither address can be built from it.
     $hosts = [
         'host with a path'  => 'scanner.example/other',
         'host with a query' => 'scanner.example?query=',
     ];
-    $pool = new AmpConnectionPool();
-    $socketTransports = [
-        'sync'                      => new SynchronousStreamTransport(),
-        'async'                     => new AsyncAmpTransport(),
-        'async, NullConnectionPool' => new AsyncAmpTransport(new NullConnectionPool()),
-        'async, AmpConnectionPool'  => new AsyncAmpTransport($pool),
-    ];
 
-    try {
-        /** @var AsyncTestCase $this */
-        $this->runAsyncTest(function () use ($client, $services, $hosts, $socketTransports, $formatter, $transport, $parser) {
-            foreach ($services as $case => $service) {
-                expect(fn () => $client->options($service)->await())
-                    ->toThrow(InvalidArgumentException::class, '', $case);
-            }
-            foreach ($hosts as $case => $host) {
-                $config = new Config($host);
-                expect(fn () => (new IcapClient($config, $transport, $formatter, $parser))->options('/scan')->await())
-                    ->toThrow(InvalidArgumentException::class, '', $case);
-                foreach ($socketTransports as $name => $socketTransport) {
-                    expect(fn () => $socketTransport->request($config, [])->await())
-                        ->toThrow(InvalidArgumentException::class, '', "{$case}, {$name}");
-                }
-            }
-        });
-    } finally {
-        $pool->close();
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client, $services) {
+        foreach ($services as $case => $service) {
+            expect(fn () => $client->options($service)->await())
+                ->toThrow(InvalidArgumentException::class, '', $case);
+        }
+    });
+    foreach ($hosts as $case => $host) {
+        expect(fn () => new Config($host))
+            ->toThrow(InvalidArgumentException::class, '', $case);
     }
 
     m::close();

@@ -67,10 +67,10 @@ it('logs a request-started event with the ICAP method and no URI', function () {
     $done->once();
     $done->withArgs(function (string $msg, array $ctx) {
         return str_contains($msg, 'completed')
-            && ($ctx['statusCode'] ?? null) === 204;
+            && ($ctx['statusCode'] ?? null) === 200;
     });
 
-    [$client] = buildClientWithLogger($logger, new IcapResponse(204));
+    [$client] = buildClientWithLogger($logger, new IcapResponse(200));
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($client) {
