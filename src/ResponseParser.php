@@ -76,7 +76,8 @@ final class ResponseParser implements ResponseParserInterface
 
         $statusLine = array_shift($lines);
         if (!preg_match('/^ICAP\/1\.\d\s+(\d+)(?:\s+.*)?$/', (string) $statusLine, $m)) {
-            throw new IcapMalformedResponseException('Invalid status line: ' . (string) $statusLine);
+            // What the server sent stays out of the message: it would end up in logs and in handlers.
+            throw new IcapMalformedResponseException('Invalid status line in the ICAP response.');
         }
         $statusCode = (int) $m[1];
 

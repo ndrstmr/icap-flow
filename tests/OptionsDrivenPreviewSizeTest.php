@@ -19,7 +19,7 @@
 declare(strict_types=1);
 
 use Mockery as m;
-use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
+use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
@@ -46,12 +46,12 @@ uses(AsyncTestCase::class);
  * spy captures the IcapRequest so tests can inspect the Preview header.
  *
  * @param IcapRequest|null $capturedRequest receives the RESPMOD request via reference
- * @return array{IcapClient, InMemoryOptionsCache}
+ * @return array{IcapClient, OneResponseOptionsCache}
  */
-function makePreviewSizeClient(?IcapRequest &$capturedRequest, ?InMemoryOptionsCache $cache = null): array
+function makePreviewSizeClient(?IcapRequest &$capturedRequest, ?OneResponseOptionsCache $cache = null): array
 {
     $config = new Config('icap.example');
-    $cache ??= new InMemoryOptionsCache();
+    $cache ??= new OneResponseOptionsCache();
 
     /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
     $formatter = m::mock(RequestFormatterInterface::class);
@@ -137,7 +137,7 @@ it('uses the server-advertised Preview size from the OPTIONS cache when previewS
         'Preview'     => ['4096'],
         'Options-TTL' => ['3600'],
     ]);
-    $cache->set('icap.example:1344/avscan', $optionsResponse, 3600);
+    $cache->seed($optionsResponse);
 
     $tmp = makeTinyFile();
 
@@ -157,7 +157,7 @@ it('uses the server-advertised Preview size from the OPTIONS cache when previewS
 it('uses the advertised Preview size from a cached OPTIONS response in any spelling', function () {
     $captured = null;
     [$client, $cache] = makePreviewSizeClient($captured);
-    $cache->set('icap.example:1344/avscan', new IcapResponse(200, ['preview' => ['4096']]), 3600);
+    $cache->seed(new IcapResponse(200, ['preview' => ['4096']]));
 
     $tmp = makeTinyFile();
 
@@ -178,10 +178,10 @@ it('uses the advertised Preview size from a cached OPTIONS response in any spell
 it('rejects a cached OPTIONS response whose Preview fields conflict', function () {
     $captured = null;
     [$client, $cache] = makePreviewSizeClient($captured);
-    $cache->set('icap.example:1344/avscan', new IcapResponse(200, [
+    $cache->seed(new IcapResponse(200, [
         'Preview' => ['64'],
         'PREVIEW' => ['67108864'],
-    ]), 3600);
+    ]));
 
     $tmp = makeTinyFile();
 
@@ -226,7 +226,7 @@ it('falls back to 1024 when the cached OPTIONS response has no Preview header', 
     $optionsResponse = new IcapResponse(200, [
         'Options-TTL' => ['3600'],
     ]);
-    $cache->set('icap.example:1344/avscan', $optionsResponse, 3600);
+    $cache->seed($optionsResponse);
 
     $tmp = makeTinyFile();
 
@@ -306,7 +306,7 @@ it('honours an explicit previewSize even when the OPTIONS cache has a different 
         'Preview'     => ['4096'],
         'Options-TTL' => ['3600'],
     ]);
-    $cache->set('icap.example:1344/avscan', $optionsResponse, 3600);
+    $cache->seed($optionsResponse);
 
     $tmp = makeTinyFile();
 
@@ -403,7 +403,7 @@ it('clamps a cached Preview value to 1 MiB and keeps 0', function () {
     foreach ($cases as [$advertised, $expected]) {
         $captured = null;
         [$client, $cache] = makePreviewSizeClient($captured);
-        $cache->set('icap.example:1344/avscan', new IcapResponse(200, ['Preview' => [$advertised]]), 3600);
+        $cache->seed(new IcapResponse(200, ['Preview' => [$advertised]]));
         $tmp = makeTinyFile();
 
         try {
@@ -426,7 +426,7 @@ it('rejects a cached Preview value that is not a non-negative decimal', function
     foreach (['abc', '-1', '1.5', '0x10', '1e3', '', ' 5', '+5'] as $advertised) {
         $captured = null;
         [$client, $cache] = makePreviewSizeClient($captured);
-        $cache->set('icap.example:1344/avscan', new IcapResponse(200, ['Preview' => [$advertised]]), 3600);
+        $cache->seed(new IcapResponse(200, ['Preview' => [$advertised]]));
         $tmp = makeTinyFile();
 
         try {
@@ -478,7 +478,7 @@ $transport = new class implements Ndrstmr\Icap\Transport\TransportInterface {
 };
 
 $cache = new Ndrstmr\Icap\Cache\InMemoryOptionsCache();
-$cache->set('icap.example:1344/svc', new Ndrstmr\Icap\DTO\IcapResponse(200, ['Preview' => [getenv('ICAP_PREVIEW')]]), 3600);
+$cache->set(Ndrstmr\Icap\Cache\OptionsCacheKey::forService('icap.example', 1344, '/svc'), new Ndrstmr\Icap\DTO\IcapResponse(200, ['Preview' => [getenv('ICAP_PREVIEW')]]), 3600);
 
 $client = new Ndrstmr\Icap\IcapClient(
     new Ndrstmr\Icap\Config('icap.example'),
@@ -546,3 +546,37 @@ PHP;
     // The clamped size went out, and no allocation followed the advertised one.
     expect($stdout)->toBe('1048576');
 });
+
+/**
+ * An OPTIONS cache that holds one response and gives it for whatever key the
+ * client asks. These tests are about what the client does with a cached
+ * response; which key it asks with is tested in OptionsCacheTest and in the
+ * PSR adapter tests.
+ */
+final class OneResponseOptionsCache implements OptionsCacheInterface
+{
+    private ?IcapResponse $response = null;
+
+    public function seed(IcapResponse $response): void
+    {
+        $this->response = $response;
+    }
+
+    #[\Override]
+    public function get(string $key): ?IcapResponse
+    {
+        return $this->response;
+    }
+
+    #[\Override]
+    public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
+    {
+        $this->response = $response;
+    }
+
+    #[\Override]
+    public function delete(string $key): void
+    {
+        $this->response = null;
+    }
+}

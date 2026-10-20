@@ -25,10 +25,13 @@ use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedSource;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
@@ -155,7 +158,7 @@ it('isolates cache entries per service path', function () {
 
 it('honours the Options-TTL header when storing', function () {
     $response = new IcapResponse(200, ['Options-TTL' => ['7']]);
-    $cache = new InMemoryOptionsCache();
+    $cache = new RecordingOptionsCache();
 
     [$client] = makeOptionsClient($cache, $response);
 
@@ -164,7 +167,7 @@ it('honours the Options-TTL header when storing', function () {
         $client->options('/avscan')->await();
     });
 
-    $entry = $cache->get('icap.example:1344/avscan');
+    $entry = $cache->stored();
     expect($entry)->not->toBeNull()
         ->and($entry?->statusCode)->toBe(200);
 
@@ -180,7 +183,7 @@ it('reads Options-TTL and ISTag in any spelling when storing', function () {
     /** @var \Mockery\Expectation $set */
     $set = $cache->shouldReceive('set');
     $set->once();
-    $set->with('icap.example:1344/avscan', m::type(IcapResponse::class), 7, '"b01"');
+    $set->with(m::pattern('/^[0-9a-f]{64}\z/'), m::type(IcapResponse::class), 7, '"b01"');
 
     [$client] = makeOptionsClient($cache, (new ResponseParser())->parse(
         "ICAP/1.0 200 OK\r\noptions-ttl: 7\r\nistag: \"b01\"\r\nencapsulated: null-body=0\r\n\r\n",
@@ -196,7 +199,7 @@ it('reads Options-TTL and ISTag in any spelling when storing', function () {
 });
 
 it('rejects an OPTIONS response with conflicting ISTag fields instead of caching it', function () {
-    $cache = new InMemoryOptionsCache();
+    $cache = new RecordingOptionsCache();
     [$client] = makeOptionsClient($cache, new IcapResponse(200, [
         'ISTag'       => ['"old"'],
         'istag'       => ['"new"'],
@@ -209,7 +212,7 @@ it('rejects an OPTIONS response with conflicting ISTag fields instead of caching
             ->toThrow(IcapMalformedResponseException::class);
     });
 
-    expect($cache->get('icap.example:1344/avscan'))->toBeNull();
+    expect($cache->sets)->toBe([]);
 
     m::close();
 });
@@ -227,7 +230,7 @@ it('treats an expired cache entry as a miss', function () {
 
 it('does not cache when Options-TTL is zero', function () {
     $response = new IcapResponse(200, ['Options-TTL' => ['0']]);
-    $cache = new InMemoryOptionsCache();
+    $cache = new RecordingOptionsCache();
 
     [$client] = makeOptionsClient($cache, $response);
 
@@ -237,8 +240,7 @@ it('does not cache when Options-TTL is zero', function () {
     });
 
     // TTL=0 means the server does not want the response cached.
-    $entry = $cache->get('icap.example:1344/avscan');
-    expect($entry)->toBeNull();
+    expect($cache->stored())->toBeNull();
 
     m::close();
 });
@@ -278,3 +280,90 @@ it('is a no-op when no cache is configured', function () {
 
     m::close();
 });
+
+/*
+ * M12: options() stores the OPTIONS response of a service and the preview
+ * size lookup reads the advertised Preview from it, so both have to name the
+ * same entry, and only for that service on that endpoint. The key is a hash
+ * that holds nothing a PSR backend could refuse.
+ */
+it('uses one key for a service, in options() and in the preview size lookup', function () {
+    $cache = new RecordingOptionsCache();
+    $transport = new ScriptedTransport([
+        "ICAP/1.0 200 OK\r\nOptions-TTL: 60\r\nPreview: 4096\r\nEncapsulated: null-body=0\r\n\r\n",
+        "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n",
+        "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n",
+    ]);
+    $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+    try {
+        $path = ScriptedSource::add('preview', 'payload');
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $path) {
+            $client->options('/avscan')->await();
+            $client->scanFileWithPreview('/avscan', $path)->await();
+            $client->scanFileWithPreview('/other', $path)->await();
+        });
+    } finally {
+        ScriptedSource::reset();
+    }
+
+    // options() looked and stored, the lookup for the same service looked again and found it,
+    // the lookup for another service asked for another entry and found none.
+    expect($cache->gets)->toHaveCount(3);
+    expect($cache->sets)->toHaveCount(1);
+    expect($cache->gets[0])->toBe($cache->sets[0]);
+    expect($cache->gets[1])->toBe($cache->sets[0]);
+    expect($cache->gets[2])->not->toBe($cache->sets[0]);
+    expect(preg_match('/^[0-9a-f]{64}\z/', $cache->sets[0]))->toBe(1);
+    expect($transport->requests[1])->toContain("Preview: 4096\r\n");
+    expect($transport->requests[2])->toContain("Preview: 1024\r\n");
+});
+
+/**
+ * An OPTIONS cache that keeps its entries in memory and remembers the keys
+ * the client asked for and stored under.
+ */
+final class RecordingOptionsCache implements OptionsCacheInterface
+{
+    /** @var list<string> */
+    public array $gets = [];
+
+    /** @var list<string> */
+    public array $sets = [];
+
+    private InMemoryOptionsCache $inner;
+
+    public function __construct()
+    {
+        $this->inner = new InMemoryOptionsCache();
+    }
+
+    /** The response of the first set(), if the cache still holds it. */
+    public function stored(): ?IcapResponse
+    {
+        return $this->sets === [] ? null : $this->inner->get($this->sets[0]);
+    }
+
+    #[\Override]
+    public function get(string $key): ?IcapResponse
+    {
+        $this->gets[] = $key;
+
+        return $this->inner->get($key);
+    }
+
+    #[\Override]
+    public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
+    {
+        $this->sets[] = $key;
+        $this->inner->set($key, $response, $ttlSeconds, $istag);
+    }
+
+    #[\Override]
+    public function delete(string $key): void
+    {
+        $this->inner->delete($key);
+    }
+}

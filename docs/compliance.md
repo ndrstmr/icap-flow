@@ -18,7 +18,7 @@ security frameworks relevant for European public-sector deployments.
 | Malware scanning of uploaded content | Core purpose — `scanFile()` / `scanFileWithPreview()` via ICAP (RFC 3507) |
 | Support for multiple AV engines | `Config::withVirusFoundHeaders()` supports ClamAV, Symantec, Trend Micro, Sophos, McAfee, Kaspersky header conventions |
 | Fail-secure on unknown status codes | `IcapClient::interpretResponse()` throws typed exceptions for anything that is not a clear clean signal (204 / 200 without virus header) |
-| Logging of scan results | PSR-3 structured logging with `method`, `uri`, `host`, `port`, `statusCode`, `infected` context keys |
+| Logging of scan results | PSR-3 structured logging with `method`, `port`, `statusCode`, `infected` and `exception_class` context keys; no URI, host, exception message or server text |
 | Retry on transient failures | `RetryingIcapClient` decorator with exponential backoff on 5xx |
 
 ### APP.4.4 — Webanwendungen und Webservices (excerpt)

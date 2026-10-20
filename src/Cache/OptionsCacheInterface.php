@@ -32,6 +32,11 @@ use Ndrstmr\Icap\DTO\IcapResponse;
  *
  * Implementations MUST honour the TTL passed to {@see set()} and
  * return null from {@see get()} once the entry has expired.
+ *
+ * The client names an entry with a key of 64 hex digits derived from the
+ * endpoint and the service ({@see OptionsCacheKey::forService()}). Treat the
+ * key as opaque: it holds nothing a PSR-6 or PSR-16 backend, a file name or a
+ * Redis key space could refuse.
  */
 interface OptionsCacheInterface
 {

@@ -71,7 +71,8 @@ final class HeaderFields
 
             $colon = strpos($line, ':');
             if ($colon === false) {
-                throw new IcapMalformedResponseException('Malformed header line: ' . $line);
+                // What the server sent stays out of the message: it would end up in logs and in handlers.
+                throw new IcapMalformedResponseException('Malformed header line in the ICAP response: no colon.');
             }
             $name = trim(substr($line, 0, $colon));
             $value = trim(substr($line, $colon + 1));

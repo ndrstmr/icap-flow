@@ -23,6 +23,7 @@ namespace Ndrstmr\Icap;
 use Amp\Cancellation;
 use Amp\Future;
 use Ndrstmr\Icap\Cache\OptionsCacheInterface;
+use Ndrstmr\Icap\Cache\OptionsCacheKey;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
@@ -103,12 +104,7 @@ final class IcapClient implements IcapClientInterface
     {
         /** @var Future<ScanResult> $future */
         $future = \Amp\async(function () use ($request, $cancellation): ScanResult {
-            $context = [
-                'method' => $request->method,
-                'uri'    => $request->uri,
-                'host'   => $this->config->host,
-                'port'   => $this->config->port,
-            ];
+            $context = $this->logContext($request);
             $this->logger->info('ICAP request started', $context);
 
             $response = null;
@@ -116,11 +112,7 @@ final class IcapClient implements IcapClientInterface
                 $response = $this->executeRaw($request, $cancellation)->await();
                 $result = $this->interpretResponse($response, $this->config);
             } catch (\Throwable $e) {
-                $this->logger->warning('ICAP request failed', $context + [
-                    'statusCode' => $response?->statusCode,
-                    'exception'  => $e::class,
-                    'message'    => $e->getMessage(),
-                ]);
+                $this->logFailure($context, $response, $e);
                 throw $e;
             }
 
@@ -170,7 +162,7 @@ final class IcapClient implements IcapClientInterface
         // Validate first so injection attempts never reach the cache key.
         $uri = $this->buildServiceUri($service);
 
-        $cacheKey = $this->config->host . ':' . $this->config->port . $service;
+        $cacheKey = $this->optionsCacheKey($service);
 
         if ($this->optionsCache !== null) {
             $cached = $this->optionsCache->get($cacheKey);
@@ -183,12 +175,7 @@ final class IcapClient implements IcapClientInterface
         /** @var Future<IcapResponse> $future */
         $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): IcapResponse {
             $request = new IcapRequest('OPTIONS', $uri);
-            $context = [
-                'method' => $request->method,
-                'uri'    => $request->uri,
-                'host'   => $this->config->host,
-                'port'   => $this->config->port,
-            ];
+            $context = $this->logContext($request);
             $this->logger->info('ICAP request started', $context);
 
             $response = null;
@@ -196,11 +183,7 @@ final class IcapClient implements IcapClientInterface
                 $response = $this->executeRaw($request, $cancellation)->await();
                 $this->assertSuccessfulStatus($response->statusCode);
             } catch (\Throwable $e) {
-                $this->logger->warning('ICAP request failed', $context + [
-                    'statusCode' => $response?->statusCode,
-                    'exception'  => $e::class,
-                    'message'    => $e->getMessage(),
-                ]);
+                $this->logFailure($context, $response, $e);
                 throw $e;
             }
 
@@ -208,7 +191,7 @@ final class IcapClient implements IcapClientInterface
                 'statusCode' => $response->statusCode,
             ]);
 
-            // Cache the parsed IcapResponse, keyed by host:port + service.
+            // Cache the parsed IcapResponse, keyed by endpoint and service.
             // TTL is taken from the server's Options-TTL header
             // (RFC 3507 §4.10.2); fall back to 0 (no caching) when the
             // server didn't specify one.
@@ -579,8 +562,7 @@ final class IcapClient implements IcapClientInterface
         }
 
         if ($this->optionsCache !== null) {
-            $cacheKey = $this->config->host . ':' . $this->config->port . $service;
-            $cached = $this->optionsCache->get($cacheKey);
+            $cached = $this->optionsCache->get($this->optionsCacheKey($service));
             if ($cached !== null) {
                 $advertised = HeaderFields::single($cached->headers, 'Preview');
                 if ($advertised !== null) {
@@ -721,6 +703,47 @@ final class IcapClient implements IcapClientInterface
     private function buildServiceUri(string $service): string
     {
         return IcapUri::forService($this->config->host, $this->config->port, $service);
+    }
+
+    /**
+     * The key of the OPTIONS cache entry of a service. One place for
+     * options() and the preview size lookup, so both name the same entry (M12).
+     */
+    private function optionsCacheKey(string $service): string
+    {
+        return OptionsCacheKey::forService($this->config->host, $this->config->port, $service);
+    }
+
+    /**
+     * The only context the client logs (M16): the method as one of the three
+     * ICAP methods, or `other`, and the configured port. A URI, a host, a
+     * service or file path, header and body values and exception messages
+     * carry what callers and servers put in them, which a log must not keep.
+     *
+     * @return array{method: string, port: int}
+     */
+    private function logContext(IcapRequest $request): array
+    {
+        return [
+            'method' => in_array($request->method, ['OPTIONS', 'REQMOD', 'RESPMOD'], true) ? $request->method : 'other',
+            'port'   => $this->config->port,
+        ];
+    }
+
+    /**
+     * The failure event: the status code of the response if one came in, and
+     * the class of the exception, without a message, a trace or the exception
+     * itself. The class of an anonymous class names the file it was written in
+     * after a NUL byte; that part stays out as well.
+     *
+     * @param array{method: string, port: int} $context
+     */
+    private function logFailure(array $context, ?IcapResponse $response, \Throwable $e): void
+    {
+        $this->logger->warning('ICAP request failed', $context + [
+            'statusCode'      => $response?->statusCode,
+            'exception_class' => strstr($e::class, "\0", true) ?: $e::class,
+        ]);
     }
 
     /**

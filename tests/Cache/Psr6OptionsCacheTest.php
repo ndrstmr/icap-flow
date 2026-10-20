@@ -19,9 +19,18 @@
 declare(strict_types=1);
 
 use Ndrstmr\Icap\Cache\Psr6OptionsCache;
+use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\RequestFormatter;
+use Ndrstmr\Icap\ResponseParser;
+use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedSource;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Psr\Cache\CacheItemInterface;
 use Psr\Cache\CacheItemPoolInterface;
+
+uses(AsyncTestCase::class);
 
 it('delegates get to PSR-6 and reconstructs IcapResponse', function () {
     $pool = new ArrayCacheItemPool();
@@ -81,17 +90,138 @@ it('does not cache when TTL is zero or negative', function () {
     expect($cache->get('k'))->toBeNull();
 });
 
-it('uses key prefix to namespace entries in the backing pool', function () {
+/*
+ * M12: PSR-6 keys are A-Z a-z 0-9 _ . up to 64 characters, and {}()/\@: are
+ * reserved. The pool below enforces that on every call, so an adapter that
+ * hands a backend the caller's key, the prefix or a meta key unchanged fails.
+ */
+it('hands the pool only keys that follow the PSR-6 rules, whatever key the caller uses', function () {
+    $keys = [
+        'host, port and service'  => 'icap.example:1344/avscan',
+        'IPv6 literal with query' => '[2001:db8::1]:1344/avscan?profile=a/b',
+        'reserved characters'     => '{}()/\\@:',
+        'empty'                   => '',
+        'Unicode'                 => "d\u{e4}tenschutz \u{1F512}",
+        'longer than 64'          => str_repeat('k', 300),
+        'former meta name'        => '__icap_istag',
+    ];
+
+    foreach ($keys as $case => $key) {
+        $pool = new ArrayCacheItemPool();
+        $cache = new Psr6OptionsCache($pool, 'icap.');
+
+        $cache->set($key, new IcapResponse(200, ['Preview' => ['1024']], 'body'), 60, '"istag-1"');
+        expect($cache->get($key)?->statusCode)->toBe(200, $case);
+
+        $cache->delete($key);
+        expect($cache->get($key))->toBeNull($case);
+
+        // The entry, the ISTag and the list of tracked keys, each under a key of 64 hex digits.
+        expect(count($pool->seen))->toBe(3, $case);
+        foreach (array_keys($pool->seen) as $backendKey) {
+            expect(preg_match('/^[0-9a-f]{64}\z/', (string) $backendKey))->toBe(1, "$case: $backendKey");
+        }
+    }
+});
+
+it('keeps the entries of two prefixes apart even when prefix and key add up to the same text', function () {
     $pool = new ArrayCacheItemPool();
-    $cache = new Psr6OptionsCache($pool, 'myapp.');
+    $a = new Psr6OptionsCache($pool, 'a');
+    $ab = new Psr6OptionsCache($pool, 'ab');
 
-    $cache->set('svc', new IcapResponse(200), 60);
+    $a->set('bc', new IcapResponse(200), 60, '"v1"');
+    // 'a' + 'bc' is 'ab' + 'c'.
+    expect($ab->get('c'))->toBeNull();
 
-    expect($pool->hasItem('myapp.svc'))->toBeTrue();
-    expect($pool->hasItem('svc'))->toBeFalse();
+    $ab->set('c', new IcapResponse(204), 60, '"v1"');
+    expect($a->get('bc')?->statusCode)->toBe(200);
+    expect($ab->get('c')?->statusCode)->toBe(204);
+
+    // A new ISTag flushes the entries of its own prefix only.
+    $a->set('x', new IcapResponse(200), 60, '"v2"');
+    expect($a->get('bc'))->toBeNull();
+    expect($ab->get('c')?->statusCode)->toBe(204);
+
+    // The same prefix finds the same entries from another adapter.
+    expect((new Psr6OptionsCache($pool, 'ab'))->get('c')?->statusCode)->toBe(204);
+});
+
+it('does not let a caller key overwrite the ISTag or the list of tracked keys', function () {
+    foreach (['__icap_istag', '__icap_keys'] as $name) {
+        $cache = new Psr6OptionsCache(new ArrayCacheItemPool());
+
+        $cache->set('x', new IcapResponse(200), 60, '"v1"');
+        $cache->set($name, new IcapResponse(204), 60);
+        // The same ISTag again: nothing may be flushed.
+        $cache->set('y', new IcapResponse(200), 60, '"v1"');
+
+        expect($cache->get('x')?->statusCode)->toBe(200, $name);
+        expect($cache->get($name)?->statusCode)->toBe(204, $name);
+        expect($cache->get('y')?->statusCode)->toBe(200, $name);
+    }
+});
+
+it('does not read entries of the old key scheme and leaves them and foreign entries in the pool', function () {
+    $pool = new ArrayCacheItemPool();
+    $legacy = ['statusCode' => 200, 'headers' => ['Preview' => ['1']], 'body' => ''];
+    // What an earlier version stored with the prefix "icap.": the entry, its ISTag and the tracked keys.
+    foreach (['icap.svc' => $legacy, 'icap.__icap_istag' => '"old"', 'icap.__icap_keys' => ['svc'], 'app.session' => 'not ours'] as $key => $value) {
+        $pool->save($pool->getItem($key)->set($value));
+    }
+
+    $cache = new Psr6OptionsCache($pool, 'icap.');
+    expect($cache->get('svc'))->toBeNull();
+
+    // A different ISTag than the old one would flush the entries the adapter knows, and only those.
+    $cache->set('svc', new IcapResponse(204), 60, '"new"');
+    expect($cache->get('svc')?->statusCode)->toBe(204);
+
+    expect($pool->getItem('icap.svc')->get())->toBe($legacy);
+    expect($pool->getItem('icap.__icap_istag')->get())->toBe('"old"');
+    expect($pool->getItem('icap.__icap_keys')->get())->toBe(['svc']);
+    expect($pool->getItem('app.session')->get())->toBe('not ours');
+});
+
+it('stores an OPTIONS response and finds its preview size under one key of a strict pool', function () {
+    $hosts = ['icap.example', '2001:db8::1'];
+    $services = ['/avscan', '/avscan?profile=a/b:c'];
+    $options = "ICAP/1.0 200 OK\r\nOptions-TTL: 60\r\nPreview: 4096\r\nISTag: \"v1\"\r\nEncapsulated: null-body=0\r\n\r\n";
+    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+
+    try {
+        foreach ($hosts as $host) {
+            foreach ($services as $service) {
+                $transport = new ScriptedTransport([$options, $clean]);
+                $client = new IcapClient(
+                    new Config($host),
+                    $transport,
+                    new RequestFormatter(),
+                    new ResponseParser(),
+                    optionsCache: new Psr6OptionsCache(new ArrayCacheItemPool(), 'icap.'),
+                );
+                $path = ScriptedSource::add('preview', 'payload');
+
+                /** @var AsyncTestCase $this */
+                $this->runAsyncTest(function () use ($client, $service, $path) {
+                    $client->options($service)->await();
+                    $client->scanFileWithPreview($service, $path)->await();
+                });
+
+                // The preview size of the request is the one the stored OPTIONS response advertised.
+                expect(count($transport->requests))->toBe(2, "$host $service");
+                expect($transport->requests[1])->toContain("Preview: 4096\r\n");
+            }
+        }
+    } finally {
+        ScriptedSource::reset();
+    }
 });
 
 // --- In-memory PSR-6 implementation for testing ---
+
+final class CachePoolKeyException extends \InvalidArgumentException implements \Psr\Cache\InvalidArgumentException
+{
+}
 
 final class ArrayCacheItem implements CacheItemInterface
 {
@@ -157,6 +287,10 @@ final class ArrayCacheItem implements CacheItemInterface
     }
 }
 
+/**
+ * Like a strict production pool it refuses a key that PSR-6 does not
+ * guarantee: other than A-Z a-z 0-9 _ . or longer than 64 characters.
+ */
 final class ArrayCacheItemPool implements CacheItemPoolInterface
 {
     /** @var array<string, ArrayCacheItem> */
@@ -165,9 +299,23 @@ final class ArrayCacheItemPool implements CacheItemPoolInterface
     /** @var list<ArrayCacheItem> */
     private array $deferred = [];
 
+    /** @var array<string, true> every key a call carried; each of them passed the key check */
+    public array $seen = [];
+
+    private function valid(string $key): string
+    {
+        if (preg_match('/^[A-Za-z0-9_.]{1,64}\z/', $key) !== 1) {
+            throw new CachePoolKeyException('Not a valid PSR-6 key: ' . var_export(substr($key, 0, 80), true));
+        }
+        $this->seen[$key] = true;
+
+        return $key;
+    }
+
     #[\Override]
     public function getItem(string $key): CacheItemInterface
     {
+        $this->valid($key);
         if (isset($this->items[$key])) {
             return new ArrayCacheItem($key, $this->items[$key]->get(), true);
         }
@@ -190,7 +338,7 @@ final class ArrayCacheItemPool implements CacheItemPoolInterface
     #[\Override]
     public function hasItem(string $key): bool
     {
-        return isset($this->items[$key]);
+        return isset($this->items[$this->valid($key)]);
     }
 
     #[\Override]
@@ -204,7 +352,7 @@ final class ArrayCacheItemPool implements CacheItemPoolInterface
     #[\Override]
     public function deleteItem(string $key): bool
     {
-        unset($this->items[$key]);
+        unset($this->items[$this->valid($key)]);
         return true;
     }
 
@@ -212,7 +360,7 @@ final class ArrayCacheItemPool implements CacheItemPoolInterface
     public function deleteItems(array $keys): bool
     {
         foreach ($keys as $key) {
-            unset($this->items[$key]);
+            unset($this->items[$this->valid($key)]);
         }
         return true;
     }

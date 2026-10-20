@@ -85,6 +85,6 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 - **Wire:** RFC 3507 (ICAP), RFC 7230 §4.1 (Chunked Transfer), TLS 1.2/1.3 via `Amp\Socket\ClientTlsContext`. Wire-Tests rechnen Byte-Streams von Hand vor — keine Mock-Shortcuts.
 - **Tests:** Pest 3 (PHPUnit 11 darunter), Mockery (Intersection-Type-Hints `Foo&\Mockery\MockInterface`), `pestphp/pest --mutate`.
 - **Quality:** PHPStan 2 Level 9 + bleedingEdge, PHP-CS-Fixer 3 mit eigenem `@PSR12`-Setup + EUPL-Header, `composer audit` + `roave/security-advisories`.
-- **Logging:** PSR-3 (`Psr\Log\LoggerInterface`), strukturierte Log-Events mit `method`, `uri`, `host`, `port`, `statusCode`, `infected`.
+- **Logging:** PSR-3 (`Psr\Log\LoggerInterface`), strukturierte, datensparsame Log-Events mit `method`, `port`, `statusCode`, `infected`, `exception_class` — nie URI, Host, Exception-Message oder Server-/Headerzeilen.
 - **Vendoring:** c-icap, ClamAV (Referenz-Server), Symantec, Trend Micro, McAfee Web Gateway, Sophos, Kaspersky (Header-Liste in `Config::withVirusFoundHeaders()`).
 - **Lizenz:** EUPL-1.2 (OpenCoDE-kompatibel).

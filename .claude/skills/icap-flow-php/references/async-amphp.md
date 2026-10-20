@@ -35,7 +35,7 @@ public function options(string $service, ?Cancellation $cancellation = null): Fu
 
 Drei Regeln, die bei jeder neuen Async-Methode greifen:
 1. **Return-Type-Annotation `Future<X>` per PHPDoc**, da PHP keine generischen Native-Types kennt — PHPStan Level 9 mahnt sonst.
-2. **Logging-Sandwich**: `info` beim Start, `warning` im `catch`, `info` beim Erfolg. Keys `method`, `uri`, `host`, `port`, `statusCode`, `infected`. Vorbild: `IcapClient::request()` Z. 100-134.
+2. **Logging-Sandwich**: `info` beim Start, `warning` im `catch`, `info` beim Erfolg. Keys `method`, `port`, `statusCode`, `infected`, im Fehlerfall `exception_class`; nie URI, Host, Exception-Message oder Throwable. Vorbild: `IcapClient::request()` mit `logContext()` und `logFailure()`.
 3. **Try/Finally für Resource-Lifecycle** — Streams schließen, Sessions zurückgeben (`release()`) oder hart schließen (`close()`).
 
 ## Cancellation richtig durchreichen
