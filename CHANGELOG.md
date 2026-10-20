@@ -143,6 +143,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parts of a short write and the waits for a full buffer; a wait that is
   already running is not interrupted, so use `AsyncAmpTransport` where that
   matters. *(M09)*
+- OPTIONS cache keys follow PSR-6 and PSR-16 now. The client named an entry
+  `host:port/service`, and the adapters put the caller's prefix in front of
+  it and kept the ISTag and the list of tracked keys under `__icap_istag` and
+  `__icap_keys`. `:` and `/` are reserved in both PSRs and a longer prefix or
+  service passes the 64 characters a backend must accept, so a conforming
+  backend may refuse such a key, and with it the OPTIONS lookup and the
+  preview size lookup fail. A prefix and key that add up to the same text as
+  another pair, or a caller key that is a meta name, also met in one backend
+  entry. The client now names an entry by a hash of host, port and service,
+  the same key in `options()` and in the preview size lookup, and
+  `Psr6OptionsCache` and `Psr16OptionsCache` turn prefix, role (entry, ISTag,
+  tracked keys) and key into 64 hex digits, each part hashed with its length,
+  whatever key a caller passes. The prefix keeps adapters apart; it is no
+  longer put in front of the key. The new keys start a cold cache: entries
+  stored under the old keys are neither read nor deleted, so clean a shared
+  backend yourself if you want them gone. A custom `OptionsCacheInterface`
+  receives that hash as its key. The key holds no TLS or tenant identity.
+  *(M12)*
+- The client's log no longer carries what callers and servers put into a
+  request or a response. `request()` and `options()` logged the full `uri`
+  (query included), the `host` and the message of the exception of a failed
+  request, and the parsers' messages repeated the status line or header line
+  they refused, so tokens, user ids and server text reached central logs. The
+  three events and their messages stay (`info` started and completed,
+  `warning` failed); their context is now `method` (`OPTIONS`, `REQMOD`,
+  `RESPMOD`, `other` for any other method), `port`, `statusCode`, `infected`
+  and, for a failure, `exception_class` (was `exception`), never the message,
+  a trace or the exception itself, and only the class name of an anonymous
+  class. `ResponseParser` and the header check the transports run say that a
+  status line or header line was invalid instead of repeating it, with the same
+  `IcapMalformedResponseException`. Other exception messages (a connect error,
+  a file path) still reach the caller; the client just does not log them.
+  *(M16)*
 
 ## [3.0.0] - 2026-05-01
 

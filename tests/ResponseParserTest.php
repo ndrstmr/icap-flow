@@ -53,3 +53,48 @@ it('raises a malformed-response exception on an empty input', function () {
     $parser = new ResponseParser();
     expect(fn () => $parser->parse(''))->toThrow(IcapMalformedResponseException::class);
 });
+
+/*
+ * M16: a message that repeats what the server sent is a way to the logs and
+ * to every handler downstream. The exception says what was wrong with the
+ * response, not what it contained: whatever the server sent, the message is
+ * the same.
+ */
+it('keeps the received status line out of the exception message', function () {
+    $messages = [
+        malformedParserMessage("HTTP/1.1 200 SECRET-STATUS-5c1e\r\n\r\n"),
+        malformedParserMessage("ICAP/1.0 SECRET-STATUS-5c1e\r\n\r\n"),
+        malformedParserMessage("SECRET-STATUS-5c1e\r\n\r\n"),
+        malformedParserMessage("another line, of another length\r\n\r\n"),
+    ];
+
+    expect(count(array_unique($messages)))->toBe(1);
+    expect($messages[0])->toContain('status line');
+    expect(str_contains($messages[0], 'SECRET'))->toBe(false);
+});
+
+it('keeps a received header line out of the exception message', function () {
+    $messages = [
+        malformedParserMessage("ICAP/1.0 200 OK\r\nX-Note: fine\r\nSECRET-HEADER-5c1e without a colon\r\n\r\n"),
+        malformedParserMessage("ICAP/1.0 200 OK\r\nSECRET-HEADER-5c1e\r\n\r\n"),
+        malformedParserMessage("ICAP/1.0 200 OK\r\nanother line, of another length\r\n\r\n"),
+    ];
+
+    expect(count(array_unique($messages)))->toBe(1);
+    expect($messages[0])->toContain('header line');
+    expect(str_contains($messages[0], 'SECRET'))->toBe(false);
+});
+
+/**
+ * The message of the IcapMalformedResponseException the parser raises for a response.
+ */
+function malformedParserMessage(string $raw): string
+{
+    try {
+        (new ResponseParser())->parse($raw);
+    } catch (IcapMalformedResponseException $e) {
+        return $e->getMessage();
+    }
+
+    throw new LogicException('The parser accepted a response that is malformed.');
+}

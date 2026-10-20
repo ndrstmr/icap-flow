@@ -221,6 +221,33 @@ it('rejects conflicting Encapsulated fields instead of framing by the first one'
 });
 
 /**
+ * M16: the transport reads the head before the parser does, so a header line
+ * without a colon is rejected here first; the message must not repeat it, and
+ * is the same whatever the line was.
+ */
+it('keeps a received header line out of the exception message', function () {
+    $message = static function (string $head): string {
+        $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+        try {
+            $reader->readFrom(makeChunkProducer(["ICAP/1.0 200 OK\r\n$head\r\nEncapsulated: null-body=0\r\n\r\n"]));
+        } catch (IcapMalformedResponseException $e) {
+            return $e->getMessage();
+        }
+
+        throw new LogicException('The reader accepted a head that is malformed.');
+    };
+
+    $messages = [
+        $message('SECRET-HEADER-5c1e without a colon'),
+        $message('SECRET-HEADER-5c1e'),
+        $message('another line, of another length'),
+    ];
+
+    expect(count(array_unique($messages)))->toBe(1);
+    expect(str_contains($messages[0], 'SECRET'))->toBe(false);
+});
+
+/**
  * @param list<string> $chunks
  * @return Closure(): ?string
  */
