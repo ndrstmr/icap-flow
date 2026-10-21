@@ -138,9 +138,8 @@ final class IcapClient implements IcapClientInterface
      * so exposing it as part of the public surface would let callers
      * silently turn unexpected statuses (e.g. a stray `100` outside the
      * preview flow) into a `clean` verdict. External callers must use
-     * {@see request()} or one of the `scanFile*()` methods instead.
-     * Subclasses that need raw access (e.g. for vendor-specific extensions)
-     * can still override or invoke this method.
+     * {@see request()} or one of the `scanFile*()` methods instead. The class
+     * is final: there is no outside access to this method.
      *
      * @return Future<IcapResponse>
      */
@@ -167,7 +166,7 @@ final class IcapClient implements IcapClientInterface
         if ($this->optionsCache !== null) {
             $cached = $this->optionsCache->get($cacheKey);
             if ($cached !== null) {
-                $this->assertSuccessfulStatus($cached->statusCode);
+                $this->assertOptionsStatus($cached->statusCode);
                 return Future::complete($cached);
             }
         }
@@ -181,7 +180,7 @@ final class IcapClient implements IcapClientInterface
             $response = null;
             try {
                 $response = $this->executeRaw($request, $cancellation)->await();
-                $this->assertSuccessfulStatus($response->statusCode);
+                $this->assertOptionsStatus($response->statusCode);
             } catch (\Throwable $e) {
                 $this->logFailure($context, $response, $e);
                 throw $e;
@@ -788,10 +787,32 @@ final class IcapClient implements IcapClientInterface
     }
 
     /**
+     * The status of an OPTIONS answer, fresh or from the cache: only a 200
+     * (RFC 3507 §4.10.2) describes the service. 100, 4xx and 5xx keep their
+     * types from {@see assertSuccessfulStatus()}; every other status is a
+     * protocol error: a 204 or 206 belongs to the adaptation of a message, and
+     * a 1xx, 3xx or 6xx is no answer to OPTIONS at all. What is rejected here
+     * is neither returned nor cached. Scans keep their own rules in
+     * {@see interpretResponse()}.
+     *
+     * @throws IcapProtocolException When the status is not 200 and not a 4xx or 5xx
+     * @throws IcapClientException   When the status is in the 4xx range
+     * @throws IcapServerException   When the status is in the 5xx range
+     */
+    private function assertOptionsStatus(int $code): void
+    {
+        $this->assertSuccessfulStatus($code);
+
+        if ($code !== 200) {
+            throw new IcapProtocolException('Unexpected ICAP status for OPTIONS: ' . $code, $code);
+        }
+    }
+
+    /**
      * Apply the fail-secure verdict for status codes that do not signal a
      * successful exchange. Used by {@see interpretResponse()} for scans and
-     * directly by {@see options()}, which returns the raw {@see IcapResponse}
-     * on success but must still treat 4xx/5xx/100 as exceptions.
+     * by {@see assertOptionsStatus()} for OPTIONS, which adds its own rule on
+     * top.
      *
      * @throws IcapProtocolException When the response is `100 Continue`
      *         outside the preview flow

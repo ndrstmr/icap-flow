@@ -176,6 +176,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IcapMalformedResponseException`. Other exception messages (a connect error,
   a file path) still reach the caller; the client just does not log them.
   *(M16)*
+- `Config` checks its values where it is built, and everything that builds one
+  goes through that check. Before, only `withLimits()` and an empty
+  `withVirusFoundHeaders([])` checked anything: the constructor took a host
+  with a path or a space, a port of 0 or 70000, a negative, `NAN` or infinite
+  timeout, a limit of 0 and a virus header that is not a header name, and the
+  error came with the first request. `withVirusFoundHeaders()` read index 0 of
+  its argument before looking at it, so names with string keys gave an
+  "Undefined array key" warning and a `TypeError`. The constructor now raises
+  an `\InvalidArgumentException` that names the setting, also when it is
+  reached through a wither or `IcapClient::forServer()`: the host must be a
+  host name or an IP address by the rules of the ICAP and socket URIs (nothing
+  is resolved), the port 1 to 65535, `socketTimeout` finite and above 0,
+  `streamTimeout` finite and 0 or more, each limit 1 or more, and
+  `virusFoundHeaders` a non-empty list of header names, kept in the order
+  given. A `streamTimeout` of 0 stays valid; it gives up at once and never
+  waits without limit. *(N01)*
+- `options()` accepts a 200 and nothing else, for the response of the server
+  and for one from the cache. A 204, 206, a 1xx other than 100, a 2xx other
+  than 200, a 3xx or a 6xx came back as the capability description, and its
+  `Options-TTL` and `ISTag` were cached. They now raise
+  `IcapProtocolException` (`100` as before); 4xx stays `IcapClientException`
+  and 5xx `IcapServerException`. A rejected response is not cached, and a
+  cached entry that would be rejected is raised instead of returned. Scans
+  keep their own status rules. *(N02)*
+
+### Changed
+- `composer.json` declares the runtime packages the library uses itself.
+  `amphp/amp` (`async`, `Future`, `Cancellation`) and `amphp/byte-stream`
+  (`ClosedException`) were only there through `amphp/socket`. The minimum
+  versions are the first that run without deprecation notices on PHP 8.4 and
+  8.5, measured with the lowest installable runtime packages: `amphp/amp`
+  3.1.1, `revolt/event-loop` 1.0.8 and `amphp/socket` 2.3.1 (3.0.0, 1.0.0 and
+  2.3.0 gave notices), and `amphp/dns` 2.1.2, a floor for what `amphp/socket`
+  pulls in, whose own constraint still allows 2.0.x. `amphp/byte-stream` 2.0.0
+  is clean. `composer.lock` keeps every package and version; only its hash
+  changes. *(N07)*
+- The documentation no longer promises subclass access to
+  `IcapClient::executeRaw()`: the class has been `final` since 2.0.0, so
+  `protected` leaves the method without access from outside. The 3.0.0 notes,
+  the README, the migration guide and the docblock say so, and the example
+  in `AmpConnectionPool::tuneFromOptions()` uses the `IcapResponse` that
+  `options()` returns. *(N06)*
 
 ## [3.0.0] - 2026-05-01
 
@@ -205,8 +247,8 @@ the upgrade is a no-op other than bumping the constraint to `^3.0`.
   preview flow, where `100 Continue` is a legitimate intermediate response.
   Exposing it as part of the public surface let callers bypass the fail-secure
   status-code interpretation in `interpretResponse()`. External callers must use
-  `request()`, `scanFile()`, `scanFileWithPreview()` or `options()` instead;
-  subclasses that need raw access can still invoke or override the method.
+  `request()`, `scanFile()`, `scanFileWithPreview()` or `options()` instead.
+  `IcapClient` is `final`, so no subclass has access either.
   *(v3-V — Quelle: Claude, Codex)*
 - **BREAKING (v3.0.0):** `IcapClient::options()` and
   `SynchronousIcapClient::options()` now return `Future<IcapResponse>` /

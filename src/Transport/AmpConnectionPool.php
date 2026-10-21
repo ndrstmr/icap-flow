@@ -175,10 +175,10 @@ final class AmpConnectionPool implements ConnectionPoolInterface
      *
      * Typical usage after an OPTIONS round-trip:
      *
-     *     $result = $client->options('/avscan')->await();
-     *     $pool->tuneFromOptions($result->originalResponse);
+     *     $response = $client->options('/avscan')->await();
+     *     $pool->tuneFromOptions($response);
      *
-     * @see \Ndrstmr\Icap\DTO\ScanResult::$originalResponse
+     * @see IcapResponse
      *
      * @throws IcapMalformedResponseException When the response carries
      *         conflicting `Max-Connections` fields

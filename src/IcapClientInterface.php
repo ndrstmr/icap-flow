@@ -55,9 +55,10 @@ interface IcapClientInterface
      * Issue an OPTIONS request against the given service. Returns the raw
      * {@see IcapResponse} on success so callers can inspect capability
      * headers (`Preview`, `Options-TTL`, `Methods`, `Allow`, `Service`,
-     * `ISTag`, …) directly. The fail-secure status-code interpretation
-     * still applies — 4xx throws {@see IcapClientException}, 5xx throws
-     * {@see IcapServerException}, `100 Continue` throws
+     * `ISTag`, …) directly. Only a `200` is an answer to OPTIONS, whether it
+     * comes from the server or from the cache: 4xx throws
+     * {@see IcapClientException}, 5xx throws {@see IcapServerException}, and
+     * every other status, including `100 Continue`, `204` and `206`, throws
      * {@see IcapProtocolException}.
      *
      * @return Future<IcapResponse>

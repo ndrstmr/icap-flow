@@ -78,7 +78,7 @@ it('options() forwards a user-supplied Cancellation to the transport', function 
 
     /** @var \Mockery\Expectation $p */
     $p = $parser->shouldReceive('parse');
-    $p->andReturn(new IcapResponse(204));
+    $p->andReturn(new IcapResponse(200));
 
     $client = new IcapClient($config, $transport, $formatter, $parser);
 

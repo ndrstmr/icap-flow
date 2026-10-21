@@ -2,7 +2,7 @@
 
 `v3.0.0` is a deliberately small breaking release. It carries no new features and no architectural rework — it is a cleanup release whose sole purpose is to remove three known-stale corners of the v2 API so the surface can be frozen for the upcoming Symfony bundle (`ndrstmr/icap-flow-bundle`).
 
-If you are on `^2.2` and not subclassing `IcapClient`, not catching `IcapResponseException` directly, and not consuming `options()` as a `ScanResult`, **the upgrade is a no-op other than bumping the constraint to `^3.0`**.
+If you are on `^2.2`, not catching `IcapResponseException` directly, and not consuming `options()` as a `ScanResult`, **the upgrade is a no-op other than bumping the constraint to `^3.0`**.
 
 The three BC-breaks below resolve the v3-V, v3-W and v3-F items from the consolidated v2.1 task list (`docs/review/review_v2-1/consolidated_v2.1_task-list.md`).
 
@@ -34,7 +34,7 @@ The three BC-breaks below resolve the v3-V, v3-W and v3-F items from the consoli
 -$client->executeRaw($req)->await();
 +$client->request($req)->await();
 +// or scanFile() / scanFileWithPreview() / options()
-+// — executeRaw() is now protected and only callable from a subclass
++// — executeRaw() is now protected, and IcapClient is final: it is not callable from outside
 ```
 
 ---
@@ -75,17 +75,7 @@ For the high-level operations, use the dedicated methods:
 +$client->options('/avscan')->await();
 ```
 
-If you genuinely need raw access (vendor-specific extensions, custom preview strategies), subclass `IcapClient` — `protected` lets you keep calling or overriding the method:
-
-```php
-final class MyVendorClient extends IcapClient
-{
-    public function customScan(IcapRequest $req): IcapResponse
-    {
-        return $this->executeRaw($req)->await();
-    }
-}
-```
+`IcapClient` is `final` (it has been since v2.0), so `executeRaw()` cannot be reached from a subclass either. If you need different behaviour (vendor-specific extensions, a custom preview strategy), pass your own `TransportInterface`, `RequestFormatterInterface`, `ResponseParserInterface` or `PreviewStrategyInterface` to the constructor, or wrap the client behind `IcapClientInterface` the way `RetryingIcapClient` does.
 
 ---
 
