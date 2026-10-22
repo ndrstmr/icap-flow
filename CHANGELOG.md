@@ -201,6 +201,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cached entry that would be rejected is raised instead of returned. Scans
   keep their own status rules. *(N02)*
 
+- A response now ends where its own layout says, in the transports and in
+  `ResponseParser` alike. The framing looked for `\r\n0\r\n\r\n` and took the
+  first one for the end of the message: a chunk payload that contains it (any
+  binary data may), or a whole forged ICAP response inside a payload, cut the
+  response short, and the rest of the real one, forged part included, stayed
+  on the socket and was read as the answer to the next request. `null-body=N`
+  (N bytes of encapsulated headers follow) and `opt-body` were taken for "no
+  body", and bytes read past the end of a message were thrown away. One
+  decoder (`ResponseDecoder`) now frames and parses: the `Encapsulated` layout
+  gives the length of the header section, the body is read as chunks (hex size,
+  exactly that many bytes, CRLF, last chunk, trailer), and terminators or
+  responses inside a chunk are data. Bytes read behind the end of a response
+  stay with the session: `AmpTransportSession` refuses to write on top of them
+  and does not give the socket back to the pool, and `ResponseParser::parse()`
+  refuses a string with bytes behind its response. A one-shot `request()`
+  closes its socket after the response, as before. *(B02)*
+- Responses that are not legal are refused, not read as clean. The old parser
+  took `-1`, `ZZ`, `10000000000000000` and `ffffffffffffffff` as chunk sizes for
+  an empty body, raised a `ValueError` for `8000000000000000`, skipped the two
+  bytes behind a chunk without looking at them and accepted a missing last
+  chunk. Now an `IcapMalformedResponseException`, without a partial result, a
+  PHP warning or a `ValueError`, follows as soon as the bytes arrive for: a
+  chunk size that is not hex digits or does not fit the size limit (checked
+  digit by digit before any cast or multiplication, offsets of the
+  `Encapsulated` header likewise), bad chunk extensions, a missing CRLF behind
+  the data, an invalid trailer, an `Encapsulated` header with a negative,
+  repeated, unknown or misordered entry or a layout that is not a response form
+  of RFC 3507 §4.4.1 (`req-hdr` together with `res-hdr` is the form of a RESPMOD
+  request), a header section that does not end where the layout says, a
+  start line of the wrong kind, a bare CR or LF, and the end of the stream
+  inside the response. A final response without `Encapsulated` (a 200 or 206,
+  an OPTIONS answer too) is refused instead of read as a clean scan with a
+  plain body; a 100, a 204 and a 4xx/5xx may still leave the header out. A 100
+  and a 204 carry no message, so their layout, if given, is `null-body=0`: a
+  204 with a `res-body` came back as a clean scan with the bytes of that body,
+  and a 100 with one made the strict preview send the rest of the file. Header
+  fields are checked as they arrive, before whitespace is trimmed or a fold is
+  joined, in the head and in encapsulated header sections: the name must be a
+  token and the value free of control characters (`: v`, `X Bad: v`,
+  `X-Virus-\x01Name: EICAR` and `X-A: v\x01` were read as a clean scan). The
+  limits for the number and length of header lines now also apply to
+  encapsulated header sections, chunk lines and trailers. *(B03, F-4-3)*
+- The framing no longer searches the whole buffer again for every fragment of
+  a response. It kept no state, so a response that came in many small
+  fragments cost about the square of its size (64-byte fragments: 3.6 ms for
+  100 kB, 12 ms for 200 kB, 44 ms for 400 kB, 177 ms for 800 kB). The decoder
+  keeps its place and looks at each byte a constant number of times, whatever
+  the fragmentation: 3.4 µs per KiB at every size. *(M03)*
+
 ### Changed
 - `composer.json` declares the runtime packages the library uses itself.
   `amphp/amp` (`async`, `Future`, `Cancellation`) and `amphp/byte-stream`

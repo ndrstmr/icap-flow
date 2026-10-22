@@ -171,9 +171,7 @@ return match (true) {
 
 ## Encapsulated-Aware Response-Framing
 
-`ResponseFrameReader` erkennt das Ende einer Response anhand des `Encapsulated`-Headers, **nicht** anhand `Connection: close`. Damit funktioniert Keep-Alive auch gegen Server, die den Socket weiter offen halten.
-
-**v2.2-Item (#21):** obs-fold (RFC 7230 — Header über mehrere Zeilen mit Whitespace-Continuation) wird im Encapsulated-Header derzeit nicht beachtet. Wer den Frame-Reader anfasst, sollte auch das mitnehmen.
+`ResponseFrameReader` (Transporte) und `ResponseParser` lesen mit demselben internen `ResponseDecoder`: Das Ende einer Response ergibt sich aus ihrem `Encapsulated`-Layout (eine der Antwortformen aus RFC 3507 §4.4.1, Headersegmente exakt so lang wie angegeben, Body als Chunks bis Abschlusschunk und Trailer), **nicht** aus `Connection: close` und nicht aus einer Suche nach `0\r\n\r\n`. Damit funktioniert Keep-Alive auch gegen Server, die den Socket weiter offen halten, und Bytes im Payload bleiben Nutzbytes. obs-fold im `Encapsulated`-Header wird über `HeaderFields::parse()` aufgelöst. Finale Antworten brauchen `Encapsulated`; nur 100, 204 und 4xx/5xx dürfen ohne enden, und 100/204 tragen keine Nachricht (Layout höchstens `null-body=0`). Headerzeilen werden vor trim/Unfold geprüft (Name ein Token, Wert ohne Steuerzeichen). Bytes hinter einer Antwort gehören der Session: Schreiben darauf wirft, `release()` schließt statt zu poolen.
 
 ## Stale-Claims, die zu fixen sind (v2.1.1)
 

@@ -55,10 +55,15 @@ interface TransportSession
     public function write(iterable $chunks): void;
 
     /**
-     * Read one fully-framed ICAP response from the socket. The
-     * underlying {@see ResponseFrameReader} stops as soon as the
-     * message is complete, leaving any trailing bytes in the kernel
-     * buffer for the next call. Window, cancellation and failure behave as
+     * Read one fully-framed ICAP response from the socket. The response ends
+     * where its layout says ({@see ResponseFrameReader}); one that is illegal,
+     * or that the stream cuts off, throws
+     * {@see \Ndrstmr\Icap\Exception\IcapMalformedResponseException} and ends
+     * the session. A read can bring in more than the response: what lies behind
+     * its end stays with the session and is the start of what the next call
+     * returns. No request waits for such bytes, so a {@see write()} on top of
+     * them throws and closes the session, and {@see release()} closes the
+     * socket instead of pooling it. Window, cancellation and failure behave as
      * for {@see write()}.
      */
     public function readResponse(): string;
@@ -67,7 +72,8 @@ interface TransportSession
      * Return the socket to the underlying pool when one is configured;
      * otherwise close it. Call it only after the whole exchange has been
      * validated (frame, status, verdict, no `Connection: close`): a
-     * released socket is out of reach of {@see close()}. Idempotent in
+     * released socket is out of reach of {@see close()}. A socket that holds
+     * bytes behind the last response is closed instead. Idempotent in
      * the sense that further calls are no-ops.
      */
     public function release(): void;

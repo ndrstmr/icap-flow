@@ -91,10 +91,10 @@ final class AsyncAmpTransport implements SessionAwareTransport
                 return $session->readResponse();
             } finally {
                 // The caller gets a string no one has validated yet: a
-                // 100 Continue, an error status or bytes the framing
-                // reader dropped are indistinguishable from a clean
-                // answer here. Reuse needs a validated exchange, which
-                // only a session offers.
+                // 100 Continue, an error status or a response with bytes
+                // behind it are indistinguishable from a clean answer
+                // here. Reuse needs a validated exchange, which only a
+                // session offers.
                 $session->close();
             }
         });
