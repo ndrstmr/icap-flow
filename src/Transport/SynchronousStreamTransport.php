@@ -117,6 +117,7 @@ final class SynchronousStreamTransport implements TransportInterface
             $reader = new ResponseFrameReader(
                 maxResponseSize: $config->getMaxResponseSize(),
                 maxHeaderLineLength: $config->getMaxHeaderLineLength(),
+                maxHeaderCount: $config->getMaxHeaderCount(),
             );
             $response = $reader->readFrom(
                 static fn (): ?string => self::readChunk($stream, $cancellation, $timeout),

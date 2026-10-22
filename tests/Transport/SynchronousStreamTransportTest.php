@@ -578,6 +578,54 @@ it('sends every chunk once and in order, returns a complete frame and closes its
     }
 });
 
+/*
+ * B02 / B03 — the synchronous transport frames a response with the rules of the asynchronous one
+ * (one decoder for both): a terminator or a forged response inside a chunk payload is payload, bytes
+ * behind the response are not part of it, and a response that is illegal is refused, not returned.
+ */
+it('frames a response by its layout and refuses an illegal one', function () {
+    $payload = "prefix\r\n0\r\n\r\n" . SYNC_FRAME . 'suffix';
+    $head = "HTTP/1.1 200 OK\r\nContent-Length: " . strlen($payload) . "\r\n\r\n";
+    $wire = "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=" . strlen($head) . "\r\n\r\n" . $head
+        . dechex(strlen($payload)) . "\r\n" . $payload . "\r\n0\r\n\r\n";
+    $cut = strpos($wire, 'prefix') + strlen("prefix\r\n0\r\n\r\n");
+    $bad = str_replace(dechex(strlen($payload)) . "\r\n", "ZZ\r\n", $wire);
+
+    // label => [what the server sends, with a pause between the parts, the frame expected, the exception expected]
+    $cases = [
+        'terminator and forged response in the payload' => [[substr($wire, 0, $cut), substr($wire, $cut)], $wire, null],
+        'bytes behind the response'                      => [[SYNC_FRAME . SYNC_FRAME], SYNC_FRAME, null],
+        'chunk size that is no number'                   => [[$bad], null, IcapMalformedResponseException::class],
+        'final 200 without Encapsulated'                 => [["ICAP/1.0 200 OK\r\nISTag: \"x\"\r\n\r\n"], null, IcapMalformedResponseException::class],
+    ];
+
+    foreach ($cases as $case => [$parts, $frame, $error]) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 5.0, [SYNC_REQUEST]);
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            foreach ($parts as $i => $part) {
+                if ($i > 0) {
+                    usleep(100_000);
+                }
+                fwrite($peer, $part);
+            }
+
+            $outcome = $child->outcome();
+
+            expect($outcome['response'] ?? null)->toBe($frame, $case);
+            expect($outcome['error'] ?? null)->toBe($error, $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
 it('ends a write that fails with a connection error and asks for no further chunk', function () {
     [$server, $port] = syncListen();
     $child = SyncChild::start($port, 5.0, ['first', 'second', ['await' => true], str_repeat('x', 2 * 1024 * 1024), 'never sent']);

@@ -25,6 +25,7 @@ use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapClientException;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\IcapClient;
@@ -33,6 +34,7 @@ use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
@@ -199,6 +201,89 @@ it('treats a 200 response carrying a virus header as infected', function () {
         expect($res->isInfected())->toBeTrue()
             ->and($res->getVirusName())->toBe('Eicar-Test-Signature');
     });
+
+    m::close();
+});
+
+/**
+ * F-4-3 — a final answer without its Encapsulated header was read as a body-less message: a 200
+ * without it came back as a clean scan, and with a virus header as an infected one. The
+ * header says where the message ends, so without it there is no answer to trust. The same holds
+ * for the answer to OPTIONS, which must not be cached either.
+ */
+it('does not take a final 200 without an Encapsulated header for an answer', function () {
+    $replies = [
+        'clean 200'              => "ICAP/1.0 200 OK\r\nISTag: \"x\"\r\n\r\n",
+        '200 with a virus header' => "ICAP/1.0 200 OK\r\nX-Virus-Name: EICAR\r\n\r\n",
+        '200 with a plain body'  => "ICAP/1.0 200 OK\r\n\r\nplain body bytes",
+        '206'                    => "ICAP/1.0 206 Partial Content\r\n\r\n",
+    ];
+
+    foreach ($replies as $case => $reply) {
+        $client = new IcapClient(new Config('icap.example'), new ScriptedTransport([$reply, $reply]), new RequestFormatter(), new ResponseParser());
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $case) {
+            expect(fn () => $client->request(new IcapRequest('RESPMOD', 'icap://icap.example/svc'))->await())
+                ->toThrow(IcapMalformedResponseException::class, '', "request(), {$case}");
+            expect(fn () => $client->options('/svc')->await())
+                ->toThrow(IcapMalformedResponseException::class, '', "options(), {$case}");
+        });
+    }
+
+    m::close();
+});
+
+/**
+ * AP10-R01 — a header field whose name is no token, or whose value holds a control character, is no
+ * field of an answer. It came back as a clean scan, and a mangled virus header as no virus.
+ */
+it('does not take a response with an invalid header field for an answer', function () {
+    $http = "HTTP/1.1 200 OK\r\nX-A\x01: v\r\n\r\n";
+    $replies = [
+        'virus header with a control byte in its name' => "ICAP/1.0 204 No Content\r\nX-Virus-\x01Name: EICAR\r\n\r\n",
+        'virus header with a control byte in its value' => "ICAP/1.0 200 OK\r\nX-Virus-Name: EICAR\x01\r\nEncapsulated: null-body=0\r\n\r\n",
+        'name with a space'      => "ICAP/1.0 204 No Content\r\nX Bad: value\r\n\r\n",
+        'empty name'             => "ICAP/1.0 204 No Content\r\n: value\r\n\r\n",
+        'value with a control byte' => "ICAP/1.0 204 No Content\r\nX-A: v\x01\r\n\r\n",
+        'continuation without a field' => "ICAP/1.0 204 No Content\r\n X-A: value\r\n\r\n",
+        'invalid field of the encapsulated headers' => "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, null-body=" . strlen($http) . "\r\n\r\n" . $http,
+    ];
+
+    foreach ($replies as $case => $reply) {
+        $client = new IcapClient(new Config('icap.example'), new ScriptedTransport([$reply]), new RequestFormatter(), new ResponseParser());
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $case) {
+            expect(fn () => $client->request(new IcapRequest('RESPMOD', 'icap://icap.example/svc'))->await())
+                ->toThrow(IcapMalformedResponseException::class, '', $case);
+        });
+    }
+
+    m::close();
+});
+
+/**
+ * AP10-R02 — a 204 is the answer "no change" and a 100 "send the rest": neither carries a message.
+ * A 204 with a body came back as a clean scan with the bytes of that body.
+ */
+it('does not take a 204 or 100 that carries a message for an answer', function () {
+    $body = "3\r\nabc\r\n0\r\n\r\n";
+    $replies = [
+        '204 with a res-body'  => "ICAP/1.0 204 No Content\r\nEncapsulated: res-body=0\r\n\r\n" . $body,
+        '204 with an opt-body' => "ICAP/1.0 204 No Content\r\nEncapsulated: opt-body=0\r\n\r\n" . $body,
+        '100 with a res-body'  => "ICAP/1.0 100 Continue\r\nEncapsulated: res-body=0\r\n\r\n" . $body,
+    ];
+
+    foreach ($replies as $case => $reply) {
+        $client = new IcapClient(new Config('icap.example'), new ScriptedTransport([$reply]), new RequestFormatter(), new ResponseParser());
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $case) {
+            expect(fn () => $client->request(new IcapRequest('RESPMOD', 'icap://icap.example/svc'))->await())
+                ->toThrow(IcapMalformedResponseException::class, '', $case);
+        });
+    }
 
     m::close();
 });

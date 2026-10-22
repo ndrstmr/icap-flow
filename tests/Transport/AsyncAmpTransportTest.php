@@ -25,6 +25,7 @@ use Amp\TimeoutCancellation;
 use Mockery as m;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AmpTransportSession;
@@ -1162,5 +1163,168 @@ it('closes a socket that the connector hands back after the caller gave up or th
             $peer->close();
             $pool->close();
         }
+    }
+});
+
+/*
+ * B02 / B03 — the session owns the bytes it has read. A response ends where its layout says,
+ * not where a socket read happens to end, and what lies behind it is the session's to keep or
+ * to refuse: it is never dropped, and never the answer of the next request.
+ */
+
+it('frames a response whose payload holds a terminator and a forged response, whatever the reads', function () {
+    $forged = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+    $payload = "prefix\r\n0\r\n\r\n" . $forged . 'suffix';
+    $head = "HTTP/1.1 200 OK\r\nContent-Length: " . strlen($payload) . "\r\n\r\n";
+    $wire = "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=" . strlen($head) . "\r\n\r\n" . $head
+        . dechex(strlen($payload)) . "\r\n" . $payload . "\r\n0\r\n\r\n";
+    // The first part ends right behind the terminator in the payload.
+    $cut = strpos($wire, 'prefix') + strlen("prefix\r\n0\r\n\r\n");
+    $fx = pairedSession(5.0);
+
+    try {
+        $writer = async(function () use ($fx, $wire, $cut): void {
+            $fx['peer']->write(substr($wire, 0, $cut));
+            delay(0.05);
+            $fx['peer']->write(substr($wire, $cut));
+        });
+
+        expect($fx['session']->readResponse())->toBe($wire);
+        $writer->await();
+
+        // Nothing is left over, so the socket goes back to the pool and comes out of it again.
+        $fx['session']->release();
+        $fx['pool']->acquire(new Config('icap.example'));
+        expect($fx['opened']())->toBe(1);
+    } finally {
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('keeps the bytes that came in with a response and hands them to the next read', function () {
+    $first = "ICAP/1.0 100 Continue\r\n\r\n";
+    $second = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+    $fx = pairedSession(0.5);
+
+    try {
+        // One write holds a response, a whole second one and the start of a third.
+        $fx['peer']->write($first . $second . 'ICAP/1.');
+
+        expect($fx['session']->readResponse())->toBe($first);
+        expect($fx['session']->readResponse())->toBe($second);
+
+        // The third is not complete and the peer says nothing more: that is a timeout, not a response.
+        expect(thrownBy(fn () => $fx['session']->readResponse()))->toBeInstanceOf(IcapTimeoutException::class);
+        expect($fx['client']->isClosed())->toBeTrue();
+    } finally {
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('refuses to write on and closes the session when bytes no request waits for are buffered', function () {
+    $reply = "ICAP/1.0 100 Continue\r\n\r\n";
+    $fx = pairedSession(2.0);
+
+    try {
+        $fx['peer']->write($reply . "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+        expect($fx['session']->readResponse())->toBe($reply);
+
+        // The server has answered ahead of the request it would answer; the continuation is not sent.
+        $thrown = thrownBy(fn () => $fx['session']->write(["5\r\nhello\r\n0\r\n\r\n"]));
+        $clientClosed = $fx['client']->isClosed();
+        [$bytes] = drain($fx['peer']);
+
+        expect($thrown)->toBeInstanceOf(IcapMalformedResponseException::class);
+        expect($clientClosed)->toBeTrue();
+        expect($bytes)->toBe('');
+    } finally {
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('does not give a socket back to the pool while it holds bytes that were not read as a response', function () {
+    $reply = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+    $fx = pairedSession(2.0);
+
+    try {
+        $fx['peer']->write($reply . "surplus");
+        expect($fx['session']->readResponse())->toBe($reply);
+
+        $fx['session']->release();
+        $closed = $fx['client']->isClosed();
+        $fx['pool']->acquire(new Config('icap.example'))->close();
+
+        // Closed, not just missing from the pool; the pool has to connect anew.
+        expect($closed)->toBeTrue();
+        expect($fx['opened']())->toBe(2);
+    } finally {
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('fails a response that is illegal or that the stream cuts off, and closes the session', function () {
+    $head = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+    $wire = "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=" . strlen($head) . "\r\n\r\n" . $head . "5\r\nhello\r\n0\r\n\r\n";
+    // label => [what the peer sends, whether it then hangs up]
+    $cases = [
+        'chunk size that is no number'  => [str_replace("5\r\nhello", "ZZ\r\nhello", $wire), false],
+        'chunk size that overflows'     => [str_replace("5\r\nhello", "ffffffffffffffff\r\nhello", $wire), false],
+        'no CRLF behind the chunk data' => [str_replace("hello\r\n0", "helloXX0", $wire), false],
+        'final 200 without Encapsulated' => ["ICAP/1.0 200 OK\r\nISTag: \"x\"\r\n\r\n", false],
+        'cut off in the head'           => [substr($wire, 0, 20), true],
+        'cut off in the header section' => [explode('Content-Length', $wire, 2)[0], true],
+        'cut off in the body'           => [explode('hello', $wire, 2)[0] . 'he', true],
+        'cut off before the trailer'    => [substr($wire, 0, -2), true],
+    ];
+
+    foreach ($cases as $case => [$sent, $hangUp]) {
+        $fx = pairedSession(2.0);
+
+        try {
+            $fx['peer']->write($sent);
+            if ($hangUp) {
+                $fx['peer']->close();
+            }
+
+            $thrown = thrownBy(fn () => $fx['session']->readResponse());
+            $clientClosed = $fx['client']->isClosed();
+            $fx['session']->release();
+            $fx['pool']->acquire(new Config('icap.example'))->close();
+
+            expect($thrown)->toBeInstanceOf(IcapMalformedResponseException::class, $case);
+            expect($clientClosed)->toBeTrue($case);
+            expect($fx['opened']())->toBe(2, $case);
+        } finally {
+            $fx['client']->close();
+            $fx['peer']->close();
+            $fx['pool']->close();
+        }
+    }
+});
+
+it('holds a response to the header limits of the configuration', function () {
+    [$peer, $client] = Socket\createSocketPair();
+    $pool = new AmpConnectionPool(connector: fn () => $client);
+    $config = (new Config('icap.example', streamTimeout: 2.0))->withLimits(maxHeaderCount: 2);
+    $session = (new AsyncAmpTransport($pool))->openSession($config);
+
+    try {
+        // Three header lines where the configuration allows two.
+        $peer->write("ICAP/1.0 204 No Content\r\nX-A: 1\r\nX-B: 2\r\nEncapsulated: null-body=0\r\n\r\n");
+
+        expect(thrownBy(fn () => $session->readResponse()))->toBeInstanceOf(IcapMalformedResponseException::class);
+        expect($client->isClosed())->toBeTrue();
+    } finally {
+        $client->close();
+        $peer->close();
+        $pool->close();
     }
 });

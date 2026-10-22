@@ -26,6 +26,7 @@ use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Revolt\EventLoop;
 
@@ -58,26 +59,44 @@ use Revolt\EventLoop;
  * window and that end wherever the producer hands control back: with every
  * chunk (an empty one too), after every write and before it returns. A
  * producer that never hands control back cannot be interrupted from outside.
+ *
+ * The session owns the bytes it has read. A read may bring more than one response
+ * needs; what lies behind the end of a response stays in the session's reader and is
+ * never dropped and never taken for something else. Only another {@see readResponse()}
+ * uses it. A request cannot be written on top of it, and a socket that holds it is
+ * not given back to the pool: no request is waiting for those bytes, so they are not
+ * an answer to the next one.
  */
 final class AmpTransportSession implements TransportSession
 {
     private bool $disposed = false;
+
+    private readonly ResponseFrameReader $reader;
 
     public function __construct(
         private readonly Config $config,
         private readonly SocketInterface $socket,
         private readonly float $streamTimeout,
         private readonly ?Cancellation $userCancellation,
-        private readonly int $maxResponseSize,
-        private readonly int $maxHeaderLineLength,
+        int $maxResponseSize,
+        int $maxHeaderLineLength,
         private readonly ?ConnectionPoolInterface $pool,
     ) {
+        $this->reader = new ResponseFrameReader(
+            maxResponseSize: $maxResponseSize,
+            maxHeaderLineLength: $maxHeaderLineLength,
+            maxHeaderCount: $config->getMaxHeaderCount(),
+        );
     }
 
     #[\Override]
     public function write(iterable $chunks): void
     {
         $this->assertActive();
+        if ($this->reader->hasPendingBytes()) {
+            $this->close();
+            throw new IcapMalformedResponseException('The server sent bytes that no request was waiting for.');
+        }
 
         $this->inWindow('Writing the request', function (Cancellation $window, \Closure $checkpoint) use ($chunks): void {
             // Socket::write() takes no cancellation: against a peer that does not read it
@@ -111,10 +130,7 @@ final class AmpTransportSession implements TransportSession
     public function readResponse(): string
     {
         $this->assertActive();
-        $reader = new ResponseFrameReader(
-            maxResponseSize: $this->maxResponseSize,
-            maxHeaderLineLength: $this->maxHeaderLineLength,
-        );
+        $reader = $this->reader;
         $socket = $this->socket;
 
         return $this->inWindow(
@@ -214,7 +230,8 @@ final class AmpTransportSession implements TransportSession
         }
         $this->disposed = true;
 
-        if ($this->pool !== null) {
+        // Bytes nobody asked for are on this socket: the next user would read them as its answer.
+        if ($this->pool !== null && !$this->reader->hasPendingBytes()) {
             $this->pool->release($this->config, $this->socket);
             return;
         }

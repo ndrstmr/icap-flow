@@ -47,8 +47,16 @@ final class HeaderFields
      * (joined with a single space). c-icap uses this folding form for the
      * multi-line `X-Violations-Found` header defined in RFC 3507 §6.4.
      *
+     * Every line is checked as it arrived, before whitespace is trimmed or a
+     * fold is joined: the name is a token (so no space before the colon and
+     * no field that starts blank) and the value and every continuation pass
+     * {@see isText()}. Trimming first would turn `v\0` or ` : v` into a
+     * valid-looking field.
+     *
      * @param  list<string>            $lines
      * @return array<string, string[]>
+     *
+     * @throws IcapMalformedResponseException When a line is not a header field
      */
     public static function parse(array $lines): array
     {
@@ -64,19 +72,29 @@ final class HeaderFields
             // Continuation line — append to the previous header's last
             // value with a single SP, the canonical "unfolded" form.
             if ($lastName !== null && ($line[0] === " " || $line[0] === "\t")) {
+                if (!self::isText($line)) {
+                    throw new IcapMalformedResponseException('Malformed header line in the ICAP response: a control character in the value.');
+                }
                 $lastIdx = count($headers[$lastName]) - 1;
-                $headers[$lastName][$lastIdx] .= ' ' . trim($line);
+                $headers[$lastName][$lastIdx] .= ' ' . trim($line, " \t");
                 continue;
             }
 
+            // A line that starts blank, with no field before it, is no field: its name is no token.
             $colon = strpos($line, ':');
             if ($colon === false) {
-                // What the server sent stays out of the message: it would end up in logs and in handlers.
+                // What the server sent stays out of the messages: they would end up in logs and in handlers.
                 throw new IcapMalformedResponseException('Malformed header line in the ICAP response: no colon.');
             }
-            $name = trim(substr($line, 0, $colon));
-            $value = trim(substr($line, $colon + 1));
-            $headers[$name][] = $value;
+            $name = substr($line, 0, $colon);
+            $value = substr($line, $colon + 1);
+            if (!self::isToken($name)) {
+                throw new IcapMalformedResponseException('Malformed header line in the ICAP response: the name is no token.');
+            }
+            if (!self::isText($value)) {
+                throw new IcapMalformedResponseException('Malformed header line in the ICAP response: a control character in the value.');
+            }
+            $headers[$name][] = trim($value, " \t");
             $lastName = $name;
         }
 
