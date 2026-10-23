@@ -100,7 +100,7 @@ konfiguriert. Neue Vendor-Header **immer** in die Liste, **nicht** als Sonderfal
 
 ## Connection-Pool — Pool-Key
 
-`AmpConnectionPool::key()` bildet `host:port` und, mit TLS, `:tls:<token>`. Das Token ist eine pro Pool vergebene, nur wachsende Nummer je `ClientTlsContext`-Objekt (`\WeakMap<ClientTlsContext, int>`), die nie ein zweites Mal ausgegeben wird:
+`AmpConnectionPool::bucketOf()` bildet `host:port` und, mit TLS, `:tls:<token>` (der Endpoint für die Caps ist `host:port` ohne Token, `endpointOf()`). Das Token ist eine pro Pool vergebene, nur wachsende Nummer je `ClientTlsContext`-Objekt (`\WeakMap<ClientTlsContext, int>`), die nie ein zweites Mal ausgegeben wird:
 
 ```php
 $key .= ':tls:' . ($this->tlsTokens[$tls] ??= ++$this->lastTlsToken);

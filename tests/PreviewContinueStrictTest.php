@@ -706,3 +706,132 @@ it('refuses a 100 or 204 that carries a message, sends no continuation and close
         }
     }
 });
+
+/*
+ * M05 / G2 — a socket the pool keeps has no one reading it. Bytes that arrive on it after the response
+ * (a second answer, a late duplicate) used to be handed to the next scan as its answer, and a socket the
+ * server had closed was handed out too. The pool looks at the socket when it hands it out again.
+ */
+it('answers the second scan with its own response when bytes arrived on the socket the pool kept', function () {
+    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+    $blocked = "HTTP/1.1 403 Blocked\r\nContent-Length: 0\r\n\r\n";
+    $infected = "ICAP/1.0 200 OK\r\nX-Virus-Name: EICAR\r\nEncapsulated: res-hdr=0, res-body=" . strlen($blocked) . "\r\n\r\n" . $blocked . "0\r\n\r\n";
+
+    [$serverOne, $clientOne] = Socket\createSocketPair();
+    [$serverTwo, $clientTwo] = Socket\createSocketPair();
+    $sockets = [$clientOne, $clientTwo];
+    $connections = 0;
+    $pool = new AmpConnectionPool(
+        connector: function () use (&$sockets, &$connections) {
+            $connections++;
+
+            return array_shift($sockets) ?? throw new LogicException('The test has no further socket.');
+        },
+    );
+    $client = new IcapClient(new Config('icap.example', streamTimeout: 1.0), new AsyncAmpTransport($pool), new RequestFormatter(), new ResponseParser());
+    $tmp = tempnam(sys_get_temp_dir(), 'icap');
+    file_put_contents($tmp, 'abc');
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp, $serverOne, $serverTwo, $clean, $infected) {
+            $answer = static function (Socket\Socket $end, string $reply): \Amp\Future {
+                return \Amp\async(static function () use ($end, $reply): void {
+                    $buf = '';
+                    while (!str_ends_with($buf, "ieof\r\n\r\n")) {
+                        $chunk = $end->read();
+                        if ($chunk === null) {
+                            return;
+                        }
+                        $buf .= $chunk;
+                    }
+                    $end->write($reply);
+                });
+            };
+            $first = $answer($serverOne, $clean);
+            $second = $answer($serverTwo, $infected);
+
+            $one = $client->scanFileWithPreview('/svc', $tmp, 4)->await();
+            $first->await();
+
+            // The socket is back in the pool. The server sends a clean verdict for a request nobody made.
+            $serverOne->write($clean);
+            \Amp\delay(0.01);
+
+            $two = $client->scanFileWithPreview('/svc', $tmp, 4)->await();
+
+            expect($one->isInfected())->toBeFalse();
+            expect($two->isInfected())->toBeTrue();
+            $second->await();
+        });
+
+        expect($clientOne->isClosed())->toBeTrue();
+        expect($connections)->toBe(2);
+    } finally {
+        @unlink($tmp);
+        foreach ([$clientOne, $clientTwo, $serverOne, $serverTwo] as $end) {
+            $end->close();
+        }
+        $pool->close();
+    }
+});
+
+it('sends the next scan to a new connection when the server has closed the one the pool kept', function () {
+    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+
+    [$serverOne, $clientOne] = Socket\createSocketPair();
+    [$serverTwo, $clientTwo] = Socket\createSocketPair();
+    $sockets = [$clientOne, $clientTwo];
+    $connections = 0;
+    $pool = new AmpConnectionPool(
+        connector: function () use (&$sockets, &$connections) {
+            $connections++;
+
+            return array_shift($sockets) ?? throw new LogicException('The test has no further socket.');
+        },
+    );
+    $client = new IcapClient(new Config('icap.example', streamTimeout: 1.0), new AsyncAmpTransport($pool), new RequestFormatter(), new ResponseParser());
+    $tmp = tempnam(sys_get_temp_dir(), 'icap');
+    file_put_contents($tmp, 'abc');
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp, $serverOne, $serverTwo, $clean) {
+            $answer = static function (Socket\Socket $end, bool $thenClose) use ($clean): \Amp\Future {
+                return \Amp\async(static function () use ($end, $thenClose, $clean): void {
+                    $buf = '';
+                    while (!str_ends_with($buf, "ieof\r\n\r\n")) {
+                        $chunk = $end->read();
+                        if ($chunk === null) {
+                            return;
+                        }
+                        $buf .= $chunk;
+                    }
+                    $end->write($clean);
+                    if ($thenClose) {
+                        $end->close(); // a server that drops an idle connection
+                    }
+                });
+            };
+            $first = $answer($serverOne, true);
+            $second = $answer($serverTwo, false);
+
+            expect($client->scanFileWithPreview('/svc', $tmp, 4)->await()->isInfected())->toBeFalse();
+            $first->await();
+            \Amp\delay(0.01);
+
+            // The second scan neither fails on the dead connection nor is sent into it.
+            expect($client->scanFileWithPreview('/svc', $tmp, 4)->await()->isInfected())->toBeFalse();
+            $second->await();
+        });
+
+        expect($clientOne->isClosed())->toBeTrue();
+        expect($connections)->toBe(2);
+    } finally {
+        @unlink($tmp);
+        foreach ([$clientOne, $clientTwo, $serverOne, $serverTwo] as $end) {
+            $end->close();
+        }
+        $pool->close();
+    }
+});

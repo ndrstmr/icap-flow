@@ -249,6 +249,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   100 kB, 12 ms for 200 kB, 44 ms for 400 kB, 177 ms for 800 kB). The decoder
   keeps its place and looks at each byte a constant number of times, whatever
   the fragmentation: 3.4 µs per KiB at every size. *(M03)*
+- `AmpConnectionPool` limits connections, not only idle sockets. `maxConnectionsPerHost`
+  capped the idle sockets of a host when one came back, and every `acquire()`
+  without an idle socket opened another connection: a limit of 1 let twelve
+  through, so an upload spike could use up local file descriptors and the
+  connections or licences of the scanner. Connections being set up, in use and
+  idle now count against `maxConnectionsPerHost` (per host and port, whatever
+  the TLS context, so contexts do not add up to more) and against the new
+  `maxConnections` (the whole pool, default the same number). Room is reserved
+  before the connector is asked, and a failed or cancelled connect, a socket
+  its holder closes without giving it back, a socket that was collected and one
+  whose peer hung up and which its holder read to the end (the pool closes it
+  whole, as amphp tells it only about the reading end) give it back once. A
+  full pool fails with `IcapConnectionException`, so a pool with the default
+  of 8 now refuses the ninth concurrent scan. An optional queue (`maxWaiters`,
+  `waitTimeout`) lets calls wait first come, first served, each for a finite
+  time (`IcapTimeoutException`) that ends at its deadline on the monotonic
+  clock, also when something held up the event loop and the timer has not run:
+  such a call is served nothing, and what it was granted just before goes
+  back. The caller's cancellation ends a wait as `CancelledException`, a call
+  cancelled beforehand asks neither the idle sockets nor the connector, and a
+  connection a connector hands over after the caller gave up or the pool was
+  closed is closed. Only an idle socket gives way for a new connection, the
+  oldest first, never one in use. Without a pool the application still limits
+  its own concurrency. *(M04)*
+- Idle sockets of the pool age out completely and are looked at before they
+  are handed out again. Only the entries an `acquire()` popped were checked: a
+  young socket on top hid old ones below it, other hosts and TLS contexts were
+  never visited, emptied buckets stayed, and the clock was the wall clock.
+  Now every acquire, and an unreferenced timer that runs only while something
+  is idle and goes with `close()` and with the pool, close what has been idle
+  longer than `maxIdleSeconds` in every bucket, on a monotonic clock, and
+  drop empty buckets. Before the pool hands out an idle
+  socket it reads it once, with a cancellation that is already requested, so
+  nothing keeps watching the socket afterwards: a socket whose server closed
+  its end, or that received bytes after the response (the next scan used to
+  take them for its own answer), is closed and the call connects anew. That
+  is no liveness guarantee: a request on a socket that died a moment later
+  fails as before, and neither the pool nor the transports repeat it. *(M05)*
+- The pool takes back only what it lent out. A socket given back twice while
+  it is idle is pooled once (a second release after it was handed out again
+  cannot be told from its new holder's; a session guards against that), one
+  it never issued is closed, and one given back for another host, port or TLS
+  context than it was lent for is closed instead of landing in that bucket.
+  After `close()` idle sockets are closed, waiting calls fail
+  with `IcapConnectionException`, a connect still in the making is closed
+  when it ends, and sockets in use stay with their holders and are closed
+  when they come back. `tuneFromOptions()` reads `Max-Connections` as a
+  positive decimal number of at most nine digits (anything else is an
+  `IcapMalformedResponseException`; `(int)` had read `2.5` and `2abc` as 2 and
+  `1e3` as 1000) and takes an optional `Config` to apply it to that
+  endpoint; without it the number lowers every endpoint of the pool. A cap
+  that falls below what is in use stops new connections, lets running scans
+  finish and closes what comes back beyond it, and idle sockets above it at
+  once; a cap that rises again serves the calls that wait. The pool keeps the
+  number of at most 256 endpoints and refuses a further one with an
+  `IcapConnectionException` instead of forgetting it; `close()` empties them.
+  *(M06, second stage)*
 
 ### Changed
 - `composer.json` declares the runtime packages the library uses itself.

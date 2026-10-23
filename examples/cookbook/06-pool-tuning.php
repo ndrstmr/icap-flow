@@ -13,18 +13,22 @@ use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 
 /*
- * Connection-pool tuning — configure idle socket eviction, per-host
- * connection caps, and server-side Max-Connections awareness.
+ * Connection-pool tuning — configure the connection limits, idle socket
+ * eviction and server-side Max-Connections awareness.
  *
  * Important for long-running workers (RoadRunner, Swoole, ReactPHP)
- * that keep connections alive across requests. Without tuning, idle
- * sockets accumulate; with it, the pool automatically evicts stale
- * entries and respects the server's connection budget.
+ * that keep connections alive across requests. The pool counts the
+ * connections being set up, in use and idle against its limits, closes
+ * stale idle sockets by itself and respects the server's connection
+ * budget. A call that finds the pool full fails with an
+ * IcapConnectionException, unless a queue is configured.
  */
 
 $pool = new AmpConnectionPool(
-    maxConnectionsPerHost: 8,     // local idle-socket cap (per host:port:tls)
-    maxIdleSeconds: 30.0,         // evict sockets idle longer than 30 s
+    maxConnectionsPerHost: 8,     // most connections to one host:port, in use and idle together
+    maxIdleSeconds: 30.0,         // close sockets idle longer than 30 s
+    // maxWaiters: 16,            // optional queue: up to 16 calls wait ...
+    // waitTimeout: 5.0,          // ... for at most 5 s each, first come, first served
 );
 
 // Optional: inform the pool about the server's Max-Connections header.
@@ -46,12 +50,13 @@ $client = new IcapClient(
     $options = $client->options('/avscan')->await();
     $headers = $options->headers;
 
-    // Tune the pool to respect the server's advertised limit.
-    $pool->tuneFromOptions($options);
+    // Tune the pool to respect the server's advertised limit. The config says
+    // which endpoint the limit belongs to; without it the pool lowers every endpoint.
+    $pool->tuneFromOptions($options, $config);
 
     echo 'Max-Connections: ' . ($headers['Max-Connections'][0] ?? 'not advertised') . PHP_EOL;
 
-    // Now scan — the pool will reuse sockets, evict stale ones,
+    // Now scan — the pool will reuse sockets, close stale ones,
     // and cap at min(localCap, serverMax).
     $result = $client->scanFile('/avscan', __DIR__ . '/../eicar.com')->await();
 

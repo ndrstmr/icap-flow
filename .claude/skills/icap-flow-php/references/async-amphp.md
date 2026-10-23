@@ -170,7 +170,7 @@ if ($tls !== null) {
 return Socket\connect($url, $context, $cancellation);
 ```
 
-**Pool-Key:** `AmpConnectionPool::key()` hängt ein vom Pool vergebenes, nie wiederverwendetes Token je `ClientTlsContext`-Objekt an (`\WeakMap`, B07). Gleiche Objekte teilen Sockets, verschiedene nie — auch nicht, nachdem das Original freigegeben wurde.
+**Pool-Key:** `AmpConnectionPool::bucketOf()` hängt ein vom Pool vergebenes, nie wiederverwendetes Token je `ClientTlsContext`-Objekt an (`\WeakMap`, B07). Gleiche Objekte teilen Sockets, verschiedene nie — auch nicht, nachdem das Original freigegeben wurde.
 
 ## Connection-Pool
 
@@ -187,9 +187,9 @@ final class AmpConnectionPool implements ConnectionPoolInterface
 ```
 
 Verhalten heute:
-- LIFO pro Key (warmer Socket zuerst).
-- `acquire()` verwirft offline-Sockets und macht ggf. einen frischen.
-- `release()` schließt den Socket, wenn die Per-Host-Cap erreicht ist.
+- LIFO pro Bucket (warmer Socket zuerst).
+- `acquire()` reserviert vor dem Connect Platz (Endpoint-Cap `maxConnectionsPerHost` und Gesamtcap `maxConnections` über verbindende, aktive und idle Sockets) und wirft `IcapConnectionException`, wenn der Pool voll ist und keine Queue (`maxWaiters`, `waitTimeout`) konfiguriert ist. Einen Idle-Socket liest es vor der Ausgabe einmal (Bytes oder EOF schließen ihn).
+- `release()` nimmt nur verliehene Sockets zurück und nur für ihren Bucket; Fremdsockets, ein anderer Endpoint/TLS-Kontext und ein Socket über einem gesenkten Cap werden geschlossen. Ein zweites Release im Idle-Zustand ändert nichts (ein Eintrag, eine Ausgabe); ein spätes nach erneuter Ausgabe ist ohne Lease-Token nicht vom Release des neuen Halters zu unterscheiden (die Session schützt sich mit `disposed`).
 
 v2.2-Erweiterungen, die auf der Roadmap stehen:
 - TLS-Fingerprint im Key (Hotfix in v2.1.1)
