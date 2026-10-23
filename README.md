@@ -140,7 +140,9 @@ $client = new IcapClient(
 
 ### Connection pool
 
-For long-running workers (RoadRunner, Swoole, ReactPHP) the async transport can reuse sockets via a connection pool. A socket goes back to the pool only after a validated exchange, which today is the strict preview flow of `scanFileWithPreview()`; every other request closes its socket, with a pool as well:
+For long-running workers (RoadRunner, Swoole, ReactPHP) the async transport can reuse sockets via a connection pool. A socket goes back to the pool only after a validated exchange, which today is the strict preview flow of `scanFileWithPreview()`; every other request closes its socket, with a pool as well.
+
+The pool also limits connections: the ones being set up, in use and idle all count against `maxConnectionsPerHost` (per host and port, whatever the TLS context) and `maxConnections` (the whole pool, default the same number). A call that finds the pool full fails with `IcapConnectionException`, unless you configure a queue (`maxWaiters` and `waitTimeout`); only an idle socket gives way for a new connection, never one in use. Without a pool the application limits its own concurrency. Use one pool per security domain; a new TLS context (or a new pool, with the old one closed) is how a certificate rotation takes effect.
 
 ```php
 use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
@@ -148,8 +150,10 @@ use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 
 $pool = new AmpConnectionPool(
-    maxConnectionsPerHost: 8,    // idle-socket cap per host:port:tls
-    maxIdleSeconds: 30.0,        // evict sockets idle longer than 30 s
+    maxConnectionsPerHost: 8,    // connections to one host:port, in use and idle together
+    maxIdleSeconds: 30.0,        // close sockets idle longer than 30 s
+    // maxConnections: 16,       // the whole pool (default: maxConnectionsPerHost)
+    // maxWaiters: 32, waitTimeout: 5.0, // let up to 32 calls wait, 5 s each, instead of failing
 );
 
 $transport = new AsyncAmpTransport($pool);

@@ -38,6 +38,9 @@ use Ndrstmr\Icap\IcapUri;
  * debugging, or ICAP servers that close the connection after every
  * request anyway).
  *
+ * It does not limit connections: with this pool, as without one, the
+ * application limits its own concurrency. {@see AmpConnectionPool} does.
+ *
  * @see AmpConnectionPool for the keep-alive variant
  */
 final class NullConnectionPool implements ConnectionPoolInterface

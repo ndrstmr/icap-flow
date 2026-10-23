@@ -148,7 +148,7 @@ Decorator-Regel: **gleiches Interface, kein erweitertes Interface**. Wer `Retryi
 - Lifecycle: `openSession()` → `write()` → `readResponse()` → `release()` (zurück in den Pool) nur nach geprüftem Austausch, sonst `close()`; Standard ist `close()`.
 
 ### Object-Pool
-- `AmpConnectionPool` mit LIFO-Stack pro `host:port[:tls]`-Key.
+- `AmpConnectionPool` mit LIFO-Stack pro `host:port[:tls]`-Bucket; Caps zählen verbindende, aktive und idle Sockets (Endpoint = `host:port`).
 - Pool-Key: `host:port` plus, mit TLS, ein nie wiederverwendetes Token je `ClientTlsContext`-Objekt (`\WeakMap`); kein `spl_object_hash()` als Identität (B07).
 - Geplant v2.2: `maxIdleAge` (Default 30 s) und Eviction-Sweep.
 

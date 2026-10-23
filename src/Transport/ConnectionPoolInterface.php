@@ -49,6 +49,12 @@ interface ConnectionPoolInterface
      * Returns either a previously released, still-alive socket or a
      * freshly opened one. May suspend the current fiber while
      * connecting; honours $cancellation if supplied.
+     *
+     * An implementation that limits its connections ({@see AmpConnectionPool})
+     * throws {@see \Ndrstmr\Icap\Exception\IcapConnectionException} when it has
+     * none to give, or lets the call wait for one and then throws
+     * {@see \Ndrstmr\Icap\Exception\IcapTimeoutException} when the wait runs out.
+     * A call that was cancelled before it began connects to nobody.
      */
     public function acquire(Config $config, ?Cancellation $cancellation = null): Socket;
 
@@ -56,7 +62,8 @@ interface ConnectionPoolInterface
      * Hand a socket back to the pool. The caller MUST NOT continue
      * using the socket after this call. Implementations may close
      * the socket if it isn't reusable (already closed, pool full,
-     * server signalled `Connection: close`).
+     * server signalled `Connection: close`), and close one that did
+     * not come from them.
      */
     public function release(Config $config, Socket $socket): void;
 

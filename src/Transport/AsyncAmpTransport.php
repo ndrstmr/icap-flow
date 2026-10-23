@@ -61,7 +61,11 @@ use function Amp\async;
  * it. {@see request()} returns the raw response string, before any
  * status or verdict has been checked, so it always closes the socket.
  * Without a pool the transport opens a fresh socket per request and
- * closes it after — identical to the v2.0 behaviour.
+ * closes it after — identical to the v2.0 behaviour. A pool that limits
+ * its connections ({@see AmpConnectionPool}) limits the sessions and
+ * requests of this transport too: a session is a connection, and its room
+ * is back when the socket is closed or released. Without a pool the
+ * application limits its own concurrency.
  *
  * **Sessions (v2.1+).** Implements {@see SessionAwareTransport} so
  * callers that need to send + receive multiple times on the same

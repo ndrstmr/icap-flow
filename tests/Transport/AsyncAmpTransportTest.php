@@ -1328,3 +1328,100 @@ it('holds a response to the header limits of the configuration', function () {
         $pool->close();
     }
 });
+
+/*
+ * M04 — a pool with a cap holds the transport to it: a session is a connection, and the room is back when
+ * the session ends, however it ends. A call that waits for room waits inside the window of the transport.
+ */
+it('opens no more sessions than the pool allows, request() included, and has the room back when a session ends', function () {
+    $pairs = [];
+    $opened = 0;
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 1,
+        connector: function () use (&$pairs, &$opened): Socket\Socket {
+            $opened++;
+            $pairs[] = $pair = Socket\createSocketPair();
+
+            return $pair[1];
+        },
+    );
+    $transport = new AsyncAmpTransport($pool);
+    $config = new Config('icap.example', streamTimeout: 1.0);
+
+    try {
+        $first = $transport->openSession($config);
+        expect(thrownBy(fn () => $transport->openSession($config)))->toBeInstanceOf(IcapConnectionException::class);
+        expect(thrownBy(fn () => $transport->request($config, [])->await()))->toBeInstanceOf(IcapConnectionException::class);
+        expect($opened)->toBe(1);
+
+        // The session ends by closing its socket: the room is back at once.
+        $first->close();
+        $second = $transport->openSession($config);
+        expect($opened)->toBe(2);
+
+        // Released, the socket stays counted and is the one handed out next: no third connection.
+        $second->release();
+        $third = $transport->openSession($config);
+        expect($opened)->toBe(2);
+        $third->close();
+    } finally {
+        foreach ($pairs as [$peer, $client]) {
+            $client->close();
+            $peer->close();
+        }
+        $pool->close();
+    }
+});
+
+it('keeps a wait for room inside the stream timeout of the transport and the cancellation of the caller', function () {
+    $pairs = [];
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 1,
+        connector: function () use (&$pairs): Socket\Socket {
+            $pairs[] = $pair = Socket\createSocketPair();
+
+            return $pair[1];
+        },
+        maxWaiters: 1,
+        waitTimeout: 5.0,
+    );
+    $transport = new AsyncAmpTransport($pool);
+    $waiting = static function () use ($pool): int {
+        $waiters = (new ReflectionProperty($pool, 'waiters'))->getValue($pool);
+
+        return is_array($waiters) ? count($waiters) : -1;
+    };
+
+    try {
+        $held = $transport->openSession(new Config('icap.example', streamTimeout: 5.0));
+
+        // The window of the transport is shorter than the wait of the pool: its end is the transport's timeout.
+        $started = hrtime(true);
+        $thrown = thrownBy(fn () => $transport->openSession(new Config('icap.example', streamTimeout: 0.05)));
+        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
+        expect((hrtime(true) - $started) / 1e9)->toBeLessThan(2.0);
+        expect($waiting())->toBe(0);
+
+        // The caller's cancellation ends the wait as what it is.
+        $deferred = new DeferredCancellation();
+        $cancelling = EventLoop::delay(0.05, fn () => $deferred->cancel());
+        try {
+            $thrown = thrownBy(fn () => $transport->openSession(new Config('icap.example', streamTimeout: 5.0), $deferred->getCancellation()));
+        } finally {
+            EventLoop::cancel($cancelling);
+        }
+        expect($thrown)->toBeInstanceOf(CancelledException::class);
+        expect($waiting())->toBe(0);
+
+        // Neither lost the room: the session that held it ends and the next one is served.
+        $held->close();
+        $next = $transport->openSession(new Config('icap.example', streamTimeout: 1.0));
+        $next->close();
+    } finally {
+        foreach ($pairs as [$peer, $client]) {
+            $client->close();
+            $peer->close();
+        }
+        $pool->close();
+    }
+});
