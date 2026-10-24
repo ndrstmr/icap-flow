@@ -10,6 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Die Library scannt Uploads gegen einen ICAP-Server (typischerweise c-icap + ClamAV oder eine Vendor-Appliance: Symantec, Trend Micro, Sophos, McAfee, Kaspersky) und liegt damit auf dem sicherheitskritischen Pfad jeder aufrufenden Anwendung. Jede Änderung in `src/` ist sicherheitsrelevant; siehe Disclaimer im `README.md` und die Reviews unter `docs/review/review_v2-1/`.
 
+## Verbindlicher Engineering-Maßstab
+
+Die agentübergreifenden Regeln für Implementierung, Tests, Dokumentation und Abnahme stehen ausschließlich in [AGENTS.md — Engineering Standard](AGENTS.md#engineering-standard).
+
 ## Häufig genutzte Befehle
 
 Alle Workflows laufen über Composer-Skripte (definiert in `composer.json`):
@@ -156,9 +160,9 @@ Für die **v3-Linie und alles danach** ist die AI-Attribution explizit erwünsch
 
 Jeder funktionale PR (`feat`, `fix`, `perf`, `refactor` mit User-sichtbarer Wirkung) ergänzt einen Bullet im `[Unreleased]`-Block der `CHANGELOG.md` (Keep-a-Changelog-Format). `docs:`, `test:`, `ci:`, `chore:` brauchen das nicht.
 
-## Roadmap & Reviews — die maßgebliche Quelle
+## Roadmap & Reviews — historischer Kontext
 
-Der **aktuelle Plan** für die Weiterentwicklung steht in **`docs/review/review_v2-1/consolidated_v2.1_task-list.md`**. Vor jeder substanziellen Änderung in `src/`, `tests/`, `examples/cookbook/` oder `.github/workflows/` zuerst diese Datei prüfen — sie sortiert die Findings aus den vier Deep-Research-Audits (Konsens TRL-7, Scores 74–77/100) nach Release-Milestones und benennt pro Item die kritischen Dateien.
+Maßgeblich sind der aktuelle Nutzerauftrag und der dafür bestätigte Plan. `docs/review/review_v2-1/consolidated_v2.1_task-list.md` und die folgenden Releasepläne sind historischer Kontext; sie erweitern den Auftrag nicht. Findings vor einer Änderung gegen den aktuellen Code und CHANGELOG prüfen.
 
 Vier unabhängige Audits unter `docs/review/review_v2-1/`:
 
@@ -167,7 +171,7 @@ Vier unabhängige Audits unter `docs/review/review_v2-1/`:
 - `codex_v2.1.0-production-readiness-audit-2026-04-25.md`
 - `jules_deep_research_report_2-1.md`
 
-### Aktueller Release-Plan (Stand: aus der konsolidierten Task-Liste)
+### Historischer Release-Plan aus der v2.1-Task-Liste
 
 - **v2.1.1 — Critical Hotfix** (kein BC-Break, höchste Priorität):
   - `AmpConnectionPool::key()` um TLS-Context-Fingerprint erweitern (Cross-Tenant-Leakage, CVE-würdig im Multi-Tenant-Deployment) — `src/Transport/AmpConnectionPool.php:130-133`.
@@ -186,6 +190,6 @@ Konkrete Korrekturen aus der konsolidierten Liste, die beim Code-Lesen auffallen
 
 ### Historische Reviews
 
-`docs/review/` (Top-Level, ohne `review_v2-1/`-Unterordner) enthält die drei v1-Audits, die das v2-Redesign getrieben haben, sowie deren `consolidated_task-list.md`. Diese Dateien sind **historische Provenance** — abgeschlossen mit dem v2.0-Release. Für laufende Arbeit ist `docs/review/review_v2-1/consolidated_v2.1_task-list.md` der Anker, nicht die alten v1-Listen.
+`docs/review/` enthält unter anderem die drei v1-Audits und deren `consolidated_task-list.md`, abgeschlossen mit dem v2.0-Release. Auch die v2.1-Listen sind historische Provenienz; für laufende Arbeit gilt der aktuell bestätigte Auftrag.
 
 `docs/migration-v1-to-v2.md` dokumentiert jeden v1 → v2 Break. `CHANGELOG.md` folgt Keep-a-Changelog und SemVer ist committed. v1 ist deprecated; dort keine neuen Codepfade einbauen.
