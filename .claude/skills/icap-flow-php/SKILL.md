@@ -18,9 +18,9 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 
 ## Kern-Workflow
 
-1. **Lage prüfen** — Roadmap-Anker ist `docs/review/review_v2-1/consolidated_v2.1_task-list.md`. Vor jeder substanziellen Änderung in `src/`, `tests/`, `examples/cookbook/` oder `.github/workflows/` dort den passenden Eintrag suchen (Milestone v2.1.1 / v2.1.2 / v2.2.0 / v3.0.0). Steht das Vorhaben dort nicht, mit dem User abklären, bevor Code wandert.
+1. **Lage prüfen** — Aktuellen Auftrag und die agentübergreifenden Regeln in [AGENTS.md — Engineering Standard](../../../AGENTS.md#engineering-standard) anwenden.
 2. **Test zuerst** — Bei jeder Verhaltensänderung erst Pest-Test schreiben, der heute rot ist (Wire/Transport/Security/Integration je nach Schicht). Erst dann Implementierung.
-3. **Designen** — Fail-Secure-Semantik in `IcapClient::interpretResponse()` halten. Public-API-Signaturen sind v2-BC-stabil; BC-Breaks gehen in den v3.0.0-Bucket der Task-Liste, nicht in einen Patch- oder Minor-Release.
+3. **Designen** — Entwurf und API-Änderungen nach dem Engineering Standard in AGENTS.md bewerten. Fail-Secure-Semantik in `IcapClient::interpretResponse()` halten.
 4. **Implementieren** — `final class`, `final readonly class` für DTOs, `declare(strict_types=1)`, `#[\Override]` auf jeder Interface-Implementierung. Header-/URI-Eingaben am Boundary validieren (`IcapUri`, `HeaderFields::validated()` im `RequestFormatter`). Keine Bodys puffern — Streaming via `RequestFormatter::format(): iterable<string>` und `ChunkedBodyEncoder`.
 5. **Verifizieren** — Vor Übergabe alle vier Gates clean:
    ```bash
@@ -68,15 +68,9 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 - Neue Codepfade in v1-Compat-Layern. v1 ist deprecated.
 - Symfony-Komponenten in `src/`. Optional bleibt `psr/log`. Symfony-7.4-Integration kommt erst in v2.3.0 als separates Repo `ndrstmr/icap-flow-bundle`.
 
-## Output-Reihenfolge bei Feature-Implementierung
+## Umsetzung und Übergabe
 
-1. Pest-Test (rot) in der passenden Suite (`Wire/`, `Transport/`, `Security/`, ggf. `Integration/`).
-2. Interface, falls neu (z. B. `OptionsCacheInterface`-Erweiterung um ISTag).
-3. DTO / Value Object (`final readonly class`).
-4. Implementierungsklasse mit `#[\Override]`.
-5. Exception-Subtyp, falls neu — immer Sub von `IcapExceptionInterface`-Implementierung.
-6. Eintrag in `CHANGELOG.md` (Unreleased-Block, Keep-a-Changelog-Format).
-7. Wenn das Item aus der v2.1-Task-Liste kam: kurzer Verweis auf Tabellenzeile + Reviewer-Quelle in der Commit-Message.
+Für Umsetzung, Tests, Dokumentation und Übergabe gilt [AGENTS.md — Engineering Standard](../../../AGENTS.md#engineering-standard).
 
 ## Wissens-Stack
 

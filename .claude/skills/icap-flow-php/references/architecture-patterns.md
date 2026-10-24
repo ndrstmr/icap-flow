@@ -1,11 +1,11 @@
 # Architektur-Patterns & SOLID/TDD — icap-flow
 
-icap-flow ist eine Library, kein Framework. Die Architektur folgt strikt SOLID, ist test-getrieben und nutzt eine kleine, scharf geschnittene Menge an Design-Patterns. Diese Datei zeigt, **wie** sie eingesetzt werden — am konkreten Code, nicht an Lehrbuch-Beispielen.
+Der verbindliche Engineering-Maßstab steht in [AGENTS.md](../../../../AGENTS.md#engineering-standard). Diese Referenz erläutert seine Anwendung auf die vorhandene ICAP-Client-Architektur.
 
 ## SOLID, kompakt am icap-flow-Code
 
 ### Single Responsibility
-Jede Klasse hat genau eine Aufgabe — daran erkennt man die Schichtung im Repo:
+Jede Klasse hat eine klar abgegrenzte Verantwortung und einen fachlichen Grund, sich zu ändern — daran erkennt man die Schichtung im Repo:
 
 | Klasse | Verantwortung |
 |---|---|
@@ -18,7 +18,7 @@ Jede Klasse hat genau eine Aufgabe — daran erkennt man die Schichtung im Repo:
 | `IcapClient` | Orchestrierung; Fail-Secure-Statuscode-Auswertung |
 | `RetryingIcapClient` | Decorator: wiederholt nur `options()` nach 5xx (Full-Jitter-Backoff), eine Endzeit je Aufruf |
 
-Wenn eine neue Aufgabe nicht in eine der bestehenden Klassen fällt, **mach eine neue** — kein Erweitern bestehender Klassen "weil die Datei schon offen war".
+Trenne eine eigenständige Verantwortung ab, wenn sie einen anderen Änderungsgrund hat. Zusätzliche Methoden derselben Verantwortung dürfen in der bestehenden Klasse bleiben; eine neue Klasse braucht eine konkrete fachliche oder technische Grenze.
 
 ### Open/Closed
 Erweiterung läuft über Interfaces, nicht Subklassen:
