@@ -35,9 +35,18 @@ use Ndrstmr\Icap\DTO\ScanResult;
  *
  * Every method takes an optional {@see Cancellation} so a caller can
  * abort an in-flight scan from the outside (e.g. when an upstream HTTP
- * upload has been aborted). The user-supplied token is combined with the
- * per-request timeout cancellation derived from
- * {@see Config::getStreamTimeout()}; whichever fires first wins.
+ * upload has been aborted). A call ends at the first of three things: the
+ * caller's cancellation, which stays an `Amp\CancelledException` and wins
+ * when more than one applies; the end of the operation
+ * ({@see Config::getOperationTimeout()}, fixed when the method is called and
+ * covering every phase, and in the retry decorator every attempt and
+ * pause); and the limit of a phase ({@see Config::getStreamTimeout()}, the
+ * TLS handshake, the start of the answer). The last two are an
+ * {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}. An expired call
+ * closes its socket and its file handle. Code that holds the event loop and
+ * does not return (a request-body producer, a slow cache) cannot be
+ * interrupted; the end is looked at when control comes back, and a result
+ * that comes in after it is not returned.
  */
 interface IcapClientInterface
 {

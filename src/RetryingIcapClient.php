@@ -21,25 +21,49 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap;
 
 use Amp\Cancellation;
+use Amp\CancelledException;
 use Amp\Future;
 use Closure;
 use Ndrstmr\Icap\DTO\IcapRequest;
+use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Exception\IcapServerException;
 
+use function Amp\async;
 use function Amp\delay;
 
 /**
  * Retry decorator around any {@see IcapClientInterface}.
  *
- * Retries only on {@see IcapServerException} (ICAP 5xx) — those are
- * transient by RFC 3507 §4.3.3. Client errors (4xx, parse failures,
- * connection errors) propagate immediately; retrying them would either
- * be useless (the request is malformed) or compound a hostile
- * environment problem (network is down).
+ * **What is repeated (N03).** Only {@see options()}, and only after an
+ * {@see IcapServerException} (ICAP 5xx), which is transient by RFC 3507
+ * §4.3.3: OPTIONS has no body and changes nothing, so a second one is safe.
+ * {@see request()}, {@see scanFile()} and {@see scanFileWithPreview()} get one
+ * attempt. A 5xx, or a write that failed, does not prove that the server did
+ * not process any of the bytes it was sent, and nothing here can send an upload
+ * again (a stream that was read cannot be read again, and a file may have
+ * changed); an application that knows its scans are repeatable repeats them
+ * itself. Client errors (4xx), parse failures, connection errors and timeouts
+ * propagate at once: retrying them would be useless or would add to a
+ * hostile environment.
  *
- * Backoff is exponential: `baseDelaySeconds * backoffFactor^(attempt-1)`,
- * capped at `maxDelaySeconds`. With the defaults (100 ms / 2x / cap 5 s)
- * three retries wait 0.1 / 0.2 / 0.4 s.
+ * **Backoff.** Exponential with full jitter: the pause before the next attempt
+ * is a random share, from nothing up to all of it, of
+ * `baseDelaySeconds * backoffFactor^(attempt-1)`, capped at `maxDelaySeconds`,
+ * so that many clients do not retry in step. With the defaults (100 ms / 2x /
+ * cap 5 s) the pauses are at most 0.1 / 0.2 / 0.4 s. The pause ends with the
+ * caller's cancellation and with the end of the operation, and even a pause of
+ * 0 seconds hands the event loop over once.
+ *
+ * **One budget (M10).** `operationTimeout` is the whole of a call, attempts and
+ * pauses together, on a monotonic clock, 60 seconds by default. It begins when
+ * the method is called, it is not restarted by an attempt, and the inner client
+ * is handed it as its cancellation, so that an inner {@see IcapClient} ends with
+ * it (an inner client that has a shorter timeout of its own keeps it; none can
+ * extend this one). It ends the call with an {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}; the caller's own
+ * cancellation stays an `Amp\CancelledException`. A foreign inner client that
+ * ignores its cancellation is waited for: the end is looked at when it returns,
+ * and a result that comes in after it is not returned.
  *
  * Example wiring:
  *
@@ -48,20 +72,28 @@ use function Amp\delay;
  *         maxAttempts: 3,
  *         baseDelaySeconds: 0.1,
  *         maxDelaySeconds: 5.0,
+ *         operationTimeout: 30.0,
  *     );
  */
 final class RetryingIcapClient implements IcapClientInterface
 {
-    /** @var Closure(float): void */
-    private Closure $sleeper;
+    /** @var (Closure(float): void)|null */
+    private ?Closure $sleeper;
+
+    /** @var Closure(): float */
+    private Closure $random;
 
     /**
      * @param IcapClientInterface           $inner            Wrapped client (typically IcapClient)
      * @param int                           $maxAttempts      Maximum total attempts (initial + retries); must be >= 1
-     * @param float                         $baseDelaySeconds Initial delay before the first retry
-     * @param float                         $maxDelaySeconds  Cap on any individual retry delay
-     * @param float                         $backoffFactor    Multiplier applied between attempts
-     * @param (Closure(float): void)|null   $sleeper          Test seam — replaces Amp\delay() with a callable
+     * @param float                         $baseDelaySeconds Initial delay before the first retry; finite, 0 or more
+     * @param float                         $maxDelaySeconds  Cap on any individual retry delay; finite, 0 or more
+     * @param float                         $backoffFactor    Multiplier applied between attempts; finite and above 0
+     * @param (Closure(float): void)|null   $sleeper          Test seam — replaces the pause with a callable. It is not interrupted
+     *                                                        from outside; the end of the operation is looked at before and after it
+     * @param float                         $operationTimeout Seconds one call may take in all, attempts and pauses together;
+     *                                                        finite and above 0
+     * @param (Closure(): float)|null       $random           Test seam — the random share of the jitter, from 0 to 1 (default: mt_rand)
      */
     public function __construct(
         private IcapClientInterface $inner,
@@ -70,37 +102,66 @@ final class RetryingIcapClient implements IcapClientInterface
         private float $maxDelaySeconds = 5.0,
         private float $backoffFactor = 2.0,
         ?Closure $sleeper = null,
+        private float $operationTimeout = 60.0,
+        ?Closure $random = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException('maxAttempts must be >= 1, got: ' . $maxAttempts);
         }
-        if ($baseDelaySeconds < 0.0) {
-            throw new \InvalidArgumentException('baseDelaySeconds must be >= 0, got: ' . $baseDelaySeconds);
+        // var_export() for the floats: PHP 8.5 warns when a NAN is coerced to a string. NAN and INF pass a
+        // comparison with 0 and would turn the backoff into NAN, so finiteness is checked first.
+        if (!is_finite($baseDelaySeconds) || $baseDelaySeconds < 0.0) {
+            throw new \InvalidArgumentException('baseDelaySeconds must be a finite number >= 0, got: ' . var_export($baseDelaySeconds, true));
         }
-        if ($maxDelaySeconds < 0.0) {
-            throw new \InvalidArgumentException('maxDelaySeconds must be >= 0, got: ' . $maxDelaySeconds);
+        if (!is_finite($maxDelaySeconds) || $maxDelaySeconds < 0.0) {
+            throw new \InvalidArgumentException('maxDelaySeconds must be a finite number >= 0, got: ' . var_export($maxDelaySeconds, true));
         }
-        if ($backoffFactor <= 0.0) {
-            throw new \InvalidArgumentException('backoffFactor must be > 0, got: ' . $backoffFactor);
+        if (!is_finite($backoffFactor) || $backoffFactor <= 0.0) {
+            throw new \InvalidArgumentException('backoffFactor must be a finite number > 0, got: ' . var_export($backoffFactor, true));
+        }
+        if (!is_finite($operationTimeout) || $operationTimeout <= 0.0) {
+            throw new \InvalidArgumentException('operationTimeout must be a finite number of seconds above 0, got: ' . var_export($operationTimeout, true));
         }
 
-        $this->sleeper = $sleeper ?? static function (float $seconds): void {
-            if ($seconds > 0.0) {
-                delay($seconds);
-            }
-        };
+        $this->sleeper = $sleeper;
+        $this->random = $random ?? static fn (): float => mt_rand() / mt_getrandmax();
     }
 
     #[\Override]
     public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
-        return $this->withRetry(fn (): Future => $this->inner->request($request, $cancellation));
+        return $this->once(
+            $cancellation,
+            fn (OperationDeadline $deadline): ScanResult => $this->inner->request($request, $deadline)->await(),
+        );
     }
 
+    /**
+     * The one operation that is repeated: after an ICAP 5xx, up to `maxAttempts` attempts in all, inside one
+     * `operationTimeout`.
+     */
     #[\Override]
     public function options(string $service, ?Cancellation $cancellation = null): Future
     {
-        return $this->withRetry(fn (): Future => $this->inner->options($service, $cancellation));
+        $deadline = OperationDeadline::begin($cancellation, $this->operationTimeout);
+
+        return $this->run($deadline, function () use ($service, $deadline): IcapResponse {
+            $last = null;
+            for ($attempt = 1; ; $attempt++) {
+                // No new attempt once the budget is gone, whatever the pause before it did.
+                $deadline->checkpoint($last);
+
+                try {
+                    return $this->inner->options($service, $deadline)->await();
+                } catch (IcapServerException $e) {
+                    $last = $e;
+                    if ($attempt >= $this->maxAttempts) {
+                        throw $e;
+                    }
+                    $this->pause($this->pauseAfter($attempt), $deadline, $e);
+                }
+            }
+        });
     }
 
     /**
@@ -113,7 +174,10 @@ final class RetryingIcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
-        return $this->withRetry(fn (): Future => $this->inner->scanFile($service, $filePath, $extraHeaders, $cancellation));
+        return $this->once(
+            $cancellation,
+            fn (OperationDeadline $deadline): ScanResult => $this->inner->scanFile($service, $filePath, $extraHeaders, $deadline)->await(),
+        );
     }
 
     /**
@@ -127,49 +191,102 @@ final class RetryingIcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
-        return $this->withRetry(
-            fn (): Future => $this->inner->scanFileWithPreview($service, $filePath, $previewSize, $extraHeaders, $cancellation),
+        return $this->once(
+            $cancellation,
+            fn (OperationDeadline $deadline): ScanResult => $this->inner->scanFileWithPreview($service, $filePath, $previewSize, $extraHeaders, $deadline)->await(),
         );
     }
 
     /**
+     * One attempt, inside the budget of the call.
+     *
      * @template T
      *
-     * @param Closure(): Future<T> $operation
+     * @param Closure(OperationDeadline): T $operation
      *
      * @return Future<T>
      */
-    private function withRetry(Closure $operation): Future
+    private function once(?Cancellation $cancellation, Closure $operation): Future
+    {
+        $deadline = OperationDeadline::begin($cancellation, $this->operationTimeout);
+
+        return $this->run($deadline, static fn (): mixed => $operation($deadline));
+    }
+
+    /**
+     * Runs the operation in a fiber of its own, with the timer and the subscription of the budget set for exactly
+     * as long as it runs. A result that comes in after the end of the budget is none.
+     *
+     * @template T
+     *
+     * @param Closure(): T $operation
+     *
+     * @return Future<T>
+     */
+    private function run(OperationDeadline $deadline, Closure $operation): Future
     {
         /** @var Future<T> $future */
-        $future = \Amp\async(function () use ($operation): mixed {
-            // The loop runs at least once because maxAttempts >= 1 is
-            // enforced in the ctor, so the final throw always has a
-            // captured exception to re-raise.
-            /** @var IcapServerException $lastException */
-            $lastException = new IcapServerException('unreachable');
+        $future = async(static function () use ($deadline, $operation): mixed {
+            try {
+                $deadline->checkpoint();
+                $result = $operation();
+                $deadline->checkpoint();
 
-            for ($attempt = 1; $attempt <= $this->maxAttempts; $attempt++) {
-                try {
-                    return $operation()->await();
-                } catch (IcapServerException $e) {
-                    $lastException = $e;
-                    if ($attempt === $this->maxAttempts) {
-                        break;
-                    }
-                    ($this->sleeper)($this->backoffFor($attempt));
-                }
+                return $result;
+            } catch (\Throwable $e) {
+                throw $deadline->outcome($e);
+            } finally {
+                $deadline->close();
             }
-
-            throw $lastException;
         });
 
         return $future;
     }
 
-    private function backoffFor(int $attempt): float
+    /**
+     * The pause between two attempts. It ends with the caller's cancellation and with the end of the operation,
+     * which is then an {@see \Ndrstmr\Icap\Exception\IcapTimeoutException} with the 5xx that made the call wait as its cause.
+     * A sleeper of the caller's cannot be interrupted from here, so the budget is looked at before it is called (a
+     * budget that is gone is not slept through) and, by the loop, before the next attempt.
+     */
+    private function pause(float $seconds, OperationDeadline $deadline, IcapServerException $cause): void
     {
-        $delay = $this->baseDelaySeconds * ($this->backoffFactor ** ($attempt - 1));
-        return min($delay, $this->maxDelaySeconds);
+        if ($this->sleeper !== null) {
+            $deadline->checkpoint($cause);
+            ($this->sleeper)($seconds);
+
+            return;
+        }
+
+        try {
+            // Also a pause of 0 seconds suspends once: a loop of attempts must leave the event loop its turns.
+            delay($seconds, true, $deadline);
+        } catch (CancelledException $e) {
+            throw $deadline->outcome($e, $cause);
+        }
+    }
+
+    /**
+     * Full jitter: any pause from nothing up to the capped exponential one.
+     */
+    private function pauseAfter(int $attempt): float
+    {
+        $draw = ($this->random)();
+
+        return $this->backoffCap($attempt) * (is_finite($draw) ? min(max($draw, 0.0), 1.0) : 1.0);
+    }
+
+    /**
+     * `baseDelaySeconds * backoffFactor^(attempt-1)`, capped at `maxDelaySeconds`. The power overflows to INF for
+     * a large attempt number, and INF is above every cap; a base of 0 is a pause of 0 before the product with INF
+     * could become NAN.
+     */
+    private function backoffCap(int $attempt): float
+    {
+        if ($this->baseDelaySeconds === 0.0) {
+            return 0.0;
+        }
+
+        return min($this->baseDelaySeconds * ($this->backoffFactor ** ($attempt - 1)), $this->maxDelaySeconds);
     }
 }

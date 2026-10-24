@@ -31,12 +31,13 @@ use Ndrstmr\Icap\Config;
  * concatenated in memory.
  *
  * The optional {@see Cancellation} parameter lets a caller abort a
- * request in flight (combined with the transport's own timeout derived
- * from Config::getStreamTimeout()). Implementations MUST honour the
- * cancellation by aborting the read and write loops with
- * `Amp\CancelledException`. A timeout of the transport's own is not a
- * cancellation: it surfaces as
- * {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}.
+ * request in flight (combined with the transport's own timeouts derived
+ * from Config). Implementations MUST honour the cancellation by aborting
+ * the read and write loops with `Amp\CancelledException`. The client hands
+ * its transport the end of the operation (M10) as this cancellation: it
+ * ends with the caller's cancellation and with the end of the operation
+ * alike. A timeout of the transport's own is not a cancellation: it
+ * surfaces as {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}.
  */
 interface TransportInterface
 {

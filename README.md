@@ -50,7 +50,7 @@ Migration: [`docs/migration-v2-to-v3.md`](docs/migration-v2-to-v3.md). For most 
 - **Custom request headers** (`X-Client-IP`, `X-Authenticated-User`) on `scanFile()` / `scanFileWithPreview()`.
 - **External cancellation** — every public method takes an optional `Amp\Cancellation`.
 - **OPTIONS-response cache** with `Options-TTL` honour.
-- **`RetryingIcapClient`** decorator with exponential backoff for 5xx.
+- **`RetryingIcapClient`** decorator: OPTIONS is repeated after a 5xx (exponential backoff with jitter); every other operation gets one attempt.
 - **Encapsulated-aware response framing** — no dependency on `Connection: close`; servers may keep the socket open.
 - **PHP 8.4** minimum; **PHP 8.5** in CI; integration tested end-to-end against `mnemoshare/clamav-icap` (c-icap 0.6.3 + ClamAV).
 
@@ -138,6 +138,24 @@ $client = new IcapClient(
 );
 ```
 
+### Timeouts
+
+Every limit is finite; `0` is never "without limit". One operation (a public method call, with the attempts and pauses of `RetryingIcapClient`) has one end, and each phase has a limit of its own inside it:
+
+| Setting | Limit on | Default |
+|---|---|---|
+| `operationTimeout` | the whole operation: cache, pool wait, connect, TLS, upload, preview, continuation, answers (and in `RetryingIcapClient` all attempts and pauses) | 60 s |
+| `socketTimeout` | the TCP connection | 10 s |
+| `tlsHandshakeTimeout` | the TLS handshake | `streamTimeout` |
+| `streamTimeout` | an answer from its first byte on (a maximum, not an idle timer); a write: one window for the whole call with the async transport, but with the synchronous one the time the peer may go without taking a byte, which every byte it takes starts again (`operationTimeout` bounds the total) | 10 s |
+| `responseStartTimeout` | the server's time to begin its answer once the request is sent (the scan) | `streamTimeout` |
+
+```php
+$config = $config->withTimeouts(operationTimeout: 300.0, responseStartTimeout: 120.0); // large files, slow scanner
+```
+
+The end of the operation is an `IcapTimeoutException`; your own cancellation stays an `Amp\CancelledException`. An expired call closes its socket and its file handle. A request-body producer or a cache that holds the event loop and does not return cannot be interrupted, only noticed afterwards; the synchronous transport bounds its native waits only.
+
 ### Connection pool
 
 For long-running workers (RoadRunner, Swoole, ReactPHP) the async transport can reuse sockets via a connection pool. A socket goes back to the pool only after a validated exchange, which today is the strict preview flow of `scanFileWithPreview()`; every other request closes its socket, with a pool as well.
@@ -186,7 +204,7 @@ Every exception this library throws implements `Ndrstmr\Icap\Exception\IcapExcep
 | Exception | Trigger |
 |---|---|
 | `IcapConnectionException` | TCP-level failure (refused, timeout, TLS handshake, ...) |
-| `IcapTimeoutException` | The `streamTimeout` window of a phase passed: acquiring the connection, writing the request or reading the response (the synchronous transport reports a read that waited that long, or a write that made no progress for that long). A cancellation by the caller is not mapped; it stays `Amp\CancelledException` |
+| `IcapTimeoutException` | A limit of the client passed: the `operationTimeout` of the whole operation, or the limit of a phase (acquiring the connection, the TLS handshake, writing the request, the answer beginning or arriving; the synchronous transport reports a read that waited that long, or a write that made no progress for that long). A cancellation by the caller is not mapped; it stays `Amp\CancelledException` |
 | `IcapProtocolException` | RFC-3507 violation (e.g. status 100 outside preview, malformed `Encapsulated`) |
 | `IcapMalformedResponseException` (extends `IcapProtocolException`) | Server response can't be parsed (no separator, header line without `:`, oversize lines) |
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |
@@ -203,7 +221,7 @@ The `examples/` directory has runnable demos, including a full Symfony-ready asy
 - `examples/cookbook/02-custom-preview-strategy.php` — vendor-specific preview interpretation
 - `examples/cookbook/03-options-request.php` — capability discovery via OPTIONS
 - `examples/cookbook/04-tls-mtls.php` — TLS and mutual TLS (mTLS) setup
-- `examples/cookbook/05-retry-decorator.php` — exponential-backoff retry on 5xx
+- `examples/cookbook/05-retry-decorator.php` — exponential-backoff retry of OPTIONS on 5xx
 - `examples/cookbook/06-pool-tuning.php` — connection-pool idle eviction and Max-Connections
 - `examples/cookbook/07-cancellation-from-upload.php` — timeout and user-initiated cancellation
 

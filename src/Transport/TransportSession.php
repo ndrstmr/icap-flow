@@ -63,8 +63,12 @@ interface TransportSession
      * its end stays with the session and is the start of what the next call
      * returns. No request waits for such bytes, so a {@see write()} on top of
      * them throws and closes the session, and {@see release()} closes the
-     * socket instead of pooling it. Window, cancellation and failure behave as
-     * for {@see write()}.
+     * socket instead of pooling it. Cancellation and failure behave as for
+     * {@see write()}; the windows are two, one after the other (M10): the
+     * server's time to begin its answer once the request is sent
+     * (`Config::getResponseStartTimeout()`), then, from the first byte, a
+     * maximum for the answer to arrive in full (`Config::getStreamTimeout()`)
+     * that no further byte starts again.
      */
     public function readResponse(): string;
 

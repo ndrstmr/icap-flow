@@ -129,6 +129,21 @@ it('refuses a configuration that cannot work, in the constructor', function () {
         'stream timeout INF'                => [fn () => new Config('icap.example', streamTimeout: INF), 'streamTimeout'],
         'stream timeout -INF'               => [fn () => new Config('icap.example', streamTimeout: -INF), 'streamTimeout'],
 
+        // M10: the new timeouts are finite and above 0 (0 is no way to say "without limit"), or null for the ones that fall back.
+        'operation timeout 0'               => [fn () => new Config('icap.example', operationTimeout: 0.0), 'operationTimeout'],
+        'negative operation timeout'        => [fn () => new Config('icap.example', operationTimeout: -1.0), 'operationTimeout'],
+        'operation timeout NAN'             => [fn () => new Config('icap.example', operationTimeout: NAN), 'operationTimeout'],
+        'operation timeout INF'             => [fn () => new Config('icap.example', operationTimeout: INF), 'operationTimeout'],
+        'operation timeout -INF'            => [fn () => new Config('icap.example', operationTimeout: -INF), 'operationTimeout'],
+        'TLS handshake timeout 0'           => [fn () => new Config('icap.example', tlsHandshakeTimeout: 0.0), 'tlsHandshakeTimeout'],
+        'negative TLS handshake timeout'    => [fn () => new Config('icap.example', tlsHandshakeTimeout: -0.5), 'tlsHandshakeTimeout'],
+        'TLS handshake timeout NAN'         => [fn () => new Config('icap.example', tlsHandshakeTimeout: NAN), 'tlsHandshakeTimeout'],
+        'TLS handshake timeout INF'         => [fn () => new Config('icap.example', tlsHandshakeTimeout: INF), 'tlsHandshakeTimeout'],
+        'response start timeout 0'          => [fn () => new Config('icap.example', responseStartTimeout: 0.0), 'responseStartTimeout'],
+        'negative response start timeout'   => [fn () => new Config('icap.example', responseStartTimeout: -0.5), 'responseStartTimeout'],
+        'response start timeout NAN'        => [fn () => new Config('icap.example', responseStartTimeout: NAN), 'responseStartTimeout'],
+        'response start timeout INF'        => [fn () => new Config('icap.example', responseStartTimeout: INF), 'responseStartTimeout'],
+
         'response size 0'                   => [fn () => new Config('icap.example', maxResponseSize: 0), 'maxResponseSize'],
         'negative response size'            => [fn () => new Config('icap.example', maxResponseSize: -1), 'maxResponseSize'],
         'header count 0'                    => [fn () => new Config('icap.example', maxHeaderCount: 0), 'maxHeaderCount'],
@@ -162,6 +177,13 @@ it('runs the arguments of every wither through the same checks and leaves the or
 
     // case => [build, the setting the message names]
     $cases = [
+        'operation timeout 0'            => [fn () => $config->withTimeouts(operationTimeout: 0.0), 'operationTimeout'],
+        'operation timeout NAN'          => [fn () => $config->withTimeouts(operationTimeout: NAN), 'operationTimeout'],
+        'operation timeout INF'          => [fn () => $config->withTimeouts(operationTimeout: INF), 'operationTimeout'],
+        'negative TLS handshake timeout' => [fn () => $config->withTimeouts(tlsHandshakeTimeout: -1.0), 'tlsHandshakeTimeout'],
+        'TLS handshake timeout INF'      => [fn () => $config->withTimeouts(tlsHandshakeTimeout: INF), 'tlsHandshakeTimeout'],
+        'response start timeout 0'       => [fn () => $config->withTimeouts(responseStartTimeout: 0.0), 'responseStartTimeout'],
+        'response start timeout NAN'     => [fn () => $config->withTimeouts(responseStartTimeout: NAN), 'responseStartTimeout'],
         'response size 0'                => [fn () => $config->withLimits(maxResponseSize: 0), 'maxResponseSize'],
         'negative response size'         => [fn () => $config->withLimits(maxResponseSize: -1), 'maxResponseSize'],
         'header count 0'                 => [fn () => $config->withLimits(maxHeaderCount: 0), 'maxHeaderCount'],

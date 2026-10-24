@@ -21,6 +21,7 @@ use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket;
+use Amp\Socket\ClientTlsContext;
 use Amp\TimeoutCancellation;
 use Mockery as m;
 use Ndrstmr\Icap\Config;
@@ -153,7 +154,7 @@ it('closes the socket after request() instead of returning it to the pool', func
  *
  * @return array{session: TransportSession, client: Socket\Socket, peer: Socket\Socket, pool: AmpConnectionPool, opened: \Closure(): int}
  */
-function pairedSession(float $streamTimeout, ?Cancellation $cancellation = null): array
+function pairedSession(float $streamTimeout, ?Cancellation $cancellation = null, ?float $responseStartTimeout = null): array
 {
     [$peer, $client] = Socket\createSocketPair();
     $opened = 0;
@@ -162,7 +163,9 @@ function pairedSession(float $streamTimeout, ?Cancellation $cancellation = null)
 
         return $client;
     });
-    $config = new Config('icap.example', streamTimeout: $streamTimeout);
+    $config = $responseStartTimeout === null
+        ? new Config('icap.example', streamTimeout: $streamTimeout)
+        : new Config('icap.example', streamTimeout: $streamTimeout, responseStartTimeout: $responseStartTimeout);
 
     return [
         'session' => (new AsyncAmpTransport($pool))->openSession($config, $cancellation),
@@ -1423,5 +1426,498 @@ it('keeps a wait for room inside the stream timeout of the transport and the can
             $peer->close();
         }
         $pool->close();
+    }
+});
+
+/*
+ * AP-12 (M10) — a response has two limits, one after the other: the server's time to begin its answer once the request
+ * is sent (a scan can take long), and, from the first byte on, a maximum for the answer to arrive in full. The second is
+ * no idle timer: a peer that drips the answer does not keep the call alive.
+ */
+
+/** The frame a session reads in these tests, and how long it is. */
+const PHASE_FRAME = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+
+/** @return list<string> the timers (delays and repeats) the event loop holds */
+function phaseTimers(): array
+{
+    return array_values(array_filter(
+        EventLoop::getIdentifiers(),
+        static fn (string $id): bool => in_array(EventLoop::getType($id), [CallbackType::Delay, CallbackType::Repeat], true),
+    ));
+}
+
+it('gives the server the response start timeout to begin its answer, longer than the stream timeout', function () {
+    $timers = phaseTimers();
+    $fx = pairedSession(0.2, null, 2.0);
+    $hung = false;
+    $watchdog = armWatchdog($fx['client'], $fx['peer'], $hung);
+
+    try {
+        // The scan takes 0.5 seconds: more than the stream timeout, within the time allowed for it to begin.
+        $answering = async(static function () use ($fx): void {
+            delay(0.5);
+            $fx['peer']->write(PHASE_FRAME);
+        });
+        $started = hrtime(true);
+        $frame = $fx['session']->readResponse();
+        $elapsed = (hrtime(true) - $started) / 1_000_000_000;
+        $answering->await();
+
+        expect($hung)->toBeFalse();
+        expect($frame)->toBe(PHASE_FRAME);
+        expect($elapsed)->toBeGreaterThanOrEqual(0.45)->toBeLessThan(2.0);
+        expect($fx['client']->isClosed())->toBeFalse();
+        // Both stretches of the call set a timer, and none is left: the first was replaced, the second removed.
+        EventLoop::cancel($watchdog);
+        expect(phaseTimers())->toBe($timers);
+    } finally {
+        EventLoop::cancel($watchdog);
+        $fx['session']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('ends a response that does not begin within the response start timeout, shorter than the stream timeout', function () {
+    $fx = pairedSession(5.0, null, 0.2);
+    $hung = false;
+    $watchdog = armWatchdog($fx['client'], $fx['peer'], $hung);
+
+    try {
+        $started = hrtime(true);
+        $thrown = thrownBy(fn () => $fx['session']->readResponse());
+        $elapsed = (hrtime(true) - $started) / 1_000_000_000;
+        $clientClosed = $fx['client']->isClosed();
+
+        expect($hung)->toBeFalse();
+        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
+        expect($elapsed)->toBeGreaterThanOrEqual(0.15)->toBeLessThan(2.0);
+        expect($clientClosed)->toBeTrue();
+    } finally {
+        EventLoop::cancel($watchdog);
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('ends an answer that is dripped past the stream timeout, however long the time to begin it was', function () {
+    $fx = pairedSession(0.4, null, 5.0);
+    $hung = false;
+    $watchdog = armWatchdog($fx['client'], $fx['peer'], $hung);
+
+    try {
+        // The first byte at once, then one byte every 0.1 seconds: each byte is "progress", and the frame would take
+        // five seconds. An idle timer that every byte starts again would wait for all of it.
+        $dripping = async(static function () use ($fx): void {
+            foreach (str_split(PHASE_FRAME) as $byte) {
+                if ($fx['peer']->isClosed()) {
+                    return;
+                }
+                try {
+                    $fx['peer']->write($byte);
+                } catch (\Throwable) {
+                    return;
+                }
+                delay(0.1);
+            }
+        });
+        $started = hrtime(true);
+        $thrown = thrownBy(fn () => $fx['session']->readResponse());
+        $elapsed = (hrtime(true) - $started) / 1_000_000_000;
+        $clientClosed = $fx['client']->isClosed();
+        $fx['peer']->close();
+        $dripping->await();
+
+        expect($hung)->toBeFalse();
+        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
+        // The stream timeout from the first byte, not the 5 seconds of the start, and not the end of the frame.
+        expect($elapsed)->toBeGreaterThanOrEqual(0.35)->toBeLessThan(2.0);
+        expect($clientClosed)->toBeTrue();
+    } finally {
+        EventLoop::cancel($watchdog);
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('lets an answer arrive in parts as long as it arrives within the stream timeout', function () {
+    $fx = pairedSession(0.6, null, 0.2);
+    $hung = false;
+    $watchdog = armWatchdog($fx['client'], $fx['peer'], $hung);
+
+    try {
+        // The response start timeout (0.2) is spent before the first part; the parts then have 0.6 seconds in all.
+        $parts = [substr(PHASE_FRAME, 0, 10), substr(PHASE_FRAME, 10, 20), substr(PHASE_FRAME, 30)];
+        $answering = async(static function () use ($fx, $parts): void {
+            delay(0.1);
+            foreach ($parts as $part) {
+                $fx['peer']->write($part);
+                delay(0.15);
+            }
+        });
+        $frame = $fx['session']->readResponse();
+        $answering->await();
+
+        expect($hung)->toBeFalse();
+        expect($frame)->toBe(PHASE_FRAME);
+    } finally {
+        EventLoop::cancel($watchdog);
+        $fx['session']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+it('does not wait for the start of an answer that has begun: bytes behind the last response count as begun', function () {
+    $fx = pairedSession(0.4, null, 30.0);
+    $hung = false;
+    $watchdog = armWatchdog($fx['client'], $fx['peer'], $hung);
+
+    try {
+        // Two responses in one read, the second cut off: the first call returns the first frame, and the second
+        // finds the start of its answer in the session already, so only the stream timeout is left for the rest.
+        $fx['peer']->write(PHASE_FRAME . substr(PHASE_FRAME, 0, 12));
+        expect($fx['session']->readResponse())->toBe(PHASE_FRAME);
+
+        $started = hrtime(true);
+        $thrown = thrownBy(fn () => $fx['session']->readResponse());
+        $elapsed = (hrtime(true) - $started) / 1_000_000_000;
+
+        expect($hung)->toBeFalse();
+        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
+        expect($elapsed)->toBeLessThan(2.0);
+    } finally {
+        EventLoop::cancel($watchdog);
+        $fx['client']->close();
+        $fx['peer']->close();
+        $fx['pool']->close();
+    }
+});
+
+/*
+ * AP-12 (M10) — the TLS handshake is a phase of its own. A server that accepts the connection and says nothing never
+ * answers the handshake; its limit is tlsHandshakeTimeout, not the stream timeout, which is longer here, and the
+ * connection is closed, with the room it held.
+ */
+it('ends a TLS handshake that the server never answers at the limit of its own, and closes the connection', function () {
+    $server = Socket\listen('127.0.0.1:0');
+    $address = $server->getAddress();
+    \assert($address instanceof Socket\InternetAddress);
+    $accepted = [];
+    $accepting = async(function () use ($server, &$accepted): void {
+        while (($peer = $server->accept()) !== null) {
+            $accepted[] = $peer;
+        }
+    });
+    $pool = new AmpConnectionPool();
+
+    try {
+        $config = new Config(
+            '127.0.0.1',
+            $address->getPort(),
+            socketTimeout: 5.0,
+            streamTimeout: 30.0,
+            tlsContext: new ClientTlsContext('127.0.0.1'),
+            tlsHandshakeTimeout: 0.3,
+        );
+
+        // Without a pool, with the pool that opens a fresh connection each time, and with the keep-alive pool.
+        $paths = [
+            'no pool'              => new AsyncAmpTransport(),
+            'NullConnectionPool'   => new AsyncAmpTransport(new NullConnectionPool()),
+            'AmpConnectionPool'    => new AsyncAmpTransport($pool),
+        ];
+        foreach ($paths as $path => $transport) {
+            $baseline = [];
+            foreach (EventLoop::getIdentifiers() as $id) {
+                if (in_array(EventLoop::getType($id), [CallbackType::Delay, CallbackType::Repeat], true)) {
+                    $baseline[] = $id;
+                }
+            }
+
+            $started = hrtime(true);
+            $thrown = thrownBy(fn () => $transport->openSession($config));
+            $elapsed = (hrtime(true) - $started) / 1_000_000_000;
+
+            expect($thrown)->toBeInstanceOf(IcapTimeoutException::class, $path);
+            expect($elapsed)->toBeGreaterThanOrEqual(0.25)->toBeLessThan(3.0);
+
+            $timers = [];
+            foreach (EventLoop::getIdentifiers() as $id) {
+                if (in_array(EventLoop::getType($id), [CallbackType::Delay, CallbackType::Repeat], true)) {
+                    $timers[] = $id;
+                }
+            }
+            expect($timers)->toBe($baseline, $path);
+        }
+
+        // The server sees every one of the connections end (after the hello of the handshake that was never answered).
+        delay(0.1);
+        expect(count($accepted))->toBe(3);
+        foreach ($accepted as $peer) {
+            expect(drain($peer)[1])->toBeTrue();
+        }
+        // The pool has the room back: nothing is left of the connections that failed in the handshake.
+        $connecting = (new ReflectionProperty($pool, 'connecting'))->getValue($pool);
+        expect($connecting)->toBe([]);
+        $again = $pool->acquire(new Config('127.0.0.1', $address->getPort(), socketTimeout: 5.0));
+        expect($again->isClosed())->toBeFalse();
+        $again->close();
+    } finally {
+        $pool->close();
+        $server->close();
+        $accepting->await();
+        foreach ($accepted as $peer) {
+            $peer->close();
+        }
+    }
+});
+
+it('gives a TLS handshake the limit of its own where it is longer than the stream timeout', function () {
+    // The connection setup has one window: the stream timeout, or the handshake limit if that is longer.
+    $slowConnector = static function (Config $config, ?Cancellation $cancellation): Socket\Socket {
+        delay(0.4, true, $cancellation);
+        [$peer, $client] = Socket\createSocketPair();
+        $peer->close();
+
+        return $client;
+    };
+    $shortWindow = new Config('icap.example', streamTimeout: 0.15, tlsHandshakeTimeout: 2.0);
+    $cases = [
+        'no TLS: the stream timeout is the window'                         => [$shortWindow, IcapTimeoutException::class],
+        'TLS: the handshake limit is longer, and so is the window'         => [$shortWindow->withTlsContext(new ClientTlsContext('icap.example')), null],
+    ];
+
+    foreach ($cases as $case => [$config, $expected]) {
+        $pool = new AmpConnectionPool(connector: $slowConnector);
+        try {
+            $thrown = thrownBy(function () use ($config, $pool): void {
+                (new AsyncAmpTransport($pool))->openSession($config)->close();
+            });
+
+            if ($expected === null) {
+                expect($thrown)->toBeNull($case);
+            } else {
+                expect($thrown)->toBeInstanceOf($expected, $case);
+            }
+        } finally {
+            $pool->close();
+        }
+    }
+});
+
+/*
+ * AP12-R02 — a read that returned is looked at before its bytes are used. The timer of a window cannot fire while the
+ * event loop is held, and a read that finds its bytes in the socket does not suspend at all, so the end of the window
+ * on the monotonic clock decides: at the first bytes (before the window of the transfer takes the place of the one of
+ * the start), at the end of the frame, and for the caller's cancellation at the first bytes as well.
+ */
+
+/** A valid response with a body of $chunks one-byte chunks: 6,081 bytes for 1,000 of them. */
+function phaseChunkedFrame(int $chunks): string
+{
+    return "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=19\r\n\r\n"
+        . "HTTP/1.1 200 OK\r\n\r\n"
+        . str_repeat("1\r\nX\r\n", $chunks)
+        . "0\r\n\r\n";
+}
+
+/**
+ * A socket whose reads answer from a script of [microseconds the read holds the event loop, bytes it returns, or null
+ * for the end of the stream]. $began counts the reads that were begun.
+ *
+ * @param list<array{int, string|null}> $reads
+ * @param \ArrayObject<string, int>|null $began
+ */
+function phaseScriptedSocket(array $reads, ?DeferredCancellation $cancelOnRead = null, ?\ArrayObject $began = null): Socket\Socket&\Mockery\MockInterface
+{
+    $next = $began ?? new ArrayObject(['read' => 0]);
+    /** @var Socket\Socket&\Mockery\MockInterface $socket */
+    $socket = m::mock(Socket\Socket::class);
+    /** @var \Mockery\Expectation $read */
+    $read = $socket->shouldReceive('read');
+    $read->andReturnUsing(function () use ($reads, $next, $cancelOnRead): ?string {
+        [$hold, $bytes] = $reads[$next['read']++] ?? [0, ''];
+        usleep($hold);
+        $cancelOnRead?->cancel();
+
+        return $bytes;
+    });
+    /** @var \Mockery\Expectation $close */
+    $close = $socket->shouldReceive('close');
+    $close->zeroOrMoreTimes();
+
+    return $socket;
+}
+
+it('does not return a complete answer that was buffered when the time for its transfer had passed', function () {
+    // The stream timeout of the session: ample, or ten microseconds, which decoding 6,081 bytes takes longer than.
+    $cases = ['ample' => [5.0, null], 'ten microseconds' => [0.00001, IcapTimeoutException::class]];
+    $frame = phaseChunkedFrame(1000);
+
+    foreach ($cases as $case => [$window, $expected]) {
+        [$peer, $client] = Socket\createSocketPair();
+        $hung = false;
+        $watchdog = armWatchdog($client, $peer, $hung);
+        // Built by hand: the transport would give the connection setup the same few microseconds.
+        $session = new AmpTransportSession(new Config('icap.example', responseStartTimeout: 5.0), $client, $window, null, 1_000_000, 8192, null);
+
+        try {
+            // The whole answer is in the socket before the call: the read finds it without waiting, and the frame is
+            // complete within that one read. No timer gets a turn of the event loop.
+            $peer->write($frame);
+            $returned = null;
+            $thrown = thrownBy(function () use ($session, &$returned): void {
+                $returned = $session->readResponse();
+            });
+
+            expect($hung)->toBeFalse($case);
+            if ($expected === null) {
+                expect($thrown)->toBeNull($case);
+                expect($returned)->toBe($frame, $case);
+                expect($client->isClosed())->toBeFalse($case);
+            } else {
+                expect($thrown)->toBeInstanceOf($expected, $case);
+                expect($thrown?->getMessage())->toContain('stream timeout');
+                expect($client->isClosed())->toBeTrue($case);
+            }
+        } finally {
+            EventLoop::cancel($watchdog);
+            $session->close();
+            $peer->close();
+        }
+    }
+});
+
+it('does not accept the first bytes of an answer that a read returned after the response start timeout, nor give them a window of the transfer', function () {
+    // [microseconds the read holds the event loop, how the call ends]: the start timeout is 30 ms
+    $cases = ['in time' => [0, null], 'late' => [90_000, IcapTimeoutException::class]];
+    $config = new Config('icap.example', streamTimeout: 5.0, responseStartTimeout: 0.03);
+
+    foreach ($cases as $case => [$hold, $expected]) {
+        $session = new AmpTransportSession($config, phaseScriptedSocket([[$hold, PHASE_FRAME]]), 5.0, null, 1_000_000, 8192, null);
+
+        $returned = null;
+        $thrown = thrownBy(function () use ($session, &$returned): void {
+            $returned = $session->readResponse();
+        });
+
+        // The whole answer came with the first read: a window of the transfer that began with it would call it in time.
+        if ($expected === null) {
+            expect($thrown)->toBeNull($case);
+            expect($returned)->toBe(PHASE_FRAME, $case);
+        } else {
+            expect($thrown)->toBeInstanceOf($expected, $case);
+            expect($thrown?->getMessage())->toContain('response start timeout');
+        }
+    }
+    m::close();
+});
+
+it('does not accept the rest of an answer that a read returned after the time for its transfer', function () {
+    // [microseconds the second read holds the event loop, how the call ends]: the transfer has 40 ms from the first bytes
+    $cases = ['in time' => [0, null], 'late' => [90_000, IcapTimeoutException::class]];
+    $config = new Config('icap.example', responseStartTimeout: 5.0);
+
+    foreach ($cases as $case => [$hold, $expected]) {
+        $socket = phaseScriptedSocket([[0, substr(PHASE_FRAME, 0, 10)], [$hold, substr(PHASE_FRAME, 10)]]);
+        $session = new AmpTransportSession($config, $socket, 0.04, null, 1_000_000, 8192, null);
+
+        $returned = null;
+        $thrown = thrownBy(function () use ($session, &$returned): void {
+            $returned = $session->readResponse();
+        });
+
+        // The start timeout (5 s) is far away: the end of the first stretch must not be the one that is looked at.
+        if ($expected === null) {
+            expect($thrown)->toBeNull($case);
+            expect($returned)->toBe(PHASE_FRAME, $case);
+        } else {
+            expect($thrown)->toBeInstanceOf($expected, $case);
+            expect($thrown?->getMessage())->toContain('stream timeout');
+        }
+    }
+    m::close();
+});
+
+it('lets the cancellation of the caller win over an answer that a read returned while they cancelled', function () {
+    $caller = new DeferredCancellation();
+    $socket = phaseScriptedSocket([[0, PHASE_FRAME]], $caller);
+    $session = new AmpTransportSession(new Config('icap.example'), $socket, 5.0, $caller->getCancellation(), 1_000_000, 8192, null);
+
+    $thrown = thrownBy(fn () => $session->readResponse());
+
+    expect($thrown)->toBeInstanceOf(CancelledException::class);
+    expect($thrown)->not->toBeInstanceOf(IcapTimeoutException::class);
+    m::close();
+});
+
+/*
+ * AP12-R02 (rest) — every read is looked at, not only the first one and the frame. A read that returned has brought
+ * control back from something that does not look by itself, and what it brought - bytes or the end of the stream - is
+ * not handed to the decoder if the caller has cancelled or the time for the transfer has passed. No read is begun
+ * after that either.
+ */
+it('begins no read and accepts no result once the time for the transfer has passed, bytes and the end of the stream alike', function () {
+    [$a, $b, $c] = [substr(PHASE_FRAME, 0, 10), substr(PHASE_FRAME, 10, 10), substr(PHASE_FRAME, 20)];
+    // [script of [microseconds the read holds the event loop, what it returns], stream timeout, how the call ends, reads begun]
+    $cases = [
+        'in time'                   => [[[0, $a], [0, $b], [0, $c]], 5.0, PHASE_FRAME, 3],
+        'second read late'          => [[[0, $a], [90_000, $b], [150_000, $c]], 0.03, IcapTimeoutException::class, 2],
+        'no time for the transfer'  => [[[0, $a], [0, $b], [0, $c]], 0.0, IcapTimeoutException::class, 1],
+        'end of the stream in time' => [[[0, $a], [0, null]], 5.0, IcapMalformedResponseException::class, 2],
+        'end of the stream late'    => [[[0, $a], [90_000, null]], 0.03, IcapTimeoutException::class, 2],
+    ];
+
+    $seen = [];
+    foreach ($cases as $case => [$script, $window]) {
+        $began = new ArrayObject(['read' => 0]);
+        $session = new AmpTransportSession(new Config('icap.example', responseStartTimeout: 5.0), phaseScriptedSocket($script, null, $began), $window, null, 1_000_000, 8192, null);
+
+        $returned = null;
+        $thrown = thrownBy(function () use ($session, &$returned): void {
+            $returned = $session->readResponse();
+        });
+
+        // The start timeout (5 s) is far away: the first bytes were in time, and it is the transfer that ran out.
+        if ($thrown instanceof IcapTimeoutException) {
+            Assert::assertStringContainsString('stream timeout', $thrown->getMessage(), $case);
+        }
+        $seen[$case] = [$thrown === null ? $returned : $thrown::class, $began['read']];
+    }
+
+    expect($seen)->toBe(array_map(static fn (array $case): array => [$case[2], $case[3]], $cases));
+    m::close();
+});
+
+it('tells a timeout from a framing error when the peer hangs up on an answer that is buffered whole but for its last chunk', function () {
+    // 6,076 bytes of a valid answer, without the final chunk, and a peer that is gone.
+    $cut = substr(phaseChunkedFrame(1000), 0, -5);
+    // The stream timeout of the session: ample, or ten microseconds, which decoding the bytes takes longer than.
+    $cases = ['ample' => [5.0, IcapMalformedResponseException::class], 'ten microseconds' => [0.00001, IcapTimeoutException::class]];
+
+    foreach ($cases as $case => [$window, $expected]) {
+        [$peer, $client] = Socket\createSocketPair();
+        $hung = false;
+        $watchdog = armWatchdog($client, $peer, $hung);
+        // Built by hand: the transport would give the connection setup the same few microseconds.
+        $session = new AmpTransportSession(new Config('icap.example', responseStartTimeout: 5.0), $client, $window, null, 1_000_000, 8192, null);
+
+        try {
+            $peer->write($cut);
+            $peer->close();
+            $thrown = thrownBy(fn () => $session->readResponse());
+
+            expect($hung)->toBeFalse($case);
+            expect($thrown)->toBeInstanceOf($expected, $case);
+            expect($client->isClosed())->toBeTrue($case);
+        } finally {
+            EventLoop::cancel($watchdog);
+            $session->close();
+            $peer->close();
+        }
     }
 });

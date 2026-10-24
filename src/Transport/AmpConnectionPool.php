@@ -25,7 +25,6 @@ use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket;
 use Amp\Socket\ClientTlsContext;
-use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
 use Closure;
 use Ndrstmr\Icap\Config;
@@ -34,7 +33,6 @@ use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\HeaderFields;
-use Ndrstmr\Icap\IcapUri;
 use Revolt\EventLoop;
 use WeakMap;
 use WeakReference;
@@ -839,18 +837,8 @@ final class AmpConnectionPool implements ConnectionPoolInterface
     private static function defaultConnector(): Closure
     {
         return static function (Config $config, ?Cancellation $cancellation): SocketInterface {
-            $tls = $config->getTlsContext();
-            $url = IcapUri::tcp($config->host, $config->port);
-            $context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
-            if ($tls !== null) {
-                $context = $context->withTlsContext($tls);
-            }
-
             try {
-                if ($tls !== null) {
-                    return Socket\connectTls($url, $context, $cancellation);
-                }
-                return Socket\connect($url, $context, $cancellation);
+                return SocketOpener::open($config, $cancellation);
             } catch (Socket\ConnectException $e) {
                 throw new IcapConnectionException(
                     sprintf('Pooled connect to %s:%d failed.', $config->host, $config->port),

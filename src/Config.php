@@ -37,6 +37,9 @@ final readonly class Config
     private const int DEFAULT_MAX_HEADER_COUNT = 100;
     private const int DEFAULT_MAX_HEADER_LINE = 8192;
 
+    /** The whole of one operation, in seconds: a defensive library default, not a statement about any deployment. */
+    private const float DEFAULT_OPERATION_TIMEOUT = 60.0;
+
     /** @var list<string> */
     private array $virusFoundHeaders;
 
@@ -45,9 +48,14 @@ final readonly class Config
      *                                                   or without brackets), in the syntax of the URIs the client builds
      *                                                   from it; nothing is resolved here
      * @param int                   $port                TCP port from 1 to 65535, defaults to 1344 (11344 is the common TLS port)
-     * @param float                 $socketTimeout       Timeout in seconds for establishing the connection; finite and above 0
-     * @param float                 $streamTimeout       Timeout in seconds for reading/writing; finite and 0 or more,
-     *                                                   where 0 gives up at once and never waits without limit
+     * @param float                 $socketTimeout       Timeout in seconds for establishing the connection (TCP); finite and above 0
+     * @param float                 $streamTimeout       Timeout in seconds for reading/writing: the longest the response
+     *                                                   takes to arrive once its first byte is in; for a write, with
+     *                                                   the async transport the longest one write call takes, with the
+     *                                                   synchronous transport the longest the peer may go without
+     *                                                   taking a byte (every byte it takes starts that again, so only
+     *                                                   $operationTimeout bounds the write in all); finite and 0 or
+     *                                                   more, where 0 gives up at once and never waits without limit
      * @param string                $virusFoundHeader    Legacy single virus header (back-compat). The client now
      *                                                   consults a list; this value seeds it when
      *                                                   $virusFoundHeaders is null.
@@ -57,11 +65,21 @@ final readonly class Config
      * @param int                   $maxHeaderLineLength DoS ceiling for a single header line length (bytes); 1 or more
      * @param list<string>|null     $virusFoundHeaders   Ordered, non-empty list of vendor virus-name headers, each a
      *                                                   header name (a token); null falls back to [$virusFoundHeader].
+     * @param float                 $operationTimeout    Seconds one operation may take in all: from the call of a public method
+     *                                                   to its result, over every phase (cache, waiting for the pool,
+     *                                                   connecting, TLS, upload, preview, continuation, answers) and, in
+     *                                                   the retry decorator, every attempt and pause. A monotonic end time,
+     *                                                   which no phase and no nested call extends; finite and above 0
+     * @param float|null            $tlsHandshakeTimeout Seconds the TLS handshake may take; finite and above 0; null: `$streamTimeout`
+     * @param float|null            $responseStartTimeout Seconds the server may take, after the request is completely sent,
+     *                                                   to begin its answer (the time a scan needs); finite and above 0;
+     *                                                   null: `$streamTimeout`
      *
      * @throws \InvalidArgumentException When a value cannot work: a host that is neither a host name nor an IP
      *         address, a port outside 1 to 65535, a socket timeout that is not finite and above 0, a stream
-     *         timeout that is not finite and 0 or more, a limit below 1, or virus headers that are not a
-     *         non-empty list of header names
+     *         timeout that is not finite and 0 or more, an operation, TLS handshake or response start timeout
+     *         that is not finite and above 0, a limit below 1, or virus headers that are not a non-empty list
+     *         of header names
      */
     public function __construct(
         public string $host,
@@ -74,6 +92,9 @@ final readonly class Config
         private int $maxHeaderCount = self::DEFAULT_MAX_HEADER_COUNT,
         private int $maxHeaderLineLength = self::DEFAULT_MAX_HEADER_LINE,
         ?array $virusFoundHeaders = null,
+        private float $operationTimeout = self::DEFAULT_OPERATION_TIMEOUT,
+        private ?float $tlsHandshakeTimeout = null,
+        private ?float $responseStartTimeout = null,
     ) {
         if ($port < 1 || $port > 65535) {
             throw new \InvalidArgumentException('port must be between 1 and 65535, got: ' . $port);
@@ -87,6 +108,16 @@ final readonly class Config
         // 0 stays valid: the transports give up at once instead of waiting without limit.
         if (!is_finite($streamTimeout) || $streamTimeout < 0.0) {
             throw new \InvalidArgumentException('streamTimeout must be a finite number of seconds, 0 or more, got: ' . var_export($streamTimeout, true));
+        }
+        // 0 is no limit here: a total of 0 seconds could never finish, and never means waiting for ever.
+        if (!is_finite($operationTimeout) || $operationTimeout <= 0.0) {
+            throw new \InvalidArgumentException('operationTimeout must be a finite number of seconds above 0, got: ' . var_export($operationTimeout, true));
+        }
+        if ($tlsHandshakeTimeout !== null && (!is_finite($tlsHandshakeTimeout) || $tlsHandshakeTimeout <= 0.0)) {
+            throw new \InvalidArgumentException('tlsHandshakeTimeout must be a finite number of seconds above 0 or null, got: ' . var_export($tlsHandshakeTimeout, true));
+        }
+        if ($responseStartTimeout !== null && (!is_finite($responseStartTimeout) || $responseStartTimeout <= 0.0)) {
+            throw new \InvalidArgumentException('responseStartTimeout must be a finite number of seconds above 0 or null, got: ' . var_export($responseStartTimeout, true));
         }
         if ($maxResponseSize < 1) {
             throw new \InvalidArgumentException('maxResponseSize must be >= 1, got: ' . $maxResponseSize);
@@ -142,6 +173,31 @@ final readonly class Config
     }
 
     /**
+     * Seconds one operation may take in all, from the call of a public method to its result.
+     */
+    public function getOperationTimeout(): float
+    {
+        return $this->operationTimeout;
+    }
+
+    /**
+     * Seconds the TLS handshake may take: its own setting, or the stream timeout, which has always bounded it.
+     */
+    public function getTlsHandshakeTimeout(): float
+    {
+        return $this->tlsHandshakeTimeout ?? $this->streamTimeout;
+    }
+
+    /**
+     * Seconds the server may take, once the request is sent, to begin its answer: its own setting, or the
+     * stream timeout.
+     */
+    public function getResponseStartTimeout(): float
+    {
+        return $this->responseStartTimeout ?? $this->streamTimeout;
+    }
+
+    /**
      * Legacy accessor — returns the first configured virus header.
      * Prefer {@see getVirusFoundHeaders()} for new code; this method
      * stays for back-compat with v1 callers.
@@ -187,6 +243,9 @@ final readonly class Config
             maxHeaderCount: $this->maxHeaderCount,
             maxHeaderLineLength: $this->maxHeaderLineLength,
             virusFoundHeaders: $headerNames,
+            operationTimeout: $this->operationTimeout,
+            tlsHandshakeTimeout: $this->tlsHandshakeTimeout,
+            responseStartTimeout: $this->responseStartTimeout,
         );
     }
 
@@ -212,6 +271,36 @@ final readonly class Config
             maxHeaderCount: $this->maxHeaderCount,
             maxHeaderLineLength: $this->maxHeaderLineLength,
             virusFoundHeaders: $this->virusFoundHeaders,
+            operationTimeout: $this->operationTimeout,
+            tlsHandshakeTimeout: $this->tlsHandshakeTimeout,
+            responseStartTimeout: $this->responseStartTimeout,
+        );
+    }
+
+    /**
+     * Return a new instance with the operation, TLS handshake and response start timeouts overridden. Passing
+     * null leaves a timeout at its current value.
+     *
+     * @throws \InvalidArgumentException When a timeout is not finite and above 0
+     */
+    public function withTimeouts(
+        ?float $operationTimeout = null,
+        ?float $tlsHandshakeTimeout = null,
+        ?float $responseStartTimeout = null,
+    ): self {
+        return new self(
+            host: $this->host,
+            port: $this->port,
+            socketTimeout: $this->socketTimeout,
+            streamTimeout: $this->streamTimeout,
+            tlsContext: $this->tlsContext,
+            maxResponseSize: $this->maxResponseSize,
+            maxHeaderCount: $this->maxHeaderCount,
+            maxHeaderLineLength: $this->maxHeaderLineLength,
+            virusFoundHeaders: $this->virusFoundHeaders,
+            operationTimeout: $operationTimeout ?? $this->operationTimeout,
+            tlsHandshakeTimeout: $tlsHandshakeTimeout ?? $this->tlsHandshakeTimeout,
+            responseStartTimeout: $responseStartTimeout ?? $this->responseStartTimeout,
         );
     }
 
@@ -251,6 +340,9 @@ final readonly class Config
             maxHeaderCount: $maxHeaderCount ?? $this->maxHeaderCount,
             maxHeaderLineLength: $maxHeaderLineLength ?? $this->maxHeaderLineLength,
             virusFoundHeaders: $this->virusFoundHeaders,
+            operationTimeout: $this->operationTimeout,
+            tlsHandshakeTimeout: $this->tlsHandshakeTimeout,
+            responseStartTimeout: $this->responseStartTimeout,
         );
     }
 }

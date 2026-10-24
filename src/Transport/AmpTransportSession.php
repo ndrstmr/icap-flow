@@ -42,16 +42,24 @@ use Revolt\EventLoop;
  *   - The caller calls {@see release()} on success (returns to the
  *     pool when one is configured) or {@see close()} on failure.
  *
- * Every {@see write()} and every {@see readResponse()} call gets a window
- * of `streamTimeout` seconds of its own, shared by everything that call
- * does — not one window per chunk, and no timer that spans the session.
- * The call also ends with the caller's cancellation. A call that ends in
+ * Every {@see write()} call gets a window of `streamTimeout` seconds of its own,
+ * shared by everything that call does — not one window per chunk, and no timer
+ * that spans the session. A {@see readResponse()} call has two, one after the
+ * other (M10): the server may take `responseStartTimeout` seconds to begin its
+ * answer once the request is sent (the time a scan needs), and from the first
+ * byte on the answer has `streamTimeout` seconds to arrive in full. The second
+ * is a maximum, not an idle timer that every byte starts again: a peer that
+ * drips the answer does not keep the call alive. The call also ends with the
+ * caller's cancellation, which is, in an operation of the client, also the end
+ * of the operation ({@see \Ndrstmr\Icap\OperationDeadline}). A call that ends in
  * either, or in any other failure, closes the session for good: a request
  * sent in part or a response read in part cannot be continued, and
- * {@see release()} afterwards cannot hand the socket to a pool. The
- * window passing is an {@see IcapTimeoutException}; the caller's
- * cancellation — also one that is a `TimeoutCancellation` — stays the
- * `Amp\CancelledException` it is.
+ * {@see release()} afterwards cannot hand the socket to a pool. Nor can it once
+ * the caller has cancelled or the operation has run out of time, whatever the
+ * exchange looked like: a socket goes back from an operation that is still
+ * wanted and in time. The window passing is an {@see IcapTimeoutException};
+ * the caller's cancellation — also one that is a `TimeoutCancellation` — stays
+ * the `Amp\CancelledException` it is.
  *
  * The producer of a request is part of the call. The event loop cannot fire
  * the timer of the window while a producer holds it, so the window also has an
@@ -98,7 +106,7 @@ final class AmpTransportSession implements TransportSession
             throw new IcapMalformedResponseException('The server sent bytes that no request was waiting for.');
         }
 
-        $this->inWindow('Writing the request', function (Cancellation $window, \Closure $checkpoint) use ($chunks): void {
+        $this->inWindow('Writing the request', 'stream timeout', $this->streamTimeout, function (Cancellation $window, \Closure $checkpoint) use ($chunks): void {
             // Socket::write() takes no cancellation: against a peer that does not read it
             // suspends this fiber until the peer does. Closing the socket is what fails the
             // pending write, so the end of the window, by deadline or by the caller, closes it.
@@ -132,12 +140,40 @@ final class AmpTransportSession implements TransportSession
         $this->assertActive();
         $reader = $this->reader;
         $socket = $this->socket;
+        $streamTimeout = $this->streamTimeout;
+        // Bytes of the answer that are in already: it has begun, and only its transfer has a limit left.
+        $begun = $reader->hasPendingBytes();
 
         return $this->inWindow(
-            'Reading the response',
-            static fn (Cancellation $window): string => $reader->readFrom(
-                static fn (): ?string => $socket->read($window),
-            ),
+            $begun ? 'Reading the response' : 'Waiting for the response to begin',
+            $begun ? 'stream timeout' : 'response start timeout',
+            $begun ? $streamTimeout : $this->config->getResponseStartTimeout(),
+            static function (Cancellation $window, \Closure $checkpoint, \Closure $next) use ($reader, $socket, $streamTimeout, &$begun): string {
+                $frame = $reader->readFrom(static function () use ($socket, $window, $checkpoint, $next, $streamTimeout, &$begun): ?string {
+                    // No read is begun for a caller who has cancelled, nor once the stretch has run out.
+                    $checkpoint();
+                    $bytes = $socket->read($window);
+                    // The read is back, and it may have found its bytes without waiting, or have been held up by
+                    // something that holds the event loop. What it brought, bytes or the end of the stream, counts only
+                    // if the caller has not cancelled and the stretch it began in has not run out: the decoder gets
+                    // neither otherwise, and the end of the stream would be a framing error. For the first bytes this is
+                    // the look at the time to begin, before the window of the transfer takes its place.
+                    $checkpoint();
+                    if ($bytes !== null && !$begun) {
+                        // The first byte is in: the wait for the server is over, and the answer has to arrive within the
+                        // stream timeout from here, whatever its further bytes do.
+                        $begun = true;
+                        $next('Reading the response', 'stream timeout', $streamTimeout);
+                    }
+
+                    return $bytes;
+                });
+                // The frame is complete. A timer cannot say that its window has passed while the bytes were decoded, or
+                // while the caller cancelled: the clock and the caller are looked at before the frame is returned.
+                $checkpoint();
+
+                return $frame;
+            },
         );
     }
 
@@ -155,25 +191,37 @@ final class AmpTransportSession implements TransportSession
      * stack frames alive.
      *
      * The phase gets the cancellation of the window and a checkpoint for the places where it
-     * has control back from something that does not look by itself, a producer: it throws the
-     * caller's cancellation, or the cancellation of the window once the window has passed. The
-     * timer cannot say so while that something holds the event loop, the monotonic clock can.
+     * has control back from something that does not look by itself: a producer, or a read that
+     * returned without the timer having had a turn of the event loop (it found its bytes in the
+     * socket, or something held the loop up): before and after every read, the end of the stream
+     * included, and before the frame is returned. The checkpoint throws the caller's cancellation, or
+     * the cancellation of the window once the window has passed. The timer cannot say so while
+     * something holds the event loop, the monotonic clock can.
+     *
+     * The phase can go on into a second stretch of the same call, with a limit of its own: the third
+     * argument it is handed replaces the timer and the end on the clock ($what and $limit are for the
+     * message), and the window stays the one the call and its cancellation belong to. The checkpoint
+     * looks at the stretch that runs, so the first bytes of an answer are measured against the time
+     * to begin before the window of the transfer takes its place.
      *
      * @template T
      *
-     * @param \Closure(Cancellation, \Closure(): void): T $phase
+     * @param string                                                                         $what    what the call does, for the message
+     * @param string                                                                         $limit   the name of the limit that applies, for the message
+     * @param \Closure(Cancellation, \Closure(): void, \Closure(string, string, float): void): T $phase
      *
      * @return T
      */
-    private function inWindow(string $what, \Closure $phase): mixed
+    private function inWindow(string $what, string $limit, float $seconds, \Closure $phase): mixed
     {
         $caller = $this->userCancellation;
         $window = new DeferredCancellation();
         $expired = false;
         $deadline = null;
         $watch = null;
-        $endsAt = hrtime(true) + $this->streamTimeout * 1e9;
-        $checkpoint = static function () use ($caller, $window, $endsAt, &$expired): void {
+        // The end of the stretch that runs, on the monotonic clock: $arm sets it together with the timer.
+        $endsAt = 0.0;
+        $checkpoint = static function () use ($caller, $window, &$endsAt, &$expired): void {
             $caller?->throwIfRequested();
             if (hrtime(true) >= $endsAt) {
                 $expired = true;
@@ -181,20 +229,31 @@ final class AmpTransportSession implements TransportSession
             }
             $window->getCancellation()->throwIfRequested();
         };
+        $arm = static function (string $newWhat, string $newLimit, float $newSeconds) use (&$what, &$limit, &$seconds, &$endsAt, &$deadline, &$expired, $window): void {
+            if ($deadline !== null) {
+                EventLoop::cancel($deadline);
+            }
+            $what = $newWhat;
+            $limit = $newLimit;
+            $seconds = $newSeconds;
+            // The end on the clock moves with the timer: the checkpoint looks at the stretch that is running.
+            $endsAt = hrtime(true) + $newSeconds * 1e9;
+            $deadline = EventLoop::delay($newSeconds, static function () use (&$expired, $window): void {
+                $expired = true;
+                $window->cancel();
+            });
+        };
 
         try {
             // Cancelled before it began: nothing is pulled, sent or read.
             $caller?->throwIfRequested();
 
-            $deadline = EventLoop::delay($this->streamTimeout, function () use (&$expired, $window): void {
-                $expired = true;
-                $window->cancel();
-            });
+            $arm($what, $limit, $seconds);
             $watch = $caller?->subscribe(static function () use ($window): void {
                 $window->cancel();
             });
 
-            return $phase($window->getCancellation(), $checkpoint);
+            return $phase($window->getCancellation(), $checkpoint, $arm);
         } catch (\Throwable $e) {
             $this->close();
 
@@ -204,9 +263,10 @@ final class AmpTransportSession implements TransportSession
                 $caller?->throwIfRequested();
                 if ($expired) {
                     throw new IcapTimeoutException(sprintf(
-                        '%s did not finish within the stream timeout of %s seconds.',
+                        '%s did not finish within the %s of %s seconds.',
                         $what,
-                        $this->streamTimeout,
+                        $limit,
+                        $seconds,
                     ));
                 }
             }
@@ -230,8 +290,10 @@ final class AmpTransportSession implements TransportSession
         }
         $this->disposed = true;
 
-        // Bytes nobody asked for are on this socket: the next user would read them as its answer.
-        if ($this->pool !== null && !$this->reader->hasPendingBytes()) {
+        // Bytes nobody asked for are on this socket: the next user would read them as its answer. And an operation
+        // that was cancelled, or has run out of time, hands nothing to the pool, whatever the exchange looked like
+        // while it lasted (M10).
+        if ($this->pool !== null && !$this->reader->hasPendingBytes() && !($this->userCancellation?->isRequested() ?? false)) {
             $this->pool->release($this->config, $this->socket);
             return;
         }
