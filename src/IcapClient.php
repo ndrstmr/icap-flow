@@ -102,29 +102,87 @@ final class IcapClient implements IcapClientInterface
     #[\Override]
     public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
-        /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($request, $cancellation): ScanResult {
-            $context = $this->logContext($request);
-            $this->logger->info('ICAP request started', $context);
+        return $this->run(
+            OperationDeadline::begin($cancellation, $this->config->getOperationTimeout()),
+            function (OperationDeadline $deadline) use ($request): ScanResult {
+                $context = $this->logContext($request);
+                $this->logger->info('ICAP request started', $context);
 
-            $response = null;
+                $response = null;
+                try {
+                    $response = $this->executeRaw($request, $deadline)->await();
+                    // An answer that comes in after the end of the operation is none (M10).
+                    $deadline->checkpoint();
+                    $result = $this->interpretResponse($response, $this->config);
+                } catch (\Throwable $e) {
+                    $e = $deadline->outcome($e);
+                    $this->logFailure($context, $response, $e);
+                    throw $e;
+                }
+
+                $this->logger->info('ICAP request completed', $context + [
+                    'statusCode' => $response->statusCode,
+                    'infected'   => $result->isInfected(),
+                ]);
+
+                return $result;
+            },
+        );
+    }
+
+    /**
+     * Runs one public operation in a fiber of its own, inside the budget that began with its call (M10): the timer
+     * and the subscription to the caller are set for exactly as long as the operation runs and removed in `finally`,
+     * and what leaves the operation is looked at against the clock before it is returned, so that a result that
+     * came in late (a producer, a transport or a cache that held the event loop) is a timeout, not a success.
+     * The caller's cancellation stays a `CancelledException`; the end of the budget is an `IcapTimeoutException`.
+     *
+     * @template T
+     *
+     * @param \Closure(OperationDeadline): T $operation
+     *
+     * @return Future<T>
+     */
+    private function run(OperationDeadline $deadline, \Closure $operation): Future
+    {
+        /** @var Future<T> $future */
+        $future = \Amp\async(static function () use ($deadline, $operation): mixed {
             try {
-                $response = $this->executeRaw($request, $cancellation)->await();
-                $result = $this->interpretResponse($response, $this->config);
+                $result = $operation($deadline);
+                $deadline->checkpoint();
+
+                return $result;
             } catch (\Throwable $e) {
-                $this->logFailure($context, $response, $e);
-                throw $e;
+                throw $deadline->outcome($e);
+            } finally {
+                $deadline->close();
             }
-
-            $this->logger->info('ICAP request completed', $context + [
-                'statusCode' => $response->statusCode,
-                'infected'   => $result->isInfected(),
-            ]);
-
-            return $result;
         });
 
         return $future;
+    }
+
+    /**
+     * The Future of an operation that was cancelled, or has run out of time, before a fiber of its own began (an answer
+     * from the OPTIONS cache), or null if it is still wanted and in time: the cancellation of the caller as the
+     * exception it is, the end of the operation as an {@see IcapTimeoutException}. The operation is over, so its
+     * deadline is closed.
+     *
+     * @phpstan-impure it reads the clock and the cancellation of the caller: the answer to a second call differs
+     *
+     * @return Future<never>|null
+     */
+    private static function stopped(OperationDeadline $deadline): ?Future
+    {
+        try {
+            $deadline->checkpoint();
+        } catch (\Throwable $e) {
+            $deadline->close();
+
+            return Future::error($e);
+        }
+
+        return null;
     }
 
     /**
@@ -158,30 +216,45 @@ final class IcapClient implements IcapClientInterface
     #[\Override]
     public function options(string $service, ?Cancellation $cancellation = null): Future
     {
+        $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
+
         // Validate first so injection attempts never reach the cache key.
         $uri = $this->buildServiceUri($service);
 
         $cacheKey = $this->optionsCacheKey($service);
 
-        if ($this->optionsCache !== null) {
-            $cached = $this->optionsCache->get($cacheKey);
+        $cache = $this->optionsCache;
+        if ($cache !== null) {
+            // The cache is foreign code, and a hit is an answer like any other: a call that was cancelled, or is over,
+            // does not ask it, and one that was cancelled or ran out of time while it was asked gets no answer from
+            // it. The cancellation of the caller wins; what ended the call is the Future's to tell.
+            if (($stopped = self::stopped($deadline)) !== null) {
+                return $stopped;
+            }
+            $cached = $cache->get($cacheKey);
+            if (($stopped = self::stopped($deadline)) !== null) {
+                return $stopped;
+            }
             if ($cached !== null) {
                 $this->assertOptionsStatus($cached->statusCode);
+                $deadline->close();
+
                 return Future::complete($cached);
             }
         }
 
-        /** @var Future<IcapResponse> $future */
-        $future = \Amp\async(function () use ($uri, $cacheKey, $cancellation): IcapResponse {
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $cacheKey): IcapResponse {
             $request = new IcapRequest('OPTIONS', $uri);
             $context = $this->logContext($request);
             $this->logger->info('ICAP request started', $context);
 
             $response = null;
             try {
-                $response = $this->executeRaw($request, $cancellation)->await();
+                $response = $this->executeRaw($request, $deadline)->await();
+                $deadline->checkpoint();
                 $this->assertOptionsStatus($response->statusCode);
             } catch (\Throwable $e) {
+                $e = $deadline->outcome($e);
                 $this->logFailure($context, $response, $e);
                 throw $e;
             }
@@ -195,6 +268,9 @@ final class IcapClient implements IcapClientInterface
             // (RFC 3507 §4.10.2); fall back to 0 (no caching) when the
             // server didn't specify one.
             if ($this->optionsCache !== null) {
+                // The logger is foreign code: a call that was cancelled, or ran out of time, while it logged the
+                // answer does not begin a write to the cache.
+                $deadline->checkpoint();
                 $ttl = (int) (HeaderFields::single($response->headers, 'Options-TTL') ?? '0');
                 $istag = HeaderFields::single($response->headers, 'ISTag');
                 $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
@@ -202,8 +278,6 @@ final class IcapClient implements IcapClientInterface
 
             return $response;
         });
-
-        return $future;
     }
 
     /**
@@ -233,14 +307,15 @@ final class IcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
+        $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
+
         // Validate first so injection attempts never reach the socket.
         $this->validateIcapHeaders($extraHeaders);
         $uri = $this->buildServiceUri($service);
 
-        /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($uri, $filePath, $extraHeaders, $cancellation): ScanResult {
-            // A cancellation that was already requested opens no file.
-            $cancellation?->throwIfRequested();
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $filePath, $extraHeaders): ScanResult {
+            // A cancellation that was already requested, or an operation that is over, opens no file.
+            $deadline->checkpoint();
 
             [$stream, $size] = $this->openSource($filePath);
             try {
@@ -263,13 +338,11 @@ final class IcapClient implements IcapClientInterface
                     encapsulatedResponse: $httpResponse,
                 );
 
-                return $this->request($request, $cancellation)->await();
+                return $this->request($request, $deadline)->await();
             } finally {
                 fclose($stream);
             }
         });
-
-        return $future;
     }
 
     /**
@@ -303,6 +376,8 @@ final class IcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
+        $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
+
         if ($previewSize !== null && ($previewSize < 0 || $previewSize > self::MAX_PREVIEW_SIZE)) {
             throw new \InvalidArgumentException(sprintf(
                 'Preview size must be between 0 and %d bytes, got: %d',
@@ -314,10 +389,9 @@ final class IcapClient implements IcapClientInterface
 
         $previewSize = $this->resolvePreviewSize($service, $previewSize);
 
-        /** @var Future<ScanResult> $future */
-        $future = \Amp\async(function () use ($service, $filePath, $previewSize, $extraHeaders, $cancellation): ScanResult {
-            // A cancellation that was already requested opens no file.
-            $cancellation?->throwIfRequested();
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($service, $filePath, $previewSize, $extraHeaders): ScanResult {
+            // A cancellation that was already requested, or an operation that is over, opens no file.
+            $deadline->checkpoint();
 
             [$stream, $fileSize] = $this->openSource($filePath);
 
@@ -331,7 +405,7 @@ final class IcapClient implements IcapClientInterface
                         $fileSize,
                         $previewSize,
                         $extraHeaders,
-                        $cancellation,
+                        $deadline,
                     );
                 }
                 // Legacy two-request approximation for non-session
@@ -342,14 +416,12 @@ final class IcapClient implements IcapClientInterface
                     $fileSize,
                     $previewSize,
                     $extraHeaders,
-                    $cancellation,
+                    $deadline,
                 );
             } finally {
                 fclose($stream);
             }
         });
-
-        return $future;
     }
 
     /**
@@ -366,7 +438,7 @@ final class IcapClient implements IcapClientInterface
         int $fileSize,
         int $previewSize,
         array $extraHeaders,
-        ?Cancellation $cancellation,
+        OperationDeadline $deadline,
     ): ScanResult {
         \assert($this->transport instanceof SessionAwareTransport);
 
@@ -392,7 +464,7 @@ final class IcapClient implements IcapClientInterface
             previewIsComplete: $previewIsComplete,
         );
 
-        $session = $this->transport->openSession($this->config, $cancellation);
+        $session = $this->transport->openSession($this->config, $deadline);
         // The socket is closed unless the exchange ended in a verdict that
         // passed every check below and no response asked for a close. An
         // exception, a status the flow does not allow or a 100 after `ieof`
@@ -402,6 +474,8 @@ final class IcapClient implements IcapClientInterface
         try {
             $session->write($this->formatter->format($previewRequest));
             $previewIcapResponse = $this->parser->parse($session->readResponse());
+            // Nothing is decided, and nothing pooled, on an answer that came in after the end of the operation.
+            $deadline->checkpoint();
             $serverCloses = HeaderFields::hasToken($previewIcapResponse->headers, 'Connection', 'close');
 
             if ($previewIsComplete) {
@@ -411,6 +485,9 @@ final class IcapClient implements IcapClientInterface
             }
 
             $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
+            // The strategy is foreign code. A verdict that came in after the end of the operation, or after the caller
+            // cancelled, is none: nothing is continued on this socket, and the socket is not given back (M10).
+            $deadline->checkpoint();
 
             if ($decision !== PreviewDecision::CONTINUE_SENDING) {
                 // Server's intermediate response is the verdict — nothing
@@ -438,6 +515,7 @@ final class IcapClient implements IcapClientInterface
             ));
 
             $finalIcapResponse = $this->parser->parse($session->readResponse());
+            $deadline->checkpoint();
             $result = $this->interpretResponse($finalIcapResponse, $this->config);
             $reusable = !$serverCloses
                 && !HeaderFields::hasToken($finalIcapResponse->headers, 'Connection', 'close');
@@ -466,7 +544,7 @@ final class IcapClient implements IcapClientInterface
         int $fileSize,
         int $previewSize,
         array $extraHeaders,
-        ?Cancellation $cancellation,
+        OperationDeadline $deadline,
     ): ScanResult {
         [$previewBytes, $previewIsComplete] = $this->readPreview($stream, $fileSize, $previewSize);
 
@@ -490,13 +568,17 @@ final class IcapClient implements IcapClientInterface
             previewIsComplete: $previewIsComplete,
         );
 
-        $previewIcapResponse = $this->executeRaw($previewRequest, $cancellation)->await();
+        $previewIcapResponse = $this->executeRaw($previewRequest, $deadline)->await();
+        $deadline->checkpoint();
 
         if ($previewIsComplete) {
             return $this->interpretResponse($previewIcapResponse, $this->config);
         }
 
         $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
+        // The strategy is foreign code: no second request is sent on the strength of a decision that came in after the
+        // end of the operation, or after the caller cancelled.
+        $deadline->checkpoint();
         if ($decision !== PreviewDecision::CONTINUE_SENDING) {
             return new ScanResult(
                 isInfected: $decision === PreviewDecision::ABORT_INFECTED,
@@ -529,7 +611,7 @@ final class IcapClient implements IcapClientInterface
             headers: HeaderFields::without($extraHeaders, ['Preview', 'Allow']),
             encapsulatedResponse: $fullResponse,
         );
-        return $this->request($fullRequest, $cancellation)->await();
+        return $this->request($fullRequest, $deadline)->await();
     }
 
     private const int DEFAULT_PREVIEW_SIZE = 1024;
@@ -828,18 +910,9 @@ final class IcapClient implements IcapClientInterface
             );
         }
 
-        if ($code >= 400 && $code < 500) {
-            throw new IcapClientException(
-                sprintf('ICAP client error (%d) — request rejected by server.', $code),
-                $code,
-            );
-        }
-
-        if ($code >= 500 && $code < 600) {
-            throw new IcapServerException(
-                sprintf('ICAP server error (%d) — server failed to service the request.', $code),
-                $code,
-            );
+        $failure = IcapStatus::failure($code);
+        if ($failure !== null) {
+            throw $failure;
         }
     }
 

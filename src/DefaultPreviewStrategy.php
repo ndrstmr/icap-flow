@@ -21,7 +21,9 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap;
 
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
+use Ndrstmr\Icap\Exception\IcapServerException;
 
 /**
  * Default strategy for interpreting preview responses.
@@ -57,19 +59,27 @@ final class DefaultPreviewStrategy implements PreviewStrategyInterface
      * - 204 No Content → server is done; file is clean.
      * - 200 / 206      → server finished early; inspect virus headers to
      *                    determine whether the file is infected or clean.
+     * - 4xx            → {@see IcapClientException}, 5xx → {@see IcapServerException}:
+     *                    the same types as for the answer to any other request (N03).
      * - anything else  → protocol error.
+     *
+     * @throws IcapClientException   When the status is in the 4xx range
+     * @throws IcapServerException   When the status is in the 5xx range
+     * @throws IcapProtocolException When the status is none of the above
      */
     #[\Override]
     public function handlePreviewResponse(IcapResponse $previewResponse): PreviewDecision
     {
+        $code = $previewResponse->statusCode;
+
         return match (true) {
-            $previewResponse->statusCode === 100 => PreviewDecision::CONTINUE_SENDING,
-            $previewResponse->statusCode === 204 => PreviewDecision::ABORT_CLEAN,
-            $previewResponse->statusCode === 200,
-            $previewResponse->statusCode === 206 => $this->classifyBodyResponse($previewResponse),
-            default => throw new IcapProtocolException(
-                'Unexpected preview status code: ' . $previewResponse->statusCode,
-                $previewResponse->statusCode,
+            $code === 100 => PreviewDecision::CONTINUE_SENDING,
+            $code === 204 => PreviewDecision::ABORT_CLEAN,
+            $code === 200,
+            $code === 206 => $this->classifyBodyResponse($previewResponse),
+            default => throw IcapStatus::failure($code) ?? new IcapProtocolException(
+                'Unexpected preview status code: ' . $code,
+                $code,
             ),
         };
     }

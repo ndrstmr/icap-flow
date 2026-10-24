@@ -52,6 +52,10 @@ uses(AsyncTestCase::class);
  * an HTTP client cancelled the upload).
  */
 
+/*
+ * The transport is handed the cancellation of the operation (M10): the user's own, and the end of the operation
+ * with it. It is requested when the user cancels, and only then, as long as the operation has time.
+ */
 it('options() forwards a user-supplied Cancellation to the transport', function () {
     $config = new Config('icap.example');
     /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
@@ -61,7 +65,9 @@ it('options() forwards a user-supplied Cancellation to the transport', function 
     /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
     $parser = m::mock(ResponseParserInterface::class);
 
-    $userCancellation = (new DeferredCancellation())->getCancellation();
+    // A DeferredCancellation cancels when it is destroyed, so the owner has to stay alive.
+    $deferred = new DeferredCancellation();
+    $userCancellation = $deferred->getCancellation();
 
     /** @var \Mockery\Expectation $f */
     $f = $formatter->shouldReceive('format');
@@ -83,9 +89,15 @@ it('options() forwards a user-supplied Cancellation to the transport', function 
     $client = new IcapClient($config, $transport, $formatter, $parser);
 
     /** @var AsyncTestCase $this */
-    $this->runAsyncTest(function () use ($client, $userCancellation, &$captured) {
+    $this->runAsyncTest(function () use ($client, $userCancellation, $deferred, &$captured) {
         $client->options('/svc', $userCancellation)->await();
-        expect($captured)->toBe($userCancellation);
+        // The cancellation of the operation: not the user's own object, but it follows it.
+        expect($captured)->toBeInstanceOf(Cancellation::class)
+            ->and($captured)->not->toBe($userCancellation)
+            ->and($captured->isRequested())->toBeFalse();
+
+        $deferred->cancel();
+        expect($captured->isRequested())->toBeTrue();
     });
 
     m::close();
@@ -129,9 +141,14 @@ it('scanFile() forwards a user-supplied Cancellation', function () {
 
     try {
         /** @var AsyncTestCase $this */
-        $this->runAsyncTest(function () use ($client, $tmp, $userCancellation, &$seen) {
+        $this->runAsyncTest(function () use ($client, $tmp, $userCancellation, $deferred, &$seen) {
             $client->scanFile('/svc', $tmp, [], $userCancellation)->await();
-            expect($seen)->toBe($userCancellation);
+            expect($seen)->toBeInstanceOf(Cancellation::class)
+                ->and($seen)->not->toBe($userCancellation)
+                ->and($seen->isRequested())->toBeFalse();
+
+            $deferred->cancel();
+            expect($seen->isRequested())->toBeTrue();
         });
     } finally {
         @unlink($tmp);

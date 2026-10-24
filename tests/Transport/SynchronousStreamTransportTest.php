@@ -39,7 +39,13 @@ const SYNC_FRAME = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n
  * on its own side with plain blocking calls.
  *
  * The child reads one JSON line (host, port, timeout, chunks, cancel,
- * descriptors), runs the transport and writes one JSON line back. A chunk is a
+ * descriptors, and for the operation budget of M10: operation, responseStart,
+ * hold, client, operationTimeout), runs the transport and writes one JSON line
+ * back. With "operation" the transport gets the end of an operation of that many
+ * seconds as its cancellation, "hold" seconds are spent (blocking) before it is
+ * called, "responseStart" is the response start timeout of the Config, and
+ * with "client" it is an IcapClient with "operationTimeout" that makes an
+ * OPTIONS request, not the transport that is called. A chunk is a
  * string, or one of {"big": n} (n times a 1021 byte block), {"await": true}
  * (wait for the test to release it), {"cancel": true} and {"fail": "message"}
  * (producer behaviour). "descriptors" opens that many files first, so that the
@@ -77,6 +83,43 @@ $cancellation = match ($job['cancel']) {
         return $cancel->getCancellation();
     })(),
     'later' => $cancel->getCancellation(),
+    // Requested once the test has written a line to the child's stdin (SyncChild::release()), which it does while the
+    // client is blocked in a read: the look at the cancellation after that read finds it.
+    'on-signal' => new class () implements \Amp\Cancellation {
+        private bool $signalled = false;
+
+        private function poll(): bool
+        {
+            if (!$this->signalled) {
+                $read = [STDIN];
+                $write = $except = [];
+                $this->signalled = @stream_select($read, $write, $except, 0) > 0 && fgets(STDIN) !== false;
+            }
+
+            return $this->signalled;
+        }
+
+        public function subscribe(\Closure $callback): string
+        {
+            return 'none';
+        }
+
+        public function unsubscribe(string $id): void
+        {
+        }
+
+        public function isRequested(): bool
+        {
+            return $this->poll();
+        }
+
+        public function throwIfRequested(): void
+        {
+            if ($this->poll()) {
+                throw new \Amp\CancelledException();
+            }
+        }
+    },
     // The first look (before connecting) finds nothing, every later one the cancellation.
     'after-first-look' => new class () implements \Amp\Cancellation {
         private int $looks = 0;
@@ -135,11 +178,29 @@ set_error_handler(static function (int $level, string $message) use (&$leaked): 
     return true;
 });
 $streams = count(get_resources('stream'));
+// The settings of M10 only where a test sets them, so that the other tests ask nothing new of the client.
+$settings = ['streamTimeout' => (float) $job['timeout']];
+if ($job['responseStart'] !== null) {
+    $settings['responseStartTimeout'] = (float) $job['responseStart'];
+}
+if ($job['operationTimeout'] !== null) {
+    $settings['operationTimeout'] = (float) $job['operationTimeout'];
+}
+$config = new \Ndrstmr\Icap\Config($job['host'], $job['port'], ...$settings);
+if ($job['operation'] !== null) {
+    $cancellation = \Ndrstmr\Icap\OperationDeadline::begin($cancellation, (float) $job['operation']);
+}
+usleep((int) ($job['hold'] * 1_000_000));
 $started = hrtime(true);
 try {
-    $out = ['response' => (new \Ndrstmr\Icap\Transport\SynchronousStreamTransport())
-        ->request(new \Ndrstmr\Icap\Config($job['host'], $job['port'], streamTimeout: (float) $job['timeout']), $chunks, $cancellation)
-        ->await()];
+    if ($job['client']) {
+        $icap = new \Ndrstmr\Icap\IcapClient($config, new \Ndrstmr\Icap\Transport\SynchronousStreamTransport(), new \Ndrstmr\Icap\RequestFormatter(), new \Ndrstmr\Icap\ResponseParser());
+        $out = ['response' => (string) $icap->options('/scan')->await()->statusCode];
+    } else {
+        $out = ['response' => (new \Ndrstmr\Icap\Transport\SynchronousStreamTransport())
+            ->request($config, $chunks, $cancellation)
+            ->await()];
+    }
 } catch (\Throwable $e) {
     $out = ['error' => $e::class, 'message' => $e->getMessage()];
 }
@@ -163,10 +224,21 @@ final class SyncChild
 
     /**
      * @param list<string|array<string, mixed>> $chunks
-     * @param 'beforehand'|'later'|'after-first-look'|null $cancel
+     * @param 'beforehand'|'later'|'after-first-look'|'on-signal'|null $cancel
      */
-    public static function start(int $port, float $timeout, array $chunks, ?string $cancel = null, string $host = '127.0.0.1', int $descriptors = 0): self
-    {
+    public static function start(
+        int $port,
+        float $timeout,
+        array $chunks,
+        ?string $cancel = null,
+        string $host = '127.0.0.1',
+        int $descriptors = 0,
+        ?float $operation = null,
+        ?float $responseStart = null,
+        float $hold = 0.0,
+        bool $client = false,
+        ?float $operationTimeout = null,
+    ): self {
         $child = new self();
         $process = proc_open(
             [PHP_BINARY, '-d', 'display_errors=stderr', '-r', SYNC_CHILD, '--', dirname(__DIR__, 2) . '/vendor/autoload.php'],
@@ -175,7 +247,7 @@ final class SyncChild
         );
         Assert::assertIsResource($process);
         $child->process = $process;
-        fwrite($child->pipes[0], json_encode(compact('host', 'port', 'timeout', 'chunks', 'cancel', 'descriptors'), JSON_THROW_ON_ERROR) . "\n");
+        fwrite($child->pipes[0], json_encode(compact('host', 'port', 'timeout', 'chunks', 'cancel', 'descriptors', 'operation', 'responseStart', 'hold', 'client', 'operationTimeout'), JSON_THROW_ON_ERROR) . "\n");
         if ($descriptors > 0) {
             // The child says first whether its limit allows that many files; if not, the test is skipped.
             $child->reply(10.0);
@@ -352,6 +424,9 @@ final class SyncScriptedStream
 
     public static ?Closure $afterWrite = null;
 
+    /** Runs inside every read, while the caller is blocked in it: it holds the read up or cancels meanwhile. */
+    public static ?Closure $onRead = null;
+
     /** @var array{resource, resource}|null */
     private static ?array $pair = null;
 
@@ -372,6 +447,7 @@ final class SyncScriptedStream
         self::$eof = $eof;
         self::$taken = '';
         self::$afterWrite = null;
+        self::$onRead = null;
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         Assert::assertIsArray($pair);
         self::$pair = [$pair[0], $pair[1]];
@@ -407,7 +483,17 @@ final class SyncScriptedStream
 
     public function stream_read(int $count): string|false
     {
+        if (self::$onRead !== null) {
+            (self::$onRead)();
+        }
+
         return self::$read;
+    }
+
+    /** A timeout cannot be set on this stream; saying so keeps PHP from warning about it. */
+    public function stream_set_option(int $option, int $arg1, ?int $arg2): bool
+    {
+        return false;
     }
 
     public function stream_eof(): bool
@@ -421,6 +507,52 @@ final class SyncScriptedStream
         Assert::assertNotNull(self::$pair);
 
         return self::$pair[0];
+    }
+}
+
+/**
+ * A caller who cancels while the client decodes what it has read, which nothing can make a single thread do at an exact
+ * moment otherwise: once the request is out ({@see requestIsOut()}), the look before the read and the look after it find
+ * nothing, every later look finds the cancellation.
+ */
+final class SyncCancelsWhileDecoding implements Cancellation
+{
+    private const int LOOKS_BEFORE = 2;
+
+    private ?int $looks = null;
+
+    public function __construct(private readonly bool $cancels)
+    {
+    }
+
+    public function requestIsOut(): void
+    {
+        $this->looks = 0;
+    }
+
+    #[\Override]
+    public function subscribe(\Closure $callback): string
+    {
+        return 'none';
+    }
+
+    #[\Override]
+    public function unsubscribe(string $id): void
+    {
+    }
+
+    #[\Override]
+    public function isRequested(): bool
+    {
+        return $this->cancels && $this->looks !== null && $this->looks > self::LOOKS_BEFORE;
+    }
+
+    #[\Override]
+    public function throwIfRequested(): void
+    {
+        if ($this->looks !== null && $this->looks++ >= self::LOOKS_BEFORE && $this->cancels) {
+            throw new CancelledException();
+        }
     }
 }
 
@@ -979,4 +1111,502 @@ it('stops between two chunks and before the response is read, and closes its soc
         'between two chunks'          => [CancelledException::class, 0, ['one', true]],
         'before the response is read' => [CancelledException::class, 0, ['', true]],
     ]);
+});
+
+/*
+ * AP-12 (M10) — the end of the operation (the client hands it to the transport as its cancellation) bounds every native
+ * wait, and the response has two limits: the server's time to begin its answer, and a maximum for the answer to arrive
+ * in full, which no byte starts again. A peer that answers, or reads, a little at a time cannot stretch the operation.
+ * The client runs in a child process the test can kill.
+ */
+
+/**
+ * Accepts the waiting client and reads its request up to the blank line that ends the head.
+ *
+ * @param resource $server
+ * @return resource the peer
+ */
+function syncAcceptHead($server)
+{
+    $peer = @stream_socket_accept($server, 5);
+    Assert::assertIsResource($peer);
+    stream_set_timeout($peer, 5);
+    $head = '';
+    while (!str_contains($head, "\r\n\r\n") && ($part = fread($peer, 4096)) !== false && $part !== '') {
+        $head .= $part;
+    }
+
+    return $peer;
+}
+
+it('bounds a wait for the answer by what is left of the operation, not by the stream timeout', function () {
+    [$server, $port] = syncListen();
+    $child = SyncChild::start($port, 5.0, [SYNC_REQUEST], operation: 0.25);
+    $peer = null;
+    try {
+        [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+        // The answer comes within the stream timeout (5 s), after the operation is over.
+        usleep(700_000);
+        @fwrite($peer, SYNC_FRAME);
+        $outcome = $child->outcome();
+
+        expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
+        // It ended at the end of the operation, not when the answer came in.
+        expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.2)->toBeLessThan(0.65);
+        expect($outcome['streams'])->toBe(0);
+        expect($outcome['leaked'])->toBe([]);
+    } finally {
+        $child->stop();
+        if (is_resource($peer)) {
+            fclose($peer);
+        }
+        fclose($server);
+    }
+});
+
+it('ends an answer that is dripped a byte at a time at the stream timeout from its first byte', function () {
+    // The time to begin an answer is the stream timeout (0.5 s), or - the server is given five seconds to begin - much
+    // longer: once the first byte is in, the answer has the stream timeout either way.
+    foreach ([null, 5.0] as $responseStart) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 0.5, [SYNC_REQUEST], responseStart: $responseStart);
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            // One byte every 0.15 seconds: every read finds a byte and no read waits for half a second, and the frame
+            // would take eight seconds. The peer stops after two, and stays silent; it does not write to a client that
+            // has gone, which PHP would call a broken pipe.
+            stream_set_blocking($peer, false);
+            foreach (str_split(SYNC_FRAME) as $i => $byte) {
+                fread($peer, 1);
+                if ($i > 12 || feof($peer)) {
+                    break;
+                }
+                fwrite($peer, $byte);
+                usleep(150_000);
+            }
+            $outcome = $child->outcome();
+
+            expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class, (string) $responseStart);
+            // The stream timeout from the first byte (0.5 s), not the end of the dripping, and not an idle timeout that every byte starts again.
+            expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.4)->toBeLessThan(1.5, (string) $responseStart);
+            expect($outcome['streams'])->toBe(0);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('gives the server the response start timeout to begin its answer, longer than the stream timeout', function () {
+    [$server, $port] = syncListen();
+    $child = SyncChild::start($port, 0.3, [SYNC_REQUEST], responseStart: 2.0);
+    $peer = null;
+    try {
+        [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+        usleep(600_000); // a scan: more than the stream timeout, within the time to begin
+        fwrite($peer, SYNC_FRAME);
+        $outcome = $child->outcome();
+
+        expect($outcome['response'] ?? $outcome['error'] ?? null)->toBe(SYNC_FRAME);
+        expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.55)->toBeLessThan(2.0);
+    } finally {
+        $child->stop();
+        if (is_resource($peer)) {
+            fclose($peer);
+        }
+        fclose($server);
+    }
+});
+
+it('ends an answer that does not begin within the response start timeout, shorter than the stream timeout', function () {
+    [$server, $port] = syncListen();
+    $child = SyncChild::start($port, 5.0, [SYNC_REQUEST], responseStart: 0.3);
+    $peer = null;
+    try {
+        [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+        usleep(900_000);
+        @fwrite($peer, SYNC_FRAME);
+        $outcome = $child->outcome();
+
+        expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
+        expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.25)->toBeLessThan(0.85);
+    } finally {
+        $child->stop();
+        if (is_resource($peer)) {
+            fclose($peer);
+        }
+        fclose($server);
+    }
+});
+
+it('ends a write to a peer that reads a little at a time at the end of the operation', function () {
+    [$server, $port] = syncListen();
+    // 32 MiB to a peer that takes 4 KiB every 20 ms: it makes progress all the time, so no stalled-write timeout of
+    // 5 seconds ever passes, and the upload would take minutes.
+    $child = SyncChild::start($port, 5.0, [['big' => 32 * 1024]], operation: 0.5);
+    $peer = null;
+    try {
+        [$peer] = syncServe($server, 0);
+        $until = microtime(true) + 1.5;
+        while (microtime(true) < $until && ($part = fread($peer, 4096)) !== false && $part !== '') {
+            usleep(20_000);
+        }
+        $outcome = $child->outcome();
+
+        expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
+        expect($outcome['asked'])->toBe(1);
+        expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.4)->toBeLessThan(2.0);
+        expect($outcome['streams'])->toBe(0);
+        expect($outcome['leaked'])->toBe([]);
+    } finally {
+        $child->stop();
+        if (is_resource($peer)) {
+            fclose($peer);
+        }
+        fclose($server);
+    }
+});
+
+it('connects to nothing and asks for no chunk when the operation has run out before the transport is called', function () {
+    [$server, $port] = syncListen();
+    // The operation has 10 ms, and the child spends 50 before it calls the transport.
+    $child = SyncChild::start($port, 5.0, [SYNC_REQUEST], operation: 0.01, hold: 0.05);
+    try {
+        $outcome = $child->outcome();
+
+        expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
+        expect($outcome['asked'])->toBe(0);
+        expect($outcome['elapsed'])->toBeLessThan(0.5);
+        // Nobody connected.
+        $waiting = [$server];
+        $none = null;
+        expect(stream_select($waiting, $none, $none, 0, 300_000))->toBe(0);
+    } finally {
+        $child->stop();
+        fclose($server);
+    }
+});
+
+it('ends an OPTIONS call of the client at its operation timeout, over the synchronous transport', function () {
+    $options = "ICAP/1.0 200 OK\r\nMethods: RESPMOD\r\nEncapsulated: null-body=0\r\n\r\n";
+
+    // [operation timeout, how long the server takes, what the client ends with]
+    $cases = [
+        'over the operation timeout'   => [0.25, 0.7, IcapTimeoutException::class],
+        'inside the operation timeout' => [5.0, 0.1, '200'],
+    ];
+    foreach ($cases as $case => [$budget, $pause, $expected]) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 5.0, [], client: true, operationTimeout: $budget);
+        $peer = null;
+        try {
+            $peer = syncAcceptHead($server);
+            usleep((int) ($pause * 1_000_000));
+            @fwrite($peer, $options);
+            $outcome = $child->outcome();
+
+            expect($outcome['error'] ?? $outcome['response'] ?? null)->toBe($expected, $case);
+            if ($expected === IcapTimeoutException::class) {
+                expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.2)->toBeLessThan(0.65, $case);
+            }
+            expect($outcome['streams'])->toBe(0, $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('ends a write to a peer that never reads at the end of the operation, with the stall timeout far away', function () {
+    [$server, $port] = syncListen();
+    // The stall timeout is 30 seconds and a peer that reads nothing never makes progress: only the end of the
+    // operation (0.3 s) can end the wait for the buffer to drain.
+    $child = SyncChild::start($port, 30.0, [['big' => 32 * 1024]], operation: 0.3);
+    try {
+        $outcome = $child->outcome();
+
+        expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
+        expect($outcome['asked'])->toBe(1);
+        expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.25)->toBeLessThan(2.0);
+        expect($outcome['streams'])->toBe(0);
+        expect($outcome['leaked'])->toBe([]);
+
+        [$received, $closed] = syncPeerSaw($server, 64 * 1024 * 1024);
+        expect($closed)->toBeTrue();
+        expect(strlen($received))->toBeGreaterThan(0);
+    } finally {
+        $child->stop();
+        fclose($server);
+    }
+});
+
+it('ends a connect that hangs at the end of the operation, with the connect timeout far away', function () {
+    // A listener whose accept queue is full: the kernel drops the next attempt to connect, and that attempt hangs.
+    $server = @stream_socket_server(
+        'tcp://127.0.0.1:0',
+        $errno,
+        $errstr,
+        STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+        stream_context_create(['socket' => ['backlog' => 1]]),
+    );
+    if ($server === false) {
+        Assert::markTestSkipped('Cannot listen on 127.0.0.1.');
+    }
+    $port = (int) substr((string) strrchr((string) stream_socket_get_name($server, false), ':'), 1);
+    // Attempts that do not wait for the answer; one that is not connected after 0.2 seconds is hanging.
+    $fillers = [];
+    $full = false;
+    for ($i = 0; $i < 6 && !$full; $i++) {
+        $filler = @stream_socket_client("tcp://127.0.0.1:{$port}", $connectErrno, $connectError, 0, STREAM_CLIENT_CONNECT | STREAM_CLIENT_ASYNC_CONNECT);
+        if ($filler === false) {
+            break;
+        }
+        $fillers[] = $filler;
+        $connected = [$filler];
+        $none = null;
+        $full = stream_select($none, $connected, $none, 0, 200_000) === 0;
+    }
+
+    $child = null;
+    try {
+        if (!$full) {
+            Assert::markTestSkipped('This system lets no connection attempt hang on a full accept queue.');
+        }
+
+        // The connect timeout of the Config is its default of 10 seconds; the operation has 0.3.
+        $child = SyncChild::start($port, 5.0, [SYNC_REQUEST], operation: 0.3);
+        $outcome = $child->outcome(6.0);
+
+        expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
+        expect($outcome['asked'])->toBe(0);
+        expect($outcome['elapsed'])->toBeGreaterThanOrEqual(0.25)->toBeLessThan(3.0);
+        expect($outcome['streams'])->toBe(0);
+    } finally {
+        $child?->stop();
+        foreach ($fillers as $filler) {
+            fclose($filler);
+        }
+        fclose($server);
+    }
+});
+
+/*
+ * AP12-R02 — a blocking read that returned is looked at before the frame it completed is returned. Every read waits at
+ * most for what is left of its phase, so what is left to check is the time between the read and the frame.
+ */
+it('does not return a complete answer that arrived in one read but took longer than the time for its transfer', function () {
+    // 1,000 one-byte chunks: 6,081 bytes that decode in much more than the ten microseconds the transfer has.
+    $frame = "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=19\r\n\r\n"
+        . "HTTP/1.1 200 OK\r\n\r\n"
+        . str_repeat("1\r\nX\r\n", 1000)
+        . "0\r\n\r\n";
+    // [stream timeout, how the call ends]
+    $cases = ['ample' => [5.0, null], 'ten microseconds' => [0.00001, IcapTimeoutException::class]];
+
+    foreach ($cases as $case => [$timeout, $expected]) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, $timeout, [SYNC_REQUEST], responseStart: 5.0);
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            // The answer is written at once and whole; the start of the answer (5 s) is far away.
+            fwrite($peer, $frame);
+            $outcome = $child->outcome();
+
+            if ($expected === null) {
+                expect($outcome['response'] ?? $outcome['error'] ?? null)->toBe($frame, $case);
+            } else {
+                expect($outcome['error'] ?? null)->toBe($expected, $case);
+                // The limit of the transfer ran out, not the one for the start of the answer (5 s).
+                expect($outcome['message'] ?? '')->toContain('Reading the response');
+            }
+            expect($outcome['streams'])->toBe(0, $case);
+            expect($outcome['leaked'])->toBe([], $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('lets the cancellation of the caller win over an answer that was read while they cancelled', function () {
+    // [the caller cancels while the client is blocked in its read, how the call ends]
+    $cases = ['not cancelled' => [false, null], 'cancelled' => [true, CancelledException::class]];
+
+    foreach ($cases as $case => [$cancels, $expected]) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 5.0, [SYNC_REQUEST], cancel: 'on-signal');
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            // The client has written its request and is blocked in the read. The caller cancels, and then the answer comes.
+            usleep(200_000);
+            if ($cancels) {
+                $child->release();
+                usleep(50_000);
+            }
+            fwrite($peer, SYNC_FRAME);
+            $outcome = $child->outcome();
+
+            if ($expected === null) {
+                expect($outcome['response'] ?? $outcome['error'] ?? null)->toBe(SYNC_FRAME, $case);
+            } else {
+                expect($outcome['error'] ?? null)->toBe($expected, $case);
+            }
+            expect($outcome['streams'])->toBe(0, $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('does not wait for an answer that never comes once the caller has given up before the response is read', function () {
+    [$server, $port] = syncListen();
+    // The stream timeout (3 s) would end a wait for an answer: the caller's cancellation comes first, before the read.
+    $child = SyncChild::start($port, 3.0, ['one', ['await' => true], ['cancel' => true]], 'later');
+    $peer = null;
+    try {
+        [$peer] = syncServe($server, 3);
+        $child->release();
+        $outcome = $child->outcome();
+
+        expect($outcome['error'] ?? null)->toBe(CancelledException::class)
+            ->and($outcome['elapsed'])->toBeLessThan(1.5)
+            ->and($outcome['streams'])->toBe(0);
+    } finally {
+        $child->stop();
+        if (is_resource($peer)) {
+            fclose($peer);
+        }
+        fclose($server);
+    }
+});
+
+/*
+ * AP12-R02 (rest) — a read that returned is looked at before what it brought is told: bytes, the end of the stream
+ * and a failure alike. A caller who cancelled while the client was blocked is not answered with a framing error, and
+ * a phase that has run out is a timeout, whatever the read brought.
+ */
+it('lets the cancellation of the caller win over the end of the stream that came while they cancelled', function () {
+    // [the caller cancels while the client is blocked in its read, how the call ends]: the peer hangs up either way
+    $cases = ['not cancelled' => [false, IcapMalformedResponseException::class], 'cancelled' => [true, CancelledException::class]];
+
+    foreach ($cases as $case => [$cancels, $expected]) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 5.0, [SYNC_REQUEST], cancel: 'on-signal');
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            // The client has written its request and is blocked in the read. The caller cancels, and then the peer is gone.
+            usleep(200_000);
+            if ($cancels) {
+                $child->release();
+                usleep(50_000);
+            }
+            fclose($peer);
+            $outcome = $child->outcome();
+
+            expect($outcome['error'] ?? null)->toBe($expected, $case);
+            expect($outcome['streams'])->toBe(0, $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('calls a read that returned after the end of its phase a timeout, whatever it brought, and leaves the cancellation of the caller first', function () {
+    // [what the read answers, whether the stream has ended, microseconds the read lasts, whether the caller cancels in
+    // it, what the call gives]: the phase has 30 ms
+    $cases = [
+        'data in time'              => ['abc', false, 0, false, 'abc'],
+        'end of the stream in time' => ['', true, 0, false, null],
+        'data late'                 => ['abc', false, 60_000, false, IcapTimeoutException::class],
+        'end of the stream late'    => ['', true, 60_000, false, IcapTimeoutException::class],
+        'failed read late'          => [false, false, 60_000, false, IcapTimeoutException::class],
+        'cancelled and late'        => ['abc', false, 60_000, true, CancelledException::class],
+    ];
+
+    $readChunk = new ReflectionMethod(SynchronousStreamTransport::class, 'readChunk');
+    $seen = [];
+    foreach ($cases as $case => [$read, $eof, $lasts, $cancels]) {
+        $stream = SyncScriptedStream::open(read: $read, eof: $eof);
+        $caller = new DeferredCancellation();
+        SyncScriptedStream::$onRead = static function () use ($lasts, $cancels, $caller): void {
+            usleep($lasts);
+            if ($cancels) {
+                $caller->cancel();
+            }
+        };
+        try {
+            $error = syncThrown(function () use ($readChunk, $stream, $caller, &$value): void {
+                $value = $readChunk->invoke(null, $stream, $caller->getCancellation(), 0.03, hrtime(true) + 3.0e7);
+            });
+            $seen[$case] = $error === null ? $value : $error::class;
+        } finally {
+            fclose($stream);
+        }
+    }
+
+    expect($seen)->toBe(array_map(static fn (array $case): ?string => $case[4], $cases));
+});
+
+/*
+ * AP12-R02 (end of the frame) — the frame is complete only after it was decoded, and the caller can cancel while that
+ * happens. If the limit of the transfer ran out as well, the cancellation of the caller comes first, as everywhere else.
+ */
+it('lets the cancellation of the caller win over the limit of the transfer when both came while the frame was decoded', function () {
+    // [stream timeout, whether the caller cancels while the frame is decoded, how the call ends]: the limit of the
+    // transfer begins with the read that brings the whole frame, and one of 0 seconds is over when the frame is complete
+    $cases = [
+        'in time'                    => [5.0, false, SYNC_FRAME],
+        'limit passed'               => [0.0, false, IcapTimeoutException::class],
+        'limit passed and cancelled' => [0.0, true, CancelledException::class],
+    ];
+
+    $seen = [];
+    foreach ($cases as $case => [$timeout, $cancels]) {
+        [$server, $port] = syncListen();
+        $caller = new SyncCancelsWhileDecoding($cancels);
+        $peer = null;
+        // The answer is in the socket before the client asks for it: a single read brings the whole frame.
+        $request = (static function () use ($server, &$peer, $caller) {
+            yield SYNC_REQUEST;
+            [$peer] = syncServe($server, 0);
+            fwrite($peer, SYNC_FRAME);
+            $caller->requestIsOut();
+        })();
+        try {
+            $config = new Config('127.0.0.1', $port, streamTimeout: $timeout, responseStartTimeout: 5.0);
+            $response = null;
+            $error = syncThrown(function () use ($config, $request, $caller, &$response): void {
+                $response = (new SynchronousStreamTransport())->request($config, $request, $caller)->await();
+            });
+            $seen[$case] = $error === null ? $response : $error::class;
+        } finally {
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+
+    expect($seen)->toBe(array_map(static fn (array $case): string => $case[2], $cases));
 });

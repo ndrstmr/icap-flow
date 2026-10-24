@@ -19,7 +19,7 @@ security frameworks relevant for European public-sector deployments.
 | Support for multiple AV engines | `Config::withVirusFoundHeaders()` supports ClamAV, Symantec, Trend Micro, Sophos, McAfee, Kaspersky header conventions |
 | Fail-secure on unknown status codes | `IcapClient::interpretResponse()` throws typed exceptions for anything that is not a clear clean signal (204 / 200 without virus header) |
 | Logging of scan results | PSR-3 structured logging with `method`, `port`, `statusCode`, `infected` and `exception_class` context keys; no URI, host, exception message or server text |
-| Retry on transient failures | `RetryingIcapClient` decorator with exponential backoff on 5xx |
+| Retry on transient failures | `RetryingIcapClient` decorator: `options()` is repeated after a 5xx with exponential backoff and jitter; uploads and scans get one attempt (a 5xx does not prove the bytes were not processed) |
 
 ### APP.4.4 — Webanwendungen und Webservices (excerpt)
 
@@ -35,7 +35,7 @@ security frameworks relevant for European public-sector deployments.
 |---|---|
 | Encryption in transit | TLS/mTLS support for ICAP connections (see `examples/cookbook/04-tls-mtls.php`) |
 | Minimisation of data exposure | File contents are streamed, not buffered in memory; `RequestFormatter::format()` emits chunked-transfer encoding. Response headers are not logged (regression-tested in `tests/LoggerIntegrationTest.php`) |
-| Resilience | Connection pooling with idle eviction, retry decorator, per-IO timeouts (no session-lifetime accumulation) |
+| Resilience | Connection pooling with idle eviction, retry decorator, a limit per phase (connect, TLS handshake, write, start and transfer of the answer) and one `operationTimeout` (60 s by default) over all of them and over every attempt |
 | Auditability | PSR-3 structured log events at request start and completion; EUPL-1.2 license ensures source availability |
 
 ## EUPL-1.2 License

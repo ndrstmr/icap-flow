@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use Amp\Socket;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
@@ -265,6 +266,10 @@ it('returns the socket to the pool only after a validated exchange', function ()
         '100 Continue after ieof'                        => ['abc', [$interim], IcapProtocolException::class, false],
         'unexpected status after the continuation'       => ['abcdefgh', [$interim, "ICAP/1.0 302 Found\r\nEncapsulated: null-body=0\r\n\r\n"], IcapProtocolException::class, false],
         'server error after the continuation'            => ['abcdefgh', [$interim, "ICAP/1.0 500 Server Error\r\nEncapsulated: null-body=0\r\n\r\n"], IcapServerException::class, false],
+        // N03: a failure status to the preview is classified as it is to every other answer.
+        'server error to the preview'                    => ['abcdefgh', ["ICAP/1.0 503 Service Unavailable\r\n\r\n"], IcapServerException::class, false],
+        'client error to the preview'                    => ['abcdefgh', ["ICAP/1.0 404 Not Found\r\n\r\n"], IcapClientException::class, false],
+        'server error after ieof'                        => ['abc', ["ICAP/1.0 503 Service Unavailable\r\n\r\n"], IcapServerException::class, false],
     ];
 
     foreach ($cases as $case => [$payload, $replies, $exception, $reused]) {

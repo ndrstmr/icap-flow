@@ -33,6 +33,11 @@ use Ndrstmr\Icap\DefaultPreviewStrategy;
 
 /**
  * Simple synchronous wrapper around {@link IcapClient}.
+ *
+ * Each call is one operation of the wrapped client and ends at the latest after its `Config::getOperationTimeout()`
+ * (60 seconds by default), with an {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}: raise it for large
+ * files or a slow scanner. With the synchronous transport the waits of the socket are bounded by it, but code that
+ * does not return (a request-body producer, a file read) is only noticed afterwards.
  */
 final class SynchronousIcapClient
 {

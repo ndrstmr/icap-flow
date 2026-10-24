@@ -24,12 +24,10 @@ use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket;
-use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
-use Ndrstmr\Icap\IcapUri;
 use Revolt\EventLoop;
 
 use function Amp\async;
@@ -112,14 +110,19 @@ final class AsyncAmpTransport implements SessionAwareTransport
         // Cancelled before it began: neither the pool nor the connector is asked.
         $cancellation?->throwIfRequested();
 
-        // Waiting for the pool, connecting and the TLS handshake share one window of
-        // streamTimeout seconds. Timer and subscription are removed on every way out, not
-        // left to destructors: an exception that is still referenced keeps the arguments of
-        // its stack frames, and with them the cancellation, alive.
-        $endsAt = hrtime(true) + $config->getStreamTimeout() * 1e9;
+        // Waiting for the pool, connecting and the TLS handshake share one window: streamTimeout
+        // seconds, or the handshake limit if that is longer (it has a limit of its own, which the
+        // window must not cut short). The end of the whole operation, which reaches the window as the
+        // cancellation of the caller, is shorter if it is. Timer and subscription are removed on every
+        // way out, not left to destructors: an exception that is still referenced keeps the arguments
+        // of its stack frames, and with them the cancellation, alive.
+        $setup = $config->getTlsContext() === null
+            ? $config->getStreamTimeout()
+            : max($config->getStreamTimeout(), $config->getTlsHandshakeTimeout());
+        $endsAt = hrtime(true) + $setup * 1e9;
         $window = new DeferredCancellation();
         $expired = false;
-        $deadline = EventLoop::delay($config->getStreamTimeout(), function () use (&$expired, $window): void {
+        $deadline = EventLoop::delay($setup, function () use (&$expired, $window): void {
             $expired = true;
             $window->cancel();
         });
@@ -149,8 +152,8 @@ final class AsyncAmpTransport implements SessionAwareTransport
                 $cancellation?->throwIfRequested();
                 if ($expired) {
                     throw new IcapTimeoutException(sprintf(
-                        'No connection was set up within the stream timeout of %s seconds.',
-                        $config->getStreamTimeout(),
+                        'No connection was set up within %s seconds.',
+                        $setup,
                     ));
                 }
             }
@@ -182,18 +185,8 @@ final class AsyncAmpTransport implements SessionAwareTransport
             return $this->pool->acquire($config, $cancellation);
         }
 
-        $tls = $config->getTlsContext();
-        $url = IcapUri::tcp($config->host, $config->port);
-        $context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
-        if ($tls !== null) {
-            $context = $context->withTlsContext($tls);
-        }
-
         try {
-            if ($tls !== null) {
-                return Socket\connectTls($url, $context, $cancellation);
-            }
-            return Socket\connect($url, $context, $cancellation);
+            return SocketOpener::open($config, $cancellation);
         } catch (Socket\ConnectException $e) {
             throw new IcapConnectionException(
                 sprintf('Async connection to %s:%d failed.', $config->host, $config->port),

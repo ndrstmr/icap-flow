@@ -81,11 +81,15 @@ it('keeps every value and the order of the header names across the withers', fun
         maxHeaderCount: 7,
         maxHeaderLineLength: 99,
         virusFoundHeaders: ['X-One', 'X-Two'],
+        operationTimeout: 33.0,
+        tlsHandshakeTimeout: 4.5,
+        responseStartTimeout: 120.0,
     );
     $snapshot = static fn (Config $c): array => [
         $c->host, $c->port, $c->getSocketTimeout(), $c->getStreamTimeout(), $c->getTlsContext(),
         $c->getMaxResponseSize(), $c->getMaxHeaderCount(), $c->getMaxHeaderLineLength(),
         $c->getVirusFoundHeaders(), $c->getVirusFoundHeader(),
+        $c->getOperationTimeout(), $c->getTlsHandshakeTimeout(), $c->getResponseStartTimeout(),
     ];
     $before = $snapshot($config);
     $other = new ClientTlsContext('other.example');
@@ -97,8 +101,40 @@ it('keeps every value and the order of the header names across the withers', fun
         ->and($snapshot($config->withLimits(maxHeaderCount: 6, maxHeaderLineLength: 8)))->toBe(array_replace($before, [6 => 6, 7 => 8]))
         ->and($snapshot($config->withLimits()))->toBe($before)
         ->and($snapshot($config->withVirusFoundHeaders(['X-Three', 'X-Four'])))->toBe(array_replace($before, [8 => ['X-Three', 'X-Four'], 9 => 'X-Three']))
-        ->and($snapshot($config->withVirusFoundHeader('X-Five')))->toBe(array_replace($before, [8 => ['X-Five'], 9 => 'X-Five']));
+        ->and($snapshot($config->withVirusFoundHeader('X-Five')))->toBe(array_replace($before, [8 => ['X-Five'], 9 => 'X-Five']))
+        // The three timeouts of M10 survive every other wither, and withTimeouts() changes what it is given and nothing else.
+        ->and($snapshot($config->withTimeouts(operationTimeout: 9.0)))->toBe(array_replace($before, [10 => 9.0]))
+        ->and($snapshot($config->withTimeouts(tlsHandshakeTimeout: 1.5, responseStartTimeout: 2.5)))->toBe(array_replace($before, [11 => 1.5, 12 => 2.5]))
+        ->and($snapshot($config->withTimeouts()))->toBe($before);
 
     // The original is as it was.
     expect($snapshot($config))->toBe($before);
+});
+
+/**
+ * M10: one operation has one end, and the phases that have no setting of their own use the one they always had.
+ */
+it('limits an operation to 60 seconds by default and lets the TLS handshake and the response start follow the stream timeout', function () {
+    $config = new Config('icap.example', streamTimeout: 7.0);
+
+    expect($config->getOperationTimeout())->toBe(60.0)
+        ->and($config->getTlsHandshakeTimeout())->toBe(7.0)
+        ->and($config->getResponseStartTimeout())->toBe(7.0);
+
+    // A fallback is not a copy: it follows the stream timeout it stands for, an own value does not.
+    $own = new Config('icap.example', streamTimeout: 7.0, operationTimeout: 5.0, tlsHandshakeTimeout: 2.0, responseStartTimeout: 90.0);
+    expect($own->getOperationTimeout())->toBe(5.0)
+        ->and($own->getTlsHandshakeTimeout())->toBe(2.0)
+        ->and($own->getResponseStartTimeout())->toBe(90.0);
+
+    // A stream timeout of 0 is the immediate deadline of the transports, and the phases that follow it give up at once too.
+    $immediate = new Config('icap.example', streamTimeout: 0.0);
+    expect($immediate->getTlsHandshakeTimeout())->toBe(0.0)
+        ->and($immediate->getResponseStartTimeout())->toBe(0.0);
+
+    // The fallback is not frozen into the Config: a value that was never set stays unset across a wither.
+    $unset = new Config('icap.example', socketTimeout: 3.0, streamTimeout: 4.0);
+    expect($unset->withTimeouts(operationTimeout: 8.0)->getResponseStartTimeout())->toBe(4.0)
+        ->and($unset->withTimeouts(operationTimeout: 8.0)->getTlsHandshakeTimeout())->toBe(4.0)
+        ->and($unset->withLimits(maxResponseSize: 5)->getOperationTimeout())->toBe(60.0);
 });

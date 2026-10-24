@@ -16,7 +16,7 @@ Jede Klasse hat genau eine Aufgabe — daran erkennt man die Schichtung im Repo:
 | `AmpConnectionPool` | Keep-Alive-Sockets pro `host:port[:tls]`-Key |
 | `PreviewStrategyInterface` | Entscheidung „weitermachen / abbrechen" nach Preview |
 | `IcapClient` | Orchestrierung; Fail-Secure-Statuscode-Auswertung |
-| `RetryingIcapClient` | Decorator: Backoff-Retry für 5xx |
+| `RetryingIcapClient` | Decorator: wiederholt nur `options()` nach 5xx (Full-Jitter-Backoff), eine Endzeit je Aufruf |
 
 Wenn eine neue Aufgabe nicht in eine der bestehenden Klassen fällt, **mach eine neue** — kein Erweitern bestehender Klassen "weil die Datei schon offen war".
 
@@ -100,7 +100,7 @@ Nie `Mockery` für die Wire-Tests verwenden — die ganze Idee ist, dass **echte
 - v2.1.1-Hotfix erweitert die Default-Strategie um den 200/206-Branch (Virus-Header → `ABORT_INFECTED`).
 
 ### Decorator
-- `RetryingIcapClient` wickelt einen `IcapClientInterface` und retried 5xx mit Exponential-Backoff.
+- `RetryingIcapClient` wickelt einen `IcapClientInterface` und wiederholt **nur `options()`** nach 5xx, mit Exponential-Backoff und Full Jitter; alle anderen Operationen bekommen einen Versuch. Ein Aufruf hat eine Endzeit (`operationTimeout`, `OperationDeadline`), die der innere Client als Cancellation bekommt und nicht verlängern kann.
 - Geplant für v2.2: `OtelTracingIcapClient` als weiterer Decorator (OpenTelemetry-Spans). **Niemals** den Retry- oder Tracing-Code in `IcapClient` selbst einbauen — das wäre eine SRP-Verletzung.
 
 ```php

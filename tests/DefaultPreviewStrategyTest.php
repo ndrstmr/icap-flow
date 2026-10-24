@@ -19,7 +19,9 @@
 use Ndrstmr\Icap\DefaultPreviewStrategy;
 use Ndrstmr\Icap\PreviewDecision;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
+use Ndrstmr\Icap\Exception\IcapServerException;
 
 it('returns abort clean on 204', function () {
     $strategy = new DefaultPreviewStrategy();
@@ -35,7 +37,38 @@ it('returns continue on 100', function () {
 
 it('throws on unexpected codes', function () {
     $strategy = new DefaultPreviewStrategy();
-    expect(fn () => $strategy->handlePreviewResponse(new IcapResponse(500)))->toThrow(IcapProtocolException::class);
+    foreach ([101, 199, 201, 302, 399, 600, 999] as $code) {
+        expect(fn () => $strategy->handlePreviewResponse(new IcapResponse($code)))
+            ->toThrow(IcapProtocolException::class, 'Unexpected preview status code: ' . $code, (string) $code);
+    }
+});
+
+/**
+ * N03 — a failure status in a preview is classified as it is for any other answer: a 5xx is an IcapServerException
+ * and a 4xx an IcapClientException. A preview 503 used to be a protocol error, and so differed from the same 503
+ * on a plain request.
+ */
+it('classifies a 4xx or 5xx preview answer as the answer to any other request is', function () {
+    $strategy = new DefaultPreviewStrategy();
+
+    // [status, expected class]: the borders of both ranges included.
+    $cases = [
+        [400, IcapClientException::class], [404, IcapClientException::class], [499, IcapClientException::class],
+        [500, IcapServerException::class], [503, IcapServerException::class], [599, IcapServerException::class],
+    ];
+    foreach ($cases as [$code, $class]) {
+        try {
+            $strategy->handlePreviewResponse(new IcapResponse($code));
+            $thrown = null;
+        } catch (\Throwable $e) {
+            $thrown = $e;
+        }
+
+        expect($thrown)->toBeInstanceOf($class, (string) $code)
+            ->and($thrown?->getCode())->toBe($code)
+            // The message names the status and nothing the server sent.
+            ->and($thrown?->getMessage())->toContain((string) $code);
+    }
 });
 
 // v2.1.1-B: RFC 3507 §4.3.3 / §6 — server may respond 200/206 in preview
