@@ -24,6 +24,7 @@ use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\PreviewDecision;
 use Ndrstmr\Icap\PreviewStrategyInterface;
@@ -368,7 +369,7 @@ it('takes the size from the open handle and refuses a handle without metadata', 
         $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
         $this->runAsyncTest(function () use ($client) {
             $path = ScriptedSource::add('blind', 'abcde', statFails: true);
-            expect(fn () => $client->scanFile('/svc', $path)->await())->toThrow(RuntimeException::class);
+            expect(fn () => $client->scanFile('/svc', $path)->await())->toThrow(IcapStorageException::class);
         });
         // Nothing was sent as an empty file, and the handle was given back.
         expect($transport->requests)->toBe([]);
@@ -376,6 +377,38 @@ it('takes the size from the open handle and refuses a handle without metadata', 
     } finally {
         ScriptedSource::reset();
     }
+});
+
+/**
+ * A file that cannot be opened fails the Future, not the call, with an exception of the taxonomy; nothing is sent.
+ */
+it('fails the Future with an IcapStorageException for a file that cannot be opened', function () {
+    $missing = sys_get_temp_dir() . '/icap-flow-missing-' . bin2hex(random_bytes(6));
+    $transport = new ScriptedTransport();
+    $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
+
+    // fopen() warns; the client silences it and reports the failure, and the runner need not see it either.
+    set_error_handler(static fn (): bool => true);
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $missing) {
+            $scans = [
+                'scanFile'            => fn () => $client->scanFile('/svc', $missing),
+                'scanFileWithPreview' => fn () => $client->scanFileWithPreview('/svc', $missing, 4),
+            ];
+
+            foreach ($scans as $scan => $start) {
+                $future = $start();
+
+                expect(fn () => $future->await())->toThrow(IcapStorageException::class, 'Unable to open file', $scan);
+            }
+        });
+    } finally {
+        restore_error_handler();
+    }
+
+    expect($transport->requests)->toBe([]);
 });
 
 /**
@@ -422,7 +455,7 @@ it('sends a preview only from a source that delivers what its handle announced',
             $this->runAsyncTest(function () use ($client, $path, $previewSize, $fails, $case) {
                 if ($fails) {
                     expect(fn () => $client->scanFileWithPreview('/svc', $path, $previewSize)->await())
-                        ->toThrow(RuntimeException::class, '', $case);
+                        ->toThrow(IcapStorageException::class, '', $case);
                 } else {
                     expect($client->scanFileWithPreview('/svc', $path, $previewSize)->await()->isInfected())
                         ->toBeFalse($case);
@@ -480,7 +513,7 @@ it('sends the whole file only with the length it announced', function () {
                 if ($tail === null) {
                     expect($run()->isInfected())->toBeFalse($case);
                 } else {
-                    expect($run)->toThrow(RuntimeException::class, '', $case);
+                    expect($run)->toThrow(IcapStorageException::class, '', $case);
                 }
             });
 

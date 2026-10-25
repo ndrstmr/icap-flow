@@ -358,6 +358,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *(N03)*
 
 ### Changed
+- **Behaviour change:** a failed TLS handshake and a socket that breaks during the request or the answer are an
+  `IcapConnectionException` (the Amp exception is `previous`), like a failed connect; they used to reach the caller
+  as Amp exceptions. *(M11)*
+- **Behaviour change:** `options()` with a cached answer and `scanFileWithPreview()` with a cached preview size fail
+  the returned Future instead of throwing at the call. *(M11)*
+- New `IcapStorageException` (extends `RuntimeException`) for an unreadable file or stream, replacing the plain
+  `\RuntimeException`, and for a failing OPTIONS cache backend (PSR-6/PSR-16 adapters). *(M11)*
 - **Behaviour change:** `RetryingIcapClient` no longer repeats `request()`,
   `scanFile()` and `scanFileWithPreview()` after an ICAP 5xx; only
   `options()` is repeated. Code that relied on file scans being retried by

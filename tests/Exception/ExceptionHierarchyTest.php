@@ -24,6 +24,7 @@ use Ndrstmr\Icap\Exception\IcapExceptionInterface;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 
 it('catches every concrete ICAP exception via the marker interface', function () {
@@ -34,6 +35,7 @@ it('catches every concrete ICAP exception via the marker interface', function ()
         new IcapClientException('4xx', 400),
         new IcapServerException('5xx', 503),
         new IcapMalformedResponseException('bad bytes'),
+        new IcapStorageException('file or cache'),
     ];
 
     foreach ($exceptions as $e) {

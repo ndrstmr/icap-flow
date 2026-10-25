@@ -28,18 +28,23 @@ use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapServerException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 use Psr\Log\AbstractLogger;
 use Psr\Log\LoggerInterface;
 
 uses(AsyncTestCase::class);
+
+// The scripted sources of a test, and the counters of the stream wrapper, are not left behind by one that fails.
+afterEach(fn () => ScriptedSource::reset());
 
 /**
  * M3.1 — PSR-3 logger observability.
@@ -257,6 +262,11 @@ it('logs the events of request() without URI, host, server text or exception mes
     $started = 'info: ICAP request started';
     $completed = 'info: ICAP request completed';
     $failed = 'warning: ICAP request failed';
+    // A body that stops being readable after four bytes: the caller's stream, with the secret in its content.
+    $failing = fopen(ScriptedSource::add('log-source', $s['body'], failAfter: 4), 'rb');
+    if ($failing === false) {
+        throw new RuntimeException('Cannot open the scripted source.');
+    }
 
     // label => [request, transport, exception thrown, events, context of the last event]
     $cases = [
@@ -290,6 +300,10 @@ it('logs the events of request() without URI, host, server text or exception mes
         'invalid header line' => [
             $respmod, new ScriptedTransport(["ICAP/1.0 200 OK\r\n{$s['header']} without a colon\r\n\r\n"]), IcapMalformedResponseException::class,
             [$started, $failed], ['method' => 'RESPMOD', 'port' => 1344, 'statusCode' => null, 'exception_class' => IcapMalformedResponseException::class],
+        ],
+        'source that fails while the body goes out' => [
+            new IcapRequest('RESPMOD', $uri, [], null, new HttpResponse(200, 'OK', [], $failing)), new ScriptedTransport([$clean]), IcapStorageException::class,
+            [$started, $failed], ['method' => 'RESPMOD', 'port' => 1344, 'statusCode' => null, 'exception_class' => IcapStorageException::class],
         ],
         'request the formatter refuses' => [
             new IcapRequest('RESPMOD', $uri, ["Bad Name {$s['header']}" => 'x']), new ScriptedTransport([$clean]), InvalidArgumentException::class,

@@ -23,7 +23,6 @@ namespace Ndrstmr\Icap\Transport;
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
-use Amp\Socket;
 use Amp\Socket\ClientTlsContext;
 use Amp\Socket\Socket as SocketInterface;
 use Closure;
@@ -177,7 +176,7 @@ final class AmpConnectionPool implements ConnectionPoolInterface
         $this->maxConnections = $maxConnections ?? $maxConnectionsPerHost;
         $this->waitTimeout = $waitTimeout ?? 0.0;
         $this->sweepInterval = max(self::MIN_SWEEP_INTERVAL, min($maxIdleSeconds / 2, self::MAX_SWEEP_INTERVAL));
-        $this->connector = $connector ?? self::defaultConnector();
+        $this->connector = $connector ?? SocketOpener::open(...);
         $this->clock = $clock ?? static fn (): float => hrtime(true) / 1e9;
         $this->slots = new WeakMap();
         $this->tlsTokens = new WeakMap();
@@ -190,7 +189,8 @@ final class AmpConnectionPool implements ConnectionPoolInterface
 
     /**
      * @throws IcapConnectionException When the pool is closed, no connection can be offered (the limit is reached
-     *         and there is no queue, or the queue is full), or the connector fails
+     *         and there is no queue, or the queue is full), or the default connector fails; a connector of your own
+     *         passes what it throws on unchanged
      * @throws IcapTimeoutException    When a call waited for the whole `waitTimeout` without being served
      * @throws CancelledException      When the caller's cancellation ended the call
      */
@@ -829,23 +829,5 @@ final class AmpConnectionPool implements ConnectionPoolInterface
     private function tlsToken(ClientTlsContext $tls): int
     {
         return $this->tlsTokens[$tls] ??= ++$this->lastTlsToken;
-    }
-
-    /**
-     * @return Closure(Config, ?Cancellation): SocketInterface
-     */
-    private static function defaultConnector(): Closure
-    {
-        return static function (Config $config, ?Cancellation $cancellation): SocketInterface {
-            try {
-                return SocketOpener::open($config, $cancellation);
-            } catch (Socket\ConnectException $e) {
-                throw new IcapConnectionException(
-                    sprintf('Pooled connect to %s:%d failed.', $config->host, $config->port),
-                    0,
-                    $e,
-                );
-            }
-        };
     }
 }

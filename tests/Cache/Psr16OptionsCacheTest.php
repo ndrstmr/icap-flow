@@ -21,6 +21,7 @@ declare(strict_types=1);
 use Ndrstmr\Icap\Cache\Psr16OptionsCache;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
@@ -217,9 +218,40 @@ it('stores an OPTIONS response and finds its preview size under one key of a str
     }
 });
 
+it('reports a failing backend as IcapStorageException with its cause and leaves other errors alone', function () {
+    $inner = new ArraySimpleCache();
+    $cache = new Psr16OptionsCache($inner, 'icap.');
+    $calls = [
+        'get'    => fn () => $cache->get('k'),
+        'set'    => fn () => $cache->set('k', new IcapResponse(200), 60, '"v1"'),
+        'delete' => fn () => $cache->delete('k'),
+    ];
+    $backend = new SimpleCacheFailure('The backend is down.');
+    $bug = new TypeError('A bug in the backend.');
+
+    foreach ($calls as $call => $run) {
+        $inner->failure = $backend;
+        $caught = null;
+        try {
+            $run();
+        } catch (Throwable $e) {
+            $caught = $e;
+        }
+        expect($caught)->toBeInstanceOf(IcapStorageException::class, $call);
+        expect($caught?->getPrevious())->toBe($backend, $call);
+
+        $inner->failure = $bug;
+        expect($run)->toThrow(TypeError::class, $bug->getMessage(), $call);
+    }
+});
+
 // --- In-memory PSR-16 implementation for testing ---
 
 final class SimpleCacheKeyException extends \InvalidArgumentException implements \Psr\SimpleCache\InvalidArgumentException
+{
+}
+
+final class SimpleCacheFailure extends \RuntimeException implements \Psr\SimpleCache\CacheException
 {
 }
 
@@ -237,8 +269,14 @@ final class ArraySimpleCache implements CacheInterface
     /** @var array<string, true> every key a call carried; each of them passed the key check */
     public array $seen = [];
 
+    /** Thrown by every call that carries a key, while set. */
+    public ?\Throwable $failure = null;
+
     private function valid(string $key): string
     {
+        if ($this->failure !== null) {
+            throw $this->failure;
+        }
         if (preg_match('/^[A-Za-z0-9_.]{1,64}\z/', $key) !== 1) {
             throw new SimpleCacheKeyException('Not a valid PSR-16 key: ' . var_export(substr($key, 0, 80), true));
         }

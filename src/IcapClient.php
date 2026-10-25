@@ -32,6 +32,7 @@ use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
@@ -161,27 +162,6 @@ final class IcapClient implements IcapClientInterface
     }
 
     /**
-     * The failed Future of an operation that was cancelled, or has run out of time, before a fiber of its own began
-     * (an answer from the OPTIONS cache), or null if it is still wanted and in time. The deadline is closed with it.
-     *
-     * @phpstan-impure it reads the clock and the cancellation of the caller: the answer to a second call differs
-     *
-     * @return Future<never>|null
-     */
-    private static function stopped(OperationDeadline $deadline): ?Future
-    {
-        try {
-            $deadline->checkpoint();
-        } catch (\Throwable $e) {
-            $deadline->close();
-
-            return Future::error($e);
-        }
-
-        return null;
-    }
-
-    /**
      * Send the ICAP request and return the parsed {@see IcapResponse}
      * without the fail-secure status-code interpretation pass. Used
      * internally by the preview flow, where `100 Continue` is a
@@ -219,26 +199,14 @@ final class IcapClient implements IcapClientInterface
 
         $cacheKey = $this->optionsCacheKey($service);
 
-        $cache = $this->optionsCache;
-        if ($cache !== null) {
-            // The cache is foreign code and a hit is an answer like any other: a call that is cancelled or over does not
-            // ask it, and gets no answer from it if it ended while the cache was asked. What ended it is the Future's.
-            if (($stopped = self::stopped($deadline)) !== null) {
-                return $stopped;
-            }
-            $cached = $cache->get($cacheKey);
-            if (($stopped = self::stopped($deadline)) !== null) {
-                return $stopped;
-            }
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $cacheKey): IcapResponse {
+            $cached = $this->cachedOptions($cacheKey, $deadline);
             if ($cached !== null) {
                 $this->assertOptionsStatus($cached->statusCode);
-                $deadline->close();
 
-                return Future::complete($cached);
+                return $cached;
             }
-        }
 
-        return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $cacheKey): IcapResponse {
             $request = new IcapRequest('OPTIONS', $uri);
             $context = $this->logContext($request);
             $this->logger->info('ICAP request started', $context);
@@ -291,9 +259,9 @@ final class IcapClient implements IcapClientInterface
      * body of another size that looks complete. The caller's own streams
      * (see {@see request()}) are not touched.
      *
-     * The Future fails with a \RuntimeException when the file cannot be
-     * opened or sized, cannot be read to its end, or does not have the size
-     * its handle reported.
+     * The Future fails with an {@see IcapStorageException} when the file
+     * cannot be opened or sized, cannot be read to its end, or does not have
+     * the size its handle reported.
      */
     #[\Override]
     public function scanFile(
@@ -357,8 +325,8 @@ final class IcapClient implements IcapClientInterface
      * {@see scanFile()}, the file is opened inside the returned Future and
      * closed when the operation ends.
      *
-     * The Future fails with a \RuntimeException when the file cannot be
-     * opened, sized or read, or has another length than its handle
+     * The Future fails with an {@see IcapStorageException} when the file
+     * cannot be opened, sized or read, or has another length than its handle
      * reported.
      *
      * @throws \InvalidArgumentException When $previewSize is outside 0..1 MiB
@@ -382,9 +350,8 @@ final class IcapClient implements IcapClientInterface
         }
         $this->validateIcapHeaders($extraHeaders);
 
-        $previewSize = $this->resolvePreviewSize($service, $previewSize);
-
         return $this->run($deadline, function (OperationDeadline $deadline) use ($service, $filePath, $previewSize, $extraHeaders): ScanResult {
+            $previewSize = $this->resolvePreviewSize($service, $previewSize, $deadline);
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
 
@@ -588,7 +555,7 @@ final class IcapClient implements IcapClientInterface
         // request needs the file from its start. A stream that cannot go
         // back would send the rest of the file as if it were the whole.
         if (!rewind($stream)) {
-            throw new \RuntimeException('Unable to rewind the file stream for the full request.');
+            throw new IcapStorageException('Unable to rewind the file stream for the full request.');
         }
         $fullResponse = new HttpResponse(
             statusCode: 200,
@@ -631,23 +598,33 @@ final class IcapClient implements IcapClientInterface
      *         carries conflicting `Preview` fields, or a `Preview` value
      *         that is not a non-negative decimal integer
      */
-    private function resolvePreviewSize(string $service, ?int $previewSize): int
+    private function resolvePreviewSize(string $service, ?int $previewSize, OperationDeadline $deadline): int
     {
         if ($previewSize !== null) {
             return $previewSize;
         }
 
-        if ($this->optionsCache !== null) {
-            $cached = $this->optionsCache->get($this->optionsCacheKey($service));
-            if ($cached !== null) {
-                $advertised = HeaderFields::single($cached->headers, 'Preview');
-                if ($advertised !== null) {
-                    return $this->boundedPreviewSize($advertised);
-                }
-            }
+        $cached = $this->cachedOptions($this->optionsCacheKey($service), $deadline);
+        $advertised = $cached === null ? null : HeaderFields::single($cached->headers, 'Preview');
+
+        return $advertised === null ? self::DEFAULT_PREVIEW_SIZE : $this->boundedPreviewSize($advertised);
+    }
+
+    /**
+     * The cached OPTIONS answer, or null. A call that is cancelled or over does not ask the cache, and one that ends
+     * while the cache is asked gets no answer from it.
+     */
+    private function cachedOptions(string $key, OperationDeadline $deadline): ?IcapResponse
+    {
+        if ($this->optionsCache === null) {
+            return null;
         }
 
-        return self::DEFAULT_PREVIEW_SIZE;
+        $deadline->checkpoint();
+        $cached = $this->optionsCache->get($key);
+        $deadline->checkpoint();
+
+        return $cached;
     }
 
     /**
@@ -683,13 +660,13 @@ final class IcapClient implements IcapClientInterface
      *
      * @return array{resource, int}
      *
-     * @throws \RuntimeException When the file cannot be opened or sized
+     * @throws IcapStorageException When the file cannot be opened or sized
      */
     private function openSource(string $filePath): array
     {
         $stream = @fopen($filePath, 'rb');
         if ($stream === false) {
-            throw new \RuntimeException('Unable to open file: ' . $filePath);
+            throw new IcapStorageException('Unable to open file: ' . $filePath);
         }
 
         // The caller's `finally` closes the handle only once it has it. Until
@@ -699,7 +676,7 @@ final class IcapClient implements IcapClientInterface
         try {
             $stat = fstat($stream);
             if ($stat === false || $stat['size'] < 0) {
-                throw new \RuntimeException('Unable to determine the size of file: ' . $filePath);
+                throw new IcapStorageException('Unable to determine the size of file: ' . $filePath);
             }
 
             return [$stream, $stat['size']];
@@ -720,7 +697,7 @@ final class IcapClient implements IcapClientInterface
      * @param  resource $stream
      * @return array{string, bool} the preview bytes and whether they are the whole body
      *
-     * @throws \RuntimeException When the source cannot be read, or ends
+     * @throws IcapStorageException When the source cannot be read, or ends
      *         at another length than its handle reported
      */
     private function readPreview(mixed $stream, int $fileSize, int $previewSize): array
@@ -732,7 +709,7 @@ final class IcapClient implements IcapClientInterface
         while (strlen($bytes) < $wanted) {
             $block = $this->readSource($stream, max(1, $wanted - strlen($bytes)));
             if ($block === null) {
-                throw new \RuntimeException(sprintf(
+                throw new IcapStorageException(sprintf(
                     'The file ended after %d of the %d bytes its handle reported.',
                     strlen($bytes),
                     $fileSize,
@@ -742,7 +719,7 @@ final class IcapClient implements IcapClientInterface
         }
 
         if ($complete && $this->readSource($stream, 1) !== null) {
-            throw new \RuntimeException(sprintf(
+            throw new IcapStorageException(sprintf(
                 'The file holds more than the %d bytes its handle reported.',
                 $fileSize,
             ));
@@ -757,14 +734,14 @@ final class IcapClient implements IcapClientInterface
      * @param  resource    $stream
      * @param  int<1, max> $length bytes to ask for
      *
-     * @throws \RuntimeException When the read fails or makes no progress
+     * @throws IcapStorageException When the read fails or makes no progress
      *         before the end
      */
     private function readSource(mixed $stream, int $length): ?string
     {
         $block = fread($stream, $length);
         if ($block === false || ($block === '' && !feof($stream))) {
-            throw new \RuntimeException('Unable to read the file stream to its end.');
+            throw new IcapStorageException('Unable to read the file stream to its end.');
         }
 
         return $block === '' ? null : $block;

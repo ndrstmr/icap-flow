@@ -47,6 +47,11 @@ use Ndrstmr\Icap\DTO\ScanResult;
  * does not return (a request-body producer, a slow cache) cannot be
  * interrupted; the end is looked at when control comes back, and a result
  * that comes in after it is not returned.
+ *
+ * Expected operational failures ({@see \Ndrstmr\Icap\Exception\IcapExceptionInterface})
+ * fail the returned Future, also when the answer comes from the OPTIONS cache;
+ * only invalid arguments throw at the call. What the code you pass in throws
+ * (producer, logger, strategy, cache, connector) passes unchanged.
  */
 interface IcapClientInterface
 {
@@ -80,9 +85,10 @@ interface IcapClientInterface
      * The file is opened inside the returned Future and closed when the
      * operation ends, whatever the outcome. Its size is taken from the open
      * handle, and the body goes out with exactly that many bytes. The Future
-     * fails with a \RuntimeException when the file cannot be opened, sized or
-     * read to its end, or has another size than its handle reported; nothing
-     * is sent as if it were an empty, shorter or longer file.
+     * fails with an {@see \Ndrstmr\Icap\Exception\IcapStorageException} when the
+     * file cannot be opened, sized or read to its end, or has another size than
+     * its handle reported; nothing is sent as if it were an empty, shorter or
+     * longer file.
      *
      * @param array<string, string|string[]> $extraHeaders Extra ICAP request
      *        headers, e.g. `['X-Client-IP' => '203.0.113.5']`. `Host` and

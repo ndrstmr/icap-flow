@@ -21,6 +21,8 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Cache;
 
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapStorageException;
+use Psr\SimpleCache\CacheException;
 use Psr\SimpleCache\CacheInterface;
 
 /**
@@ -37,6 +39,9 @@ use Psr\SimpleCache\CacheInterface;
  * {@see OptionsCacheKey::backend()}, whatever key the caller passes: the
  * PSR-16 rules for keys cannot be broken by a host name, a service path or
  * a prefix. Entries of an earlier key scheme are not read and not deleted.
+ *
+ * A PSR-16 {@see CacheException} becomes an {@see IcapStorageException} with that exception as its cause; anything
+ * else the backend throws passes unchanged.
  *
  * Requires `psr/simple-cache` ^3.0 — listed in composer.json `suggest`.
  */
@@ -55,8 +60,12 @@ final class Psr16OptionsCache implements OptionsCacheInterface
     #[\Override]
     public function get(string $key): ?IcapResponse
     {
-        /** @var array{statusCode: int, headers: array<string, list<string>>, body: string}|null $data */
-        $data = $this->cache->get($this->backendKey(OptionsCacheKey::DATA, $key));
+        try {
+            /** @var array{statusCode: int, headers: array<string, list<string>>, body: string}|null $data */
+            $data = $this->cache->get($this->backendKey(OptionsCacheKey::DATA, $key));
+        } catch (CacheException $e) {
+            throw self::failed($e);
+        }
         if ($data === null) {
             return null;
         }
@@ -75,25 +84,38 @@ final class Psr16OptionsCache implements OptionsCacheInterface
             return;
         }
 
-        if ($istag !== null) {
-            $this->handleIstagChange($istag);
+        try {
+            if ($istag !== null) {
+                $this->handleIstagChange($istag);
+            }
+
+            $data = [
+                'statusCode' => $response->statusCode,
+                'headers'    => $response->headers,
+                'body'       => $response->body,
+            ];
+
+            $this->cache->set($this->backendKey(OptionsCacheKey::DATA, $key), $data, $ttlSeconds);
+            $this->trackKey($key);
+        } catch (CacheException $e) {
+            throw self::failed($e);
         }
-
-        $data = [
-            'statusCode' => $response->statusCode,
-            'headers'    => $response->headers,
-            'body'       => $response->body,
-        ];
-
-        $this->cache->set($this->backendKey(OptionsCacheKey::DATA, $key), $data, $ttlSeconds);
-        $this->trackKey($key);
     }
 
     #[\Override]
     public function delete(string $key): void
     {
-        $this->cache->delete($this->backendKey(OptionsCacheKey::DATA, $key));
-        $this->untrackKey($key);
+        try {
+            $this->cache->delete($this->backendKey(OptionsCacheKey::DATA, $key));
+            $this->untrackKey($key);
+        } catch (CacheException $e) {
+            throw self::failed($e);
+        }
+    }
+
+    private static function failed(CacheException $cause): IcapStorageException
+    {
+        return new IcapStorageException('The OPTIONS cache backend failed.', 0, $cause);
     }
 
     /**

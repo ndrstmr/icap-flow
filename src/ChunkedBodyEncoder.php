@@ -20,6 +20,8 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap;
 
+use Ndrstmr\Icap\Exception\IcapStorageException;
+
 /**
  * HTTP/1.1 chunked-transfer encoder used by both the {@see
  * RequestFormatter} (for the encapsulated body inside an ICAP request)
@@ -33,7 +35,7 @@ namespace Ndrstmr\Icap;
  *
  * A stream body ends only at an end the encoder has seen. A read error, a
  * read that makes no progress before the end, and a stream that has to be
- * rewound but cannot be all raise a \RuntimeException, and the terminator
+ * rewound but cannot be all raise an IcapStorageException, and the terminator
  * (with or without `ieof`) is not written: a source failure must not turn
  * into a shorter body that looks complete. The same holds for a stream that
  * does not have the length announced for it.
@@ -48,7 +50,7 @@ final class ChunkedBodyEncoder
      *                                  end"; a string is its own length
      * @return iterable<string>
      *
-     * @throws \RuntimeException When a stream body cannot be rewound to its
+     * @throws IcapStorageException When a stream body cannot be rewound to its
      *         start, cannot be read, stops without reaching its end, or does
      *         not match `$length`
      */
@@ -75,7 +77,7 @@ final class ChunkedBodyEncoder
         // consumed would be missing from the body. A stream still at its
         // start is not touched, so a non-seekable one works as before.
         if (ftell($body) !== 0 && !rewind($body)) {
-            throw new \RuntimeException('The body stream was read before and cannot be rewound to its start.');
+            throw new IcapStorageException('The body stream was read before and cannot be rewound to its start.');
         }
 
         foreach ($this->streamChunks($body, $length) as $chunk) {
@@ -102,7 +104,7 @@ final class ChunkedBodyEncoder
      * @param  int|null         $length  bytes the stream must deliver, or null for "until its end"
      * @return iterable<string>
      *
-     * @throws \RuntimeException When the stream cannot be read, stops without
+     * @throws IcapStorageException When the stream cannot be read, stops without
      *         reaching its end, or does not match `$length`
      */
     public function encodeRemainderFromStream(mixed $stream, ?int $length = null): iterable
@@ -133,7 +135,7 @@ final class ChunkedBodyEncoder
      * @param  resource       $stream
      * @return iterable<string>
      *
-     * @throws \RuntimeException When the stream cannot be read, stops without
+     * @throws IcapStorageException When the stream cannot be read, stops without
      *         reaching its end, or does not match `$length`
      */
     private function streamChunks(mixed $stream, ?int $length): iterable
@@ -153,7 +155,7 @@ final class ChunkedBodyEncoder
             return;
         }
         if ($sent !== $length) {
-            throw new \RuntimeException(sprintf(
+            throw new IcapStorageException(sprintf(
                 'The body stream ended after %d of the %d bytes announced.',
                 $sent,
                 $length,
@@ -161,7 +163,7 @@ final class ChunkedBodyEncoder
         }
         // Everything announced was read; nothing may follow it.
         if ($this->readBlock($stream, 1) !== null) {
-            throw new \RuntimeException(sprintf(
+            throw new IcapStorageException(sprintf(
                 'The body stream holds more than the %d bytes announced.',
                 $length,
             ));
@@ -177,13 +179,13 @@ final class ChunkedBodyEncoder
      * @param  resource    $stream
      * @param  int<1, max> $length bytes to ask for
      *
-     * @throws \RuntimeException When the read fails or makes no progress
+     * @throws IcapStorageException When the read fails or makes no progress
      */
     private function readBlock(mixed $stream, int $length): ?string
     {
         $block = fread($stream, $length);
         if ($block === false || ($block === '' && !feof($stream))) {
-            throw new \RuntimeException('The body stream cannot be read to its end.');
+            throw new IcapStorageException('The body stream cannot be read to its end.');
         }
 
         return $block === '' ? null : $block;

@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Transport;
 
+use Amp\ByteStream\StreamException;
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
@@ -27,6 +28,7 @@ use Amp\Socket;
 use Amp\Socket\ConnectContext;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapUri;
 use Revolt\EventLoop;
@@ -39,19 +41,29 @@ use Revolt\EventLoop;
  *
  * Otherwise it does what `connectTls()` does: the peer name of the TLS context is the host when it has none. The
  * cancellation it is given ends both phases and stays an `Amp\CancelledException`; only the limit of the handshake is
- * an {@see IcapTimeoutException}. One place for the three ways to open a connection (transport, pool, null pool).
+ * an {@see IcapTimeoutException}. A connection that cannot be made, a failed handshake or a stream that breaks while
+ * it is set up is an {@see IcapConnectionException} with the amphp exception as its cause. One place for the three
+ * ways to open a connection (transport, pool, null pool).
  *
  * @internal
  */
 final class SocketOpener
 {
     /**
-     * @throws Socket\ConnectException When the TCP connection cannot be made
-     * @throws Socket\TlsException     When the handshake fails
+     * @throws IcapConnectionException When the TCP connection cannot be made or the handshake fails
      * @throws IcapTimeoutException    When the handshake does not finish within `tlsHandshakeTimeout`
      * @throws CancelledException      When the cancellation ends the connection setup
      */
     public static function open(Config $config, ?Cancellation $cancellation): SocketInterface
+    {
+        try {
+            return self::connect($config, $cancellation);
+        } catch (StreamException $e) {
+            throw new IcapConnectionException(sprintf('Connecting to %s:%d failed.', $config->host, $config->port), 0, $e);
+        }
+    }
+
+    private static function connect(Config $config, ?Cancellation $cancellation): SocketInterface
     {
         $tls = $config->getTlsContext();
         $url = IcapUri::tcp($config->host, $config->port);

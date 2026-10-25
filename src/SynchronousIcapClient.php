@@ -79,7 +79,7 @@ final class SynchronousIcapClient
 
     /**
      * @param array<string, string|string[]> $extraHeaders
-     * @throws \RuntimeException
+     * @throws \Ndrstmr\Icap\Exception\IcapStorageException When the file cannot be opened, sized or read to its end
      */
     public function scanFile(
         string $service,
@@ -92,7 +92,7 @@ final class SynchronousIcapClient
 
     /**
      * @param array<string, string|string[]> $extraHeaders
-     * @throws \RuntimeException
+     * @throws \Ndrstmr\Icap\Exception\IcapStorageException When the file cannot be opened, sized or read to its end
      */
     public function scanFileWithPreview(
         string $service,
