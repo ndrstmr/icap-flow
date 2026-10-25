@@ -55,15 +55,14 @@ use Ndrstmr\Icap\OperationDeadline;
  * And per finding M10: the end of the operation ({@see OperationDeadline}, which
  * the client hands it as the cancellation) bounds every native wait to the time
  * that is left, and is looked at between the chunks and after every blocking
- * call, so a peer that reads or answers a little at a time cannot stretch the
- * operation. The response has the two limits it has in the async transport: the
- * server may take `responseStartTimeout` seconds to begin its answer, and from
- * the first byte on the answer has `streamTimeout` seconds to arrive in full, a
- * maximum that no byte starts again. A producer that does not return, or a
- * blocking call that PHP cannot interrupt, is not stopped from outside; the end
- * is looked at when control comes back (after every read, before its bytes, its
- * end of the stream or its failure are told), and once more when the frame of the
- * response is complete: the caller first, then the limit of its transfer.
+ * call. The response has the two limits it has in the async transport
+ * ({@see AmpTransportSession}): `responseStartTimeout` to begin, then
+ * `streamTimeout` from the first byte, a maximum that no byte starts again. A
+ * producer that does not return, or a blocking call that PHP cannot interrupt,
+ * is not stopped from outside; the end is looked at when control comes back:
+ * after every read, before its bytes, its end of the stream or its failure are
+ * told, and once more when the frame is complete (the caller first, then the
+ * limit of the transfer).
  */
 final class SynchronousStreamTransport implements TransportInterface
 {
@@ -336,10 +335,9 @@ final class SynchronousStreamTransport implements TransportInterface
 
         $read = fread($stream, self::READ_CHUNK_SIZE);
 
-        // The read is back. What it brought - bytes, the end of the stream, a failure - is told only if the caller did
-        // not cancel and neither the operation nor the phase ran out while it blocked: a peer that hung up after that
-        // is no framing error, and bytes that came late are no answer. The end of the operation, if that is what ran
-        // out, is told as such.
+        // What the read brought - bytes, the end of the stream, a failure - counts only if the caller did not cancel and
+        // neither the operation nor the phase ran out while it blocked: a peer that hung up after that is no framing
+        // error, and bytes that came late are no answer.
         self::look($cancellation);
         if ($phaseEndsAt !== null && hrtime(true) >= $phaseEndsAt) {
             throw self::timeout($what, $timeout);

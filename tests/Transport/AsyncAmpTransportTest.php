@@ -1710,10 +1710,10 @@ it('gives a TLS handshake the limit of its own where it is longer than the strea
 });
 
 /*
- * AP12-R02 — a read that returned is looked at before its bytes are used. The timer of a window cannot fire while the
- * event loop is held, and a read that finds its bytes in the socket does not suspend at all, so the end of the window
- * on the monotonic clock decides: at the first bytes (before the window of the transfer takes the place of the one of
- * the start), at the end of the frame, and for the caller's cancellation at the first bytes as well.
+ * A read that returned is looked at before its bytes are used. The timer of a window cannot fire while the event loop
+ * is held, and a read that finds its bytes in the socket does not suspend at all, so the end of the window on the
+ * monotonic clock decides: at the first bytes (before the window of the transfer takes the place of the one of the
+ * start), at the end of the frame, and for the caller's cancellation at the first bytes as well.
  */
 
 /** A valid response with a body of $chunks one-byte chunks: 6,081 bytes for 1,000 of them. */
@@ -1856,9 +1856,8 @@ it('lets the cancellation of the caller win over an answer that a read returned 
 });
 
 /*
- * AP12-R02 (rest) — every read is looked at, not only the first one and the frame. A read that returned has brought
- * control back from something that does not look by itself, and what it brought - bytes or the end of the stream - is
- * not handed to the decoder if the caller has cancelled or the time for the transfer has passed. No read is begun
+ * Every read is looked at, not only the first one and the frame. What a read brought (bytes or the end of the stream)
+ * is not handed to the decoder if the caller has cancelled or the time for the transfer has passed. No read is begun
  * after that either.
  */
 it('begins no read and accepts no result once the time for the transfer has passed, bytes and the end of the stream alike', function () {

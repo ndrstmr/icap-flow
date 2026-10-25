@@ -33,17 +33,13 @@ use Revolt\EventLoop;
 
 /**
  * Opens the connection to an ICAP server in the two phases it has, each with a limit of its own (M10): the TCP
- * connection within `socketTimeout` (the connector's own timer, which also ends with the cancellation it is given),
- * and, with a TLS context, the handshake within `tlsHandshakeTimeout`. The handshake is a phase of its own because
- * it can hang on a server that accepts the connection and says nothing, and because its limit is not the one of
- * the connection: `Socket\connectTls()` has no limit for it but the cancellation of the whole call.
+ * connection within `socketTimeout`, and, with a TLS context, the handshake within `tlsHandshakeTimeout`. The
+ * handshake is a phase of its own because it can hang on a server that accepts the connection and says nothing, and
+ * `Socket\connectTls()` has no limit for it but the cancellation of the whole call.
  *
- * It does what `connectTls()` does: the peer name of the TLS context is the host when it has none, and the socket is
- * made by the connector with that context. The cancellation it is given is the caller's, the budget's or the window of
- * the connection setup; it ends both phases and stays what it is, `Amp\CancelledException`. Only the limit of the
- * handshake is an {@see IcapTimeoutException}.
- *
- * One place for the three ways to open a connection (transport, pool, null pool).
+ * Otherwise it does what `connectTls()` does: the peer name of the TLS context is the host when it has none. The
+ * cancellation it is given ends both phases and stays an `Amp\CancelledException`; only the limit of the handshake is
+ * an {@see IcapTimeoutException}. One place for the three ways to open a connection (transport, pool, null pool).
  *
  * @internal
  */
@@ -77,8 +73,8 @@ final class SocketOpener
     }
 
     /**
-     * The window of the handshake: its own limit, and the cancellation of the connection setup. The timer and the
-     * subscription are removed on every way out, not left to destructors. A socket whose handshake failed is closed.
+     * The window of the handshake: its own limit, and the cancellation of the connection setup. A socket whose
+     * handshake failed is closed.
      */
     private static function handshake(SocketInterface $socket, float $seconds, ?Cancellation $cancellation): void
     {
