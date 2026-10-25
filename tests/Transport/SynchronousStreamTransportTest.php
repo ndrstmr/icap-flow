@@ -1398,8 +1398,8 @@ it('ends a connect that hangs at the end of the operation, with the connect time
 });
 
 /*
- * AP12-R02 — a blocking read that returned is looked at before the frame it completed is returned. Every read waits at
- * most for what is left of its phase, so what is left to check is the time between the read and the frame.
+ * A blocking read that returned is looked at before the frame it completed is returned. Every read waits at most for
+ * what is left of its phase, so what is left to check is the time between the read and the frame.
  */
 it('does not return a complete answer that arrived in one read but took longer than the time for its transfer', function () {
     // 1,000 one-byte chunks: 6,081 bytes that decode in much more than the ten microseconds the transfer has.
@@ -1497,9 +1497,9 @@ it('does not wait for an answer that never comes once the caller has given up be
 });
 
 /*
- * AP12-R02 (rest) — a read that returned is looked at before what it brought is told: bytes, the end of the stream
- * and a failure alike. A caller who cancelled while the client was blocked is not answered with a framing error, and
- * a phase that has run out is a timeout, whatever the read brought.
+ * A read that returned is looked at before what it brought is told: bytes, the end of the stream and a failure alike.
+ * A caller who cancelled while the client was blocked is not answered with a framing error, and a phase that has run
+ * out is a timeout, whatever the read brought.
  */
 it('lets the cancellation of the caller win over the end of the stream that came while they cancelled', function () {
     // [the caller cancels while the client is blocked in its read, how the call ends]: the peer hangs up either way
@@ -1569,8 +1569,8 @@ it('calls a read that returned after the end of its phase a timeout, whatever it
 });
 
 /*
- * AP12-R02 (end of the frame) — the frame is complete only after it was decoded, and the caller can cancel while that
- * happens. If the limit of the transfer ran out as well, the cancellation of the caller comes first, as everywhere else.
+ * The frame is complete only after it was decoded, and the caller can cancel while that happens. If the limit of the
+ * transfer ran out as well, the cancellation of the caller comes first, as everywhere else.
  */
 it('lets the cancellation of the caller win over the limit of the transfer when both came while the frame was decoded', function () {
     // [stream timeout, whether the caller cancels while the frame is decoded, how the call ends]: the limit of the

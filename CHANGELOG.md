@@ -307,61 +307,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IcapConnectionException` instead of forgetting it; `close()` empties them.
   *(M06, second stage)*
 - One operation has one end. `Config::$operationTimeout` (60 seconds by
-  default, finite and above 0, also set by the new `Config::withTimeouts()`,
-  and as `operationTimeout` of `RetryingIcapClient`) is a point on the
-  monotonic clock that is fixed when a public method is called and covers the
-  cache, the wait for the pool, connecting, TLS, the upload, the preview, the
-  continuation and the answers, and in the decorator every attempt and pause.
-  Before, each phase had a full timeout of its own and every retry began
-  again, so a scan could take as long as the phases added up to. The end
-  travels as the cancellation of the call: a nested call, the `request()` a
-  scan helper makes and a wrapped client can end earlier, never later, and
-  separate and parallel calls have budgets of their own. The end is looked at,
-  not only waited for: a producer, a cache or a transport that holds the event
-  loop cannot turn a result that came in late into a success (an OPTIONS answer
-  from the cache included, for a call that was cancelled or is over), and
-  nothing is cached, or given back to the pool, from an exchange that was over
-  time. The end of the operation is an `IcapTimeoutException`; the caller's
-  cancellation, also a `TimeoutCancellation`, stays a `CancelledException` and
-  wins. An expired call closes its socket and its file handle and leaves no
-  write behind. The synchronous transport bounds every native wait (connect,
-  select, read) by the time that is left and looks at the end between chunks
-  and after each blocking call, so a peer that reads or answers a little at a
-  time cannot stretch the operation. A producer or a file read that does not
-  return cannot be interrupted from outside (non-blocking file I/O is B09), and
-  an inner client that ignores its cancellation is waited for; the end is
-  looked at when control comes back. *(M10, second stage)*
+  default, finite and above 0; also `Config::withTimeouts()` and the
+  `operationTimeout` of `RetryingIcapClient`) is a point on the monotonic clock
+  that is fixed when a public method is called. It covers the cache, the wait
+  for the pool, connecting, TLS, the upload, the preview, the continuation and
+  the answers, and in the decorator every attempt and pause. Before, each phase
+  had a full timeout of its own and every retry began again, so a scan could
+  take as long as the phases added up to. The end travels as the cancellation of
+  the call: a nested call, the `request()` a scan helper makes and a wrapped
+  client can end earlier, never later; separate and parallel calls have budgets
+  of their own. The end is looked at, not only waited for: a producer, a cache
+  or a transport that holds the event loop cannot turn a late result into a
+  success (an OPTIONS answer from the cache included), and nothing is cached or
+  given back to the pool from an exchange that was over time. The end of the
+  operation is an `IcapTimeoutException`; the caller's cancellation, also a
+  `TimeoutCancellation`, stays a `CancelledException` and wins. An expired call
+  closes its socket and its file handle and leaves no write behind. The
+  synchronous transport bounds every native wait by the time that is left. A
+  producer or a file read that does not return cannot be interrupted from
+  outside (non-blocking file I/O is B09), and an inner client that ignores its
+  cancellation is waited for; the end is looked at when control comes back.
+  *(M10, second stage)*
 - The phases of a connection and of an answer have limits of their own.
   `tlsHandshakeTimeout` bounds the TLS handshake, which `Socket\connectTls()`
-  bounded by nothing but the whole connection setup, and the connection
-  setup waits for it where it is longer than `streamTimeout`.
-  `responseStartTimeout` is the time the server has to begin its answer once
-  the request is sent (the time a scan needs); from the first byte on, the
-  answer has `streamTimeout` to arrive in full, a maximum that no byte starts
-  again: before, the one window of `streamTimeout` had to cover the scan and
-  the transfer alike, and the synchronous transport restarted its read timeout
-  with every byte, so an answer dripped a byte at a time had no end. A read
-  that returns after its limit has passed, or after the caller has cancelled,
-  is looked at before its bytes or the end of the stream are used: it is a
-  timeout or a cancellation, never a late result or a framing error. Both new
-  settings default to `streamTimeout`. A connect that exceeds `socketTimeout`
-  still raises `IcapConnectionException`. *(M10, second stage)*
+  bounded by nothing but the whole connection setup (the setup waits for it
+  where it is longer than `streamTimeout`). `responseStartTimeout` is the time
+  the server has to begin its answer once the request is sent (the time a scan
+  needs); from the first byte on, the answer has `streamTimeout` to arrive in
+  full, a maximum that no byte starts again. Before, one window covered the scan
+  and the transfer alike, and the synchronous transport restarted its read
+  timeout with every byte, so an answer dripped a byte at a time had no end. A
+  read that returns after its limit has passed, or after the caller has
+  cancelled, is a timeout or a cancellation, never a late result or a framing
+  error. Both new settings default to `streamTimeout`. A connect that exceeds
+  `socketTimeout` still raises `IcapConnectionException`. *(M10, second stage)*
 - A retry repeats only what is safe to repeat, waits as long as the caller
   allows and treats a preview like every other answer. `RetryingIcapClient`
   repeats `options()` after an ICAP 5xx and nothing else: a 5xx or a failed
-  write does not prove that the server did not process the bytes of an
-  upload, a stream cannot be read twice and a file may have changed, so
-  `request()`, `scanFile()` and `scanFileWithPreview()` get one attempt
+  write does not prove that the server did not process the bytes of an upload,
+  so `request()`, `scanFile()` and `scanFileWithPreview()` get one attempt
   (`maxAttempts` counts the first attempt as before; an application that knows
   its scans are repeatable repeats them itself). The pause before the next
   attempt is a random share, from nothing up to all of it, of the capped
-  exponential delay (`random` is a seam for tests), it ends with the caller's
-  cancellation and with the end of the operation, and even a pause of 0 hands
-  the event loop over. The delays are computed without overflow (a huge
-  power is the cap, a base of 0 stays 0), and `NAN` and `INF` are refused as
-  parameters. A 4xx or 5xx answer to a preview is an `IcapClientException`
-  or `IcapServerException` as it is for any other answer; it was an
-  `IcapProtocolException`, which also kept a preview 503 out of the retry.
+  exponential delay (`random` is a seam for tests); it ends with the caller's
+  cancellation and the end of the operation, and even a pause of 0 hands the
+  event loop over. The delays are computed without overflow, and `NAN` and
+  `INF` are refused as parameters. A 4xx or 5xx answer to a preview is an
+  `IcapClientException` or `IcapServerException` as for any other answer; it was
+  an `IcapProtocolException`, which also kept a preview 503 out of the retry.
   *(N03)*
 
 ### Changed

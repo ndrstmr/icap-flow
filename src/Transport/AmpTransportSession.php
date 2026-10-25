@@ -45,21 +45,17 @@ use Revolt\EventLoop;
  * Every {@see write()} call gets a window of `streamTimeout` seconds of its own,
  * shared by everything that call does — not one window per chunk, and no timer
  * that spans the session. A {@see readResponse()} call has two, one after the
- * other (M10): the server may take `responseStartTimeout` seconds to begin its
- * answer once the request is sent (the time a scan needs), and from the first
- * byte on the answer has `streamTimeout` seconds to arrive in full. The second
- * is a maximum, not an idle timer that every byte starts again: a peer that
- * drips the answer does not keep the call alive. The call also ends with the
- * caller's cancellation, which is, in an operation of the client, also the end
+ * other (M10): `responseStartTimeout` for the server to begin its answer (the
+ * time a scan needs), then `streamTimeout` from the first byte for the answer
+ * to arrive in full, a maximum that no byte starts again. A call also ends with
+ * the caller's cancellation, which in an operation of the client is also the end
  * of the operation ({@see \Ndrstmr\Icap\OperationDeadline}). A call that ends in
  * either, or in any other failure, closes the session for good: a request
- * sent in part or a response read in part cannot be continued, and
- * {@see release()} afterwards cannot hand the socket to a pool. Nor can it once
- * the caller has cancelled or the operation has run out of time, whatever the
- * exchange looked like: a socket goes back from an operation that is still
- * wanted and in time. The window passing is an {@see IcapTimeoutException};
- * the caller's cancellation — also one that is a `TimeoutCancellation` — stays
- * the `Amp\CancelledException` it is.
+ * sent in part or a response read in part cannot be continued. {@see release()}
+ * does not hand the socket to a pool once the caller has cancelled or the
+ * operation has run out of time either. The window passing is an
+ * {@see IcapTimeoutException}; the caller's cancellation — also a
+ * `TimeoutCancellation` — stays an `Amp\CancelledException`.
  *
  * The producer of a request is part of the call. The event loop cannot fire
  * the timer of the window while a producer holds it, so the window also has an
@@ -153,11 +149,10 @@ final class AmpTransportSession implements TransportSession
                     // No read is begun for a caller who has cancelled, nor once the stretch has run out.
                     $checkpoint();
                     $bytes = $socket->read($window);
-                    // The read is back, and it may have found its bytes without waiting, or have been held up by
-                    // something that holds the event loop. What it brought, bytes or the end of the stream, counts only
-                    // if the caller has not cancelled and the stretch it began in has not run out: the decoder gets
-                    // neither otherwise, and the end of the stream would be a framing error. For the first bytes this is
-                    // the look at the time to begin, before the window of the transfer takes its place.
+                    // The read may have found its bytes without waiting, or been held up by something that holds the
+                    // event loop. Bytes or the end of the stream count only if the caller has not cancelled and the
+                    // stretch the read began in has not run out (for the first bytes: the time to begin): otherwise the
+                    // decoder gets neither, and the end of the stream would be a framing error.
                     $checkpoint();
                     if ($bytes !== null && !$begun) {
                         // The first byte is in: the wait for the server is over, and the answer has to arrive within the
@@ -178,31 +173,24 @@ final class AmpTransportSession implements TransportSession
     }
 
     /**
-     * Runs one IO call in a window of its own: `streamTimeout` seconds for everything the call
-     * does, so the time a scan takes after `100 Continue` does not eat into the time the
-     * preview phase had. The window also ends with the caller's cancellation.
+     * Runs one IO call in a window of its own, so the time a scan takes after `100 Continue` does not eat
+     * into the time the preview phase had. A call that does not finish leaves a request or a response in
+     * part, and the session is closed for good; whatever ended it is named (the caller's cancellation as the
+     * `Amp\CancelledException` it is, only the window passing as an {@see IcapTimeoutException}). Timer and
+     * subscription are removed on every way out, not left to destructors: an exception that is still
+     * referenced keeps the arguments of its stack frames alive.
      *
-     * A call that does not finish leaves a request sent in part or a response read in part,
-     * and with it a socket no other exchange may use: the session is closed for good, and
-     * whatever ended the call is named. The caller's cancellation, also a `TimeoutCancellation`
-     * of theirs, is thrown as the `Amp\CancelledException` it is; only the window passing is an
-     * {@see IcapTimeoutException}. Timer and subscription are removed on every way out, not
-     * left to destructors: an exception that is still referenced keeps the arguments of its
-     * stack frames alive.
+     * The phase gets the cancellation of the window and a checkpoint for the places where it has control
+     * back from something that does not look by itself: a producer, or a read that returned without the
+     * timer having had a turn of the event loop (it found its bytes in the socket, or something held the
+     * loop up). The checkpoint throws the caller's cancellation, or that of the window once it has passed:
+     * the monotonic clock says so when the timer cannot.
      *
-     * The phase gets the cancellation of the window and a checkpoint for the places where it
-     * has control back from something that does not look by itself: a producer, or a read that
-     * returned without the timer having had a turn of the event loop (it found its bytes in the
-     * socket, or something held the loop up): before and after every read, the end of the stream
-     * included, and before the frame is returned. The checkpoint throws the caller's cancellation, or
-     * the cancellation of the window once the window has passed. The timer cannot say so while
-     * something holds the event loop, the monotonic clock can.
-     *
-     * The phase can go on into a second stretch of the same call, with a limit of its own: the third
-     * argument it is handed replaces the timer and the end on the clock ($what and $limit are for the
-     * message), and the window stays the one the call and its cancellation belong to. The checkpoint
-     * looks at the stretch that runs, so the first bytes of an answer are measured against the time
-     * to begin before the window of the transfer takes its place.
+     * The phase can go on into a second stretch with a limit of its own: the third argument it is handed
+     * replaces the timer and the end on the clock ($what and $limit are for the message), and the window
+     * stays the one the call and its cancellation belong to. The checkpoint looks at the stretch that runs,
+     * so the first bytes of an answer are measured against the time to begin before the window of the
+     * transfer takes its place.
      *
      * @template T
      *

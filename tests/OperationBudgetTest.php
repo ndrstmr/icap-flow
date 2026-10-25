@@ -62,11 +62,9 @@ use function Amp\delay;
 uses(AsyncTestCase::class);
 
 /*
- * AP-12 (M10) — one operation, one end. The end is fixed when a public method is called and is the same for the
- * cache, the pool, the connection, the upload, the preview, the continuation and the answers: phases that are each
- * within their limits are still over the operation when they add up, and nothing that arrives after the end is a
- * result. The clients here run against real socket pairs, real listeners and transports that hold the event loop,
- * not against a mock that fails by itself: a mock proves no socket was closed.
+ * AP-12 (M10) — one operation, one end: phases that are each within their limits are still over the operation when
+ * they add up, and nothing that arrives after the end is a result. The clients here run against real socket pairs,
+ * real listeners and transports that hold the event loop, not against a mock that fails by itself.
  */
 
 const BUDGET_CLEAN = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
@@ -684,20 +682,29 @@ final class BudgetSlowPlainTransport implements TransportInterface
     }
 }
 
-/** An OPTIONS cache that holds the event loop when it is asked and when it is written. */
-final class BudgetSlowCache implements OptionsCacheInterface
+/**
+ * An OPTIONS cache that holds the event loop when it is asked and when it is written, counts both, and can cancel the
+ * caller while it is asked.
+ */
+final class BudgetCache implements OptionsCacheInterface
 {
+    public int $asked = 0;
+    public int $written = 0;
+
     public function __construct(
-        private readonly float $getSeconds,
-        private readonly float $setSeconds,
         private readonly ?IcapResponse $hit = null,
+        private readonly float $getSeconds = 0.0,
+        private readonly float $setSeconds = 0.0,
+        private readonly ?DeferredCancellation $cancelWhenAsked = null,
     ) {
     }
 
     #[\Override]
     public function get(string $key): ?IcapResponse
     {
+        $this->asked++;
         usleep((int) ($this->getSeconds * 1_000_000));
+        $this->cancelWhenAsked?->cancel();
 
         return $this->hit;
     }
@@ -705,6 +712,7 @@ final class BudgetSlowCache implements OptionsCacheInterface
     #[\Override]
     public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
     {
+        $this->written++;
         usleep((int) ($this->setSeconds * 1_000_000));
     }
 
@@ -727,38 +735,10 @@ final class BudgetRecordingLogger extends AbstractLogger
     }
 }
 
-it('does not call it a success when the cache held the call up, before or after the answer', function () {
-    $options = "ICAP/1.0 200 OK\r\nMethods: RESPMOD\r\nPreview: 4\r\nEncapsulated: null-body=0\r\n\r\n";
-    $cached = new IcapResponse(200, ['Preview' => ['4']]);
-
-    /** @var AsyncTestCase $this */
-    $this->runAsyncTest(function () use ($options, $cached) {
-        // The answer is in time and the write to the cache is not: the operation took longer than it may.
-        $transport = new ScriptedTransport([$options]);
-        $client = new IcapClient(new Config('icap.example', operationTimeout: 0.15), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: new BudgetSlowCache(0.0, 0.3));
-        expect(budgetThrown(fn () => $client->options('/svc')->await()))->toBeInstanceOf(IcapTimeoutException::class);
-
-        // The cache answers from its store, but only after the end: no cached answer, as a failed Future, and no request.
-        $transport = new ScriptedTransport([$options]);
-        $client = new IcapClient(new Config('icap.example', operationTimeout: 0.1), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: new BudgetSlowCache(0.3, 0.0, $cached));
-        $future = null;
-        $thrown = budgetThrown(function () use ($client, &$future): void {
-            $future = $client->options('/svc');
-        });
-        expect($thrown)->toBeNull()
-            ->and(budgetThrown(fn () => $future?->await()))->toBeInstanceOf(IcapTimeoutException::class)
-            ->and($transport->requests)->toBe([]);
-
-        // In time, the same cache answers: the control.
-        $client = new IcapClient(new Config('icap.example', operationTimeout: 5.0), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: new BudgetSlowCache(0.05, 0.0, $cached));
-        expect($client->options('/svc')->await())->toBe($cached);
-    });
-});
-
 it('opens no file for a preview whose size lookup in the cache took the whole budget', function () {
     $cached = new IcapResponse(200, ['Preview' => ['4']]);
     $transport = new ScriptedTransport();
-    $client = new IcapClient(new Config('icap.example', operationTimeout: 0.1), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: new BudgetSlowCache(0.3, 0.0, $cached));
+    $client = new IcapClient(new Config('icap.example', operationTimeout: 0.1), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: new BudgetCache($cached, getSeconds: 0.3));
 
     try {
         $path = ScriptedSource::add('budget-cache', 'payload');
@@ -1040,45 +1020,9 @@ it('gives a synchronous connection no more time than is left of the operation', 
 });
 
 /*
- * AP12-R01 to R03 — foreign code gets control: the OPTIONS cache, the logger, the preview strategy. What comes back
- * from it is looked at before anything is answered, written or given away, and when both apply, the caller's
- * cancellation wins over the end of the operation.
+ * Foreign code gets control: the OPTIONS cache, the logger, the preview strategy. What comes back from it is looked
+ * at before anything is answered, written or given away; the caller's cancellation wins over the end of the operation.
  */
-
-/** An OPTIONS cache that counts how often it is asked and written, and lets the test act while it is asked. */
-final class BudgetHitCache implements OptionsCacheInterface
-{
-    public int $asked = 0;
-    public int $written = 0;
-
-    public function __construct(
-        private readonly ?IcapResponse $hit,
-        private readonly ?DeferredCancellation $cancelWhenAsked = null,
-        private readonly float $holdSeconds = 0.0,
-    ) {
-    }
-
-    #[\Override]
-    public function get(string $key): ?IcapResponse
-    {
-        $this->asked++;
-        usleep((int) ($this->holdSeconds * 1_000_000));
-        $this->cancelWhenAsked?->cancel();
-
-        return $this->hit;
-    }
-
-    #[\Override]
-    public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
-    {
-        $this->written++;
-    }
-
-    #[\Override]
-    public function delete(string $key): void
-    {
-    }
-}
 
 /** A logger that holds the event loop when the answer is logged, and lets the test cancel the caller meanwhile. */
 final class BudgetSlowLogger extends AbstractLogger
@@ -1131,7 +1075,7 @@ it('answers an OPTIONS call from the cache only while it is wanted and in time, 
     // [the caller has cancelled before the call, cancels while the cache is asked, seconds the cache holds the event
     // loop, operation timeout, the call belongs to an operation that is over, how it ends, how often the cache is asked]
     $cases = [
-        'in time'                            => [false, false, 0.0, 5.0, false, null, 1],
+        'in time, a little slow'             => [false, false, 0.05, 5.0, false, null, 1],
         'cancelled beforehand'               => [true, false, 0.0, 5.0, false, CancelledException::class, 0],
         'cancelled while the cache is asked' => [false, true, 0.0, 5.0, false, CancelledException::class, 1],
         'over time while the cache is asked' => [false, false, 0.2, 0.1, false, IcapTimeoutException::class, 1],
@@ -1144,7 +1088,7 @@ it('answers an OPTIONS call from the cache only while it is wanted and in time, 
         if ($before) {
             $caller->cancel();
         }
-        $cache = new BudgetHitCache($hit, $during ? $caller : null, $hold);
+        $cache = new BudgetCache($hit, $hold, cancelWhenAsked: $during ? $caller : null);
         $transport = new ScriptedTransport();
         $client = new IcapClient(new Config('icap.example', operationTimeout: $budget), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
 
@@ -1176,20 +1120,22 @@ it('answers an OPTIONS call from the cache only while it is wanted and in time, 
     }
 });
 
-it('begins no write to the OPTIONS cache for a call that ran out of time, or was cancelled, while it logged its answer', function () {
+it('writes the OPTIONS answer to the cache only for a call that is wanted and in time, and fails one whose write ran past the end', function () {
     $options = "ICAP/1.0 200 OK\r\nMethods: RESPMOD\r\nOptions-TTL: 60\r\nEncapsulated: null-body=0\r\n\r\n";
 
-    // [seconds the logger holds the event loop, it cancels the caller, operation timeout, how the call ends, writes to the cache]
+    // [seconds the logger holds the event loop, it cancels the caller, seconds the write takes, operation timeout, how
+    // the call ends, writes to the cache begun]
     $cases = [
-        'in time'                 => [0.0, false, 5.0, null, 1],
-        'over time'               => [0.2, false, 0.1, IcapTimeoutException::class, 0],
-        'cancelled'               => [0.0, true, 5.0, CancelledException::class, 0],
-        'cancelled and over time' => [0.2, true, 0.1, CancelledException::class, 0],
+        'in time'                     => [0.0, false, 0.0, 5.0, null, 1],
+        'over time'                   => [0.2, false, 0.0, 0.1, IcapTimeoutException::class, 0],
+        'cancelled'                   => [0.0, true, 0.0, 5.0, CancelledException::class, 0],
+        'cancelled and over time'     => [0.2, true, 0.0, 0.1, CancelledException::class, 0],
+        'the write runs past the end' => [0.0, false, 0.3, 0.15, IcapTimeoutException::class, 1],
     ];
 
-    foreach ($cases as $case => [$hold, $cancels, $budget, $expected, $writes]) {
+    foreach ($cases as $case => [$hold, $cancels, $writeSeconds, $budget, $expected, $writes]) {
         $caller = new DeferredCancellation();
-        $cache = new BudgetHitCache(null);
+        $cache = new BudgetCache(setSeconds: $writeSeconds);
         $client = new IcapClient(
             new Config('icap.example', operationTimeout: $budget),
             new ScriptedTransport([$options]),

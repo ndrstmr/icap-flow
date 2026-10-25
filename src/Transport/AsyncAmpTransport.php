@@ -110,12 +110,11 @@ final class AsyncAmpTransport implements SessionAwareTransport
         // Cancelled before it began: neither the pool nor the connector is asked.
         $cancellation?->throwIfRequested();
 
-        // Waiting for the pool, connecting and the TLS handshake share one window: streamTimeout
-        // seconds, or the handshake limit if that is longer (it has a limit of its own, which the
-        // window must not cut short). The end of the whole operation, which reaches the window as the
-        // cancellation of the caller, is shorter if it is. Timer and subscription are removed on every
-        // way out, not left to destructors: an exception that is still referenced keeps the arguments
-        // of its stack frames, and with them the cancellation, alive.
+        // Waiting for the pool, connecting and the TLS handshake share one window: streamTimeout seconds, or the
+        // handshake limit if that is longer (the window must not cut it short). The end of the whole operation reaches
+        // the window as the cancellation of the caller and is shorter if it is. Timer and subscription are removed on
+        // every way out, not left to destructors: an exception that is still referenced keeps the arguments of its
+        // stack frames, and with them the cancellation, alive.
         $setup = $config->getTlsContext() === null
             ? $config->getStreamTimeout()
             : max($config->getStreamTimeout(), $config->getTlsHandshakeTimeout());

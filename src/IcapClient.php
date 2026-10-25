@@ -131,11 +131,9 @@ final class IcapClient implements IcapClientInterface
     }
 
     /**
-     * Runs one public operation in a fiber of its own, inside the budget that began with its call (M10): the timer
-     * and the subscription to the caller are set for exactly as long as the operation runs and removed in `finally`,
-     * and what leaves the operation is looked at against the clock before it is returned, so that a result that
-     * came in late (a producer, a transport or a cache that held the event loop) is a timeout, not a success.
-     * The caller's cancellation stays a `CancelledException`; the end of the budget is an `IcapTimeoutException`.
+     * Runs one public operation in a fiber of its own, inside the budget that began with its call (M10). What leaves
+     * the operation is checked against the clock before it is returned: a result that came in late (a producer, a
+     * transport or a cache that held the event loop) is a timeout, not a success. The deadline is closed in `finally`.
      *
      * @template T
      *
@@ -163,10 +161,8 @@ final class IcapClient implements IcapClientInterface
     }
 
     /**
-     * The Future of an operation that was cancelled, or has run out of time, before a fiber of its own began (an answer
-     * from the OPTIONS cache), or null if it is still wanted and in time: the cancellation of the caller as the
-     * exception it is, the end of the operation as an {@see IcapTimeoutException}. The operation is over, so its
-     * deadline is closed.
+     * The failed Future of an operation that was cancelled, or has run out of time, before a fiber of its own began
+     * (an answer from the OPTIONS cache), or null if it is still wanted and in time. The deadline is closed with it.
      *
      * @phpstan-impure it reads the clock and the cancellation of the caller: the answer to a second call differs
      *
@@ -225,9 +221,8 @@ final class IcapClient implements IcapClientInterface
 
         $cache = $this->optionsCache;
         if ($cache !== null) {
-            // The cache is foreign code, and a hit is an answer like any other: a call that was cancelled, or is over,
-            // does not ask it, and one that was cancelled or ran out of time while it was asked gets no answer from
-            // it. The cancellation of the caller wins; what ended the call is the Future's to tell.
+            // The cache is foreign code and a hit is an answer like any other: a call that is cancelled or over does not
+            // ask it, and gets no answer from it if it ended while the cache was asked. What ended it is the Future's.
             if (($stopped = self::stopped($deadline)) !== null) {
                 return $stopped;
             }

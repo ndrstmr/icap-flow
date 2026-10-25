@@ -55,15 +55,15 @@ use function Amp\delay;
  * caller's cancellation and with the end of the operation, and even a pause of
  * 0 seconds hands the event loop over once.
  *
- * **One budget (M10).** `operationTimeout` is the whole of a call, attempts and
- * pauses together, on a monotonic clock, 60 seconds by default. It begins when
- * the method is called, it is not restarted by an attempt, and the inner client
- * is handed it as its cancellation, so that an inner {@see IcapClient} ends with
- * it (an inner client that has a shorter timeout of its own keeps it; none can
- * extend this one). It ends the call with an {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}; the caller's own
- * cancellation stays an `Amp\CancelledException`. A foreign inner client that
- * ignores its cancellation is waited for: the end is looked at when it returns,
- * and a result that comes in after it is not returned.
+ * **One budget (M10).** `operationTimeout` (60 seconds by default) is the whole
+ * of a call, attempts and pauses together, on a monotonic clock. It begins when
+ * the method is called, is not restarted by an attempt, and is handed to the
+ * inner client as its cancellation: an inner {@see IcapClient} ends with it (one
+ * with a shorter timeout of its own keeps it; none can extend this one). It ends
+ * the call with an {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}; the
+ * caller's cancellation stays an `Amp\CancelledException`. An inner client that
+ * ignores its cancellation is waited for, and a result that comes in after the
+ * end is not returned.
  *
  * Example wiring:
  *
@@ -244,10 +244,9 @@ final class RetryingIcapClient implements IcapClientInterface
     }
 
     /**
-     * The pause between two attempts. It ends with the caller's cancellation and with the end of the operation,
-     * which is then an {@see \Ndrstmr\Icap\Exception\IcapTimeoutException} with the 5xx that made the call wait as its cause.
-     * A sleeper of the caller's cannot be interrupted from here, so the budget is looked at before it is called (a
-     * budget that is gone is not slept through) and, by the loop, before the next attempt.
+     * The pause between two attempts. It ends with the caller's cancellation and with the end of the operation (an
+     * {@see \Ndrstmr\Icap\Exception\IcapTimeoutException} with the 5xx as its cause). A sleeper cannot be interrupted
+     * from here, so the budget is looked at before it is called and, by the loop, before the next attempt.
      */
     private function pause(float $seconds, OperationDeadline $deadline, IcapServerException $cause): void
     {

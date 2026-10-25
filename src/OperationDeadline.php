@@ -29,24 +29,21 @@ use Revolt\EventLoop;
 
 /**
  * The end of one operation (M10): a point on the monotonic clock, fixed when a public method is called, that every
- * phase of the operation, every attempt and every pause stays inside. It travels as the {@see Cancellation} of the
- * call, so that code that knows nothing about it (a connector, a producer, another client) ends with the caller's
- * cancellation and with the end of the operation alike, and code that does can ask how much time is left.
+ * phase, attempt and pause stays inside. It travels as the {@see Cancellation} of the call, so that code that knows
+ * nothing about it (a connector, a producer, another client) ends with the caller's cancellation and with the end of
+ * the operation alike, and code that does can ask how much time is left.
  *
- * Whoever starts an operation with {@see begin()} hands the caller's own cancellation in. If that already is an
- * operation, the new end is the earlier of the two: a nested call, an inner client, a call of the scan helper to
- * {@see IcapClient::request()}, never extends what its caller has. Separate and parallel calls begin their own.
+ * {@see begin()} takes the caller's own cancellation: if that already is an operation, the new end is the earlier of
+ * the two, so a nested call never extends what its caller has. Separate and parallel calls begin their own.
  *
- * The end is looked at, not only waited for. A timer cannot fire while something holds the event loop (a producer, a
- * synchronous transport, a cache), so {@see throwIfRequested()}, {@see isRequested()} and {@see checkpoint()} compare
- * the clock, and the places that get control back call them; a result that comes in after the end is not a result.
- *
- * Two outcomes are told apart. A cancellation by the caller (also a `TimeoutCancellation` of theirs) stays what it is,
- * an `Amp\CancelledException`, and wins when both apply. The end of the operation is an
- * {@see IcapTimeoutException}: {@see checkpoint()} throws it, {@see outcome()} turns the `CancelledException` that
- * the end caused into it. The timer and the subscription to the caller are set by the first one who waits for the end
- * ({@see subscribe()}) and removed by {@see close()}, in a `finally`, not left to destructors: an exception that is
- * still referenced keeps the arguments of its stack frames alive.
+ * The end is looked at, not only waited for: a timer cannot fire while something holds the event loop, so
+ * {@see throwIfRequested()}, {@see isRequested()} and {@see checkpoint()} compare the clock, and the places that get
+ * control back call them. The caller's cancellation (also a `TimeoutCancellation` of theirs) stays an
+ * `Amp\CancelledException` and wins when both apply; the end of the operation is an {@see IcapTimeoutException}
+ * ({@see checkpoint()} throws it, {@see outcome()} turns the `CancelledException` the end caused into it). The timer
+ * and the subscription to the caller are set by the first one who waits for the end ({@see subscribe()}) and removed
+ * by {@see close()} in a `finally`, not by destructors: an exception that is still referenced keeps the arguments of
+ * its stack frames alive.
  *
  * @internal
  */
@@ -88,8 +85,7 @@ final class OperationDeadline implements Cancellation
     }
 
     /**
-     * Whether the end has passed. This is the clock: the timer that tells those who wait runs when the event loop
-     * does.
+     * Whether the end has passed, by the clock; the timer runs only when the event loop does.
      */
     public function hasEnded(): bool
     {
@@ -132,10 +128,9 @@ final class OperationDeadline implements Cancellation
     }
 
     /**
-     * What an exception that left the operation means for the caller, as the exception to throw: the caller's
-     * cancellation stays what it is, the `CancelledException` that the end of the operation caused becomes an
-     * {@see IcapTimeoutException}, and everything else, a cancellation nobody here caused included, is returned as
-     * it is.
+     * The exception to throw for one that left the operation: the caller's cancellation stays what it is, the
+     * `CancelledException` that the end caused becomes an {@see IcapTimeoutException}, everything else (a
+     * cancellation nobody here caused included) is returned as it is.
      *
      * @param \Throwable|null $cause what the operation was doing when it ran out (kept as the previous exception)
      */
