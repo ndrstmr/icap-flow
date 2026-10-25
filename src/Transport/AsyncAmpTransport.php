@@ -23,10 +23,8 @@ namespace Ndrstmr\Icap\Transport;
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
-use Amp\Socket;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
-use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Revolt\EventLoop;
 
@@ -184,14 +182,6 @@ final class AsyncAmpTransport implements SessionAwareTransport
             return $this->pool->acquire($config, $cancellation);
         }
 
-        try {
-            return SocketOpener::open($config, $cancellation);
-        } catch (Socket\ConnectException $e) {
-            throw new IcapConnectionException(
-                sprintf('Async connection to %s:%d failed.', $config->host, $config->port),
-                0,
-                $e,
-            );
-        }
+        return SocketOpener::open($config, $cancellation);
     }
 }

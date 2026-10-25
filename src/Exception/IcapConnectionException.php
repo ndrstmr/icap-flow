@@ -23,7 +23,8 @@ namespace Ndrstmr\Icap\Exception;
 use RuntimeException;
 
 /**
- * Thrown when a connection to the ICAP server cannot be established.
+ * The connection to the ICAP server cannot be made or fails while in use: refused, connect timeout, TLS handshake,
+ * or a socket that breaks during the request or the answer. The Amp exception is the previous exception.
  */
 final class IcapConnectionException extends RuntimeException implements IcapExceptionInterface
 {

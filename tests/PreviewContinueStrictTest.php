@@ -24,6 +24,7 @@ use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
@@ -453,7 +454,7 @@ it('does not terminate the continuation of a source that failed or changed size'
 
                 if ($fails) {
                     expect(fn () => $client->scanFileWithPreview('/svc', $path, 4)->await())
-                        ->toThrow(RuntimeException::class, '', $case);
+                        ->toThrow(IcapStorageException::class, '', $case);
                 } else {
                     expect($client->scanFileWithPreview('/svc', $path, 4)->await()->isInfected())->toBeFalse($case);
                 }

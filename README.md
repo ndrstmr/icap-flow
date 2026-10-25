@@ -209,6 +209,7 @@ Every exception this library throws implements `Ndrstmr\Icap\Exception\IcapExcep
 | `IcapMalformedResponseException` (extends `IcapProtocolException`) | Server response can't be parsed (no separator, header line without `:`, oversize lines) |
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |
 | `IcapServerException` | ICAP 5xx response — server failed, code is the real status |
+| `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable, or the OPTIONS cache backend fails |
 | `IcapResponseException` | Status code that doesn't fit any other bucket |
 
 ## Examples

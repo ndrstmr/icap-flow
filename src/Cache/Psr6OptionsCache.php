@@ -21,6 +21,8 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Cache;
 
 use Ndrstmr\Icap\DTO\IcapResponse;
+use Ndrstmr\Icap\Exception\IcapStorageException;
+use Psr\Cache\CacheException;
 use Psr\Cache\CacheItemPoolInterface;
 
 /**
@@ -37,6 +39,9 @@ use Psr\Cache\CacheItemPoolInterface;
  * {@see OptionsCacheKey::backend()}, whatever key the caller passes: the
  * PSR-6 rules for keys cannot be broken by a host name, a service path or
  * a prefix. Entries of an earlier key scheme are not read and not deleted.
+ *
+ * A PSR-6 {@see CacheException} becomes an {@see IcapStorageException} with that exception as its cause; anything
+ * else the pool throws passes unchanged.
  *
  * Requires `psr/cache` ^3.0 — listed in composer.json `suggest`.
  */
@@ -55,13 +60,17 @@ final class Psr6OptionsCache implements OptionsCacheInterface
     #[\Override]
     public function get(string $key): ?IcapResponse
     {
-        $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::DATA, $key));
-        if (!$item->isHit()) {
-            return null;
-        }
+        try {
+            $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::DATA, $key));
+            if (!$item->isHit()) {
+                return null;
+            }
 
-        /** @var array{statusCode: int, headers: array<string, list<string>>, body: string} $data */
-        $data = $item->get();
+            /** @var array{statusCode: int, headers: array<string, list<string>>, body: string} $data */
+            $data = $item->get();
+        } catch (CacheException $e) {
+            throw self::failed($e);
+        }
 
         return new IcapResponse(
             $data['statusCode'],
@@ -77,29 +86,42 @@ final class Psr6OptionsCache implements OptionsCacheInterface
             return;
         }
 
-        if ($istag !== null) {
-            $this->handleIstagChange($istag);
+        try {
+            if ($istag !== null) {
+                $this->handleIstagChange($istag);
+            }
+
+            $data = [
+                'statusCode' => $response->statusCode,
+                'headers'    => $response->headers,
+                'body'       => $response->body,
+            ];
+
+            $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::DATA, $key));
+            $item->set($data);
+            $item->expiresAfter($ttlSeconds);
+            $this->pool->save($item);
+
+            $this->trackKey($key);
+        } catch (CacheException $e) {
+            throw self::failed($e);
         }
-
-        $data = [
-            'statusCode' => $response->statusCode,
-            'headers'    => $response->headers,
-            'body'       => $response->body,
-        ];
-
-        $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::DATA, $key));
-        $item->set($data);
-        $item->expiresAfter($ttlSeconds);
-        $this->pool->save($item);
-
-        $this->trackKey($key);
     }
 
     #[\Override]
     public function delete(string $key): void
     {
-        $this->pool->deleteItem($this->backendKey(OptionsCacheKey::DATA, $key));
-        $this->untrackKey($key);
+        try {
+            $this->pool->deleteItem($this->backendKey(OptionsCacheKey::DATA, $key));
+            $this->untrackKey($key);
+        } catch (CacheException $e) {
+            throw self::failed($e);
+        }
+    }
+
+    private static function failed(CacheException $cause): IcapStorageException
+    {
+        return new IcapStorageException('The OPTIONS cache pool failed.', 0, $cause);
     }
 
     /**

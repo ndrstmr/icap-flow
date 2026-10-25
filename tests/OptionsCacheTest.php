@@ -27,6 +27,8 @@ use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
+use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
@@ -396,8 +398,10 @@ it('does not hand out a cached answer that options() would reject', function () 
         $returned = null;
         /** @var AsyncTestCase $this */
         $this->runAsyncTest(function () use ($client, &$thrown, &$returned) {
+            // Rejecting the cached answer is the Future's to tell, not the call's.
+            $future = $client->options('/avscan');
             try {
-                $returned = $client->options('/avscan')->await();
+                $returned = $future->await();
             } catch (Throwable $e) {
                 $thrown = $e;
             }
@@ -409,6 +413,81 @@ it('does not hand out a cached answer that options() would reject', function () 
         expect($transport->requests)->toBe([], "status {$status}");
     }
 
+    m::close();
+});
+
+/*
+ * options() does not throw for what goes wrong with the cache: its Future fails with what the cache threw.
+ */
+it('delivers a failing cache through the Future of options(), unchanged', function () {
+    $reply = "ICAP/1.0 200 OK\r\nOptions-TTL: 60\r\nEncapsulated: null-body=0\r\n\r\n";
+    $storage = new IcapStorageException('The cache is down.');
+    $bug = new TypeError('A bug in the cache.');
+
+    // label => [the call that fails, what it throws, requests that reach the server]
+    $cases = [
+        'get'         => ['get', $storage, 0],
+        'get, a bug'  => ['get', $bug, 0],
+        'set'         => ['set', $storage, 1],
+        'set, a bug'  => ['set', $bug, 1],
+    ];
+
+    foreach ($cases as $case => [$fails, $failure, $requests]) {
+        /** @var OptionsCacheInterface&\Mockery\MockInterface $cache */
+        $cache = m::mock(OptionsCacheInterface::class);
+        /** @var \Mockery\Expectation $get */
+        $get = $cache->shouldReceive('get');
+        /** @var \Mockery\Expectation $set */
+        $set = $cache->shouldReceive('set');
+        if ($fails === 'get') {
+            $get->andThrow($failure);
+            $set->never();
+        } else {
+            $get->andReturn(null);
+            $set->andThrow($failure);
+        }
+        $transport = new ScriptedTransport([$reply]);
+        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $failure, $case) {
+            $baseline = $this->loopTimers();
+            $future = $client->options('/svc');
+
+            expect(fn () => $future->await())->toThrow($failure::class, $failure->getMessage(), $case);
+            expect($this->loopTimers())->toBe($baseline, $case);
+        });
+
+        expect(count($transport->requests))->toBe($requests, $case);
+    }
+
+    m::close();
+});
+
+/*
+ * A cache that takes the whole budget to say it has no entry has used the time of the call: the operation is over, and
+ * no request goes out on its behalf.
+ */
+it('sends no request when the cache held the call up beyond its end and had no answer', function () {
+    /** @var OptionsCacheInterface&\Mockery\MockInterface $cache */
+    $cache = m::mock(OptionsCacheInterface::class);
+    /** @var \Mockery\Expectation $get */
+    $get = $cache->shouldReceive('get');
+    $get->andReturnUsing(static function (): null {
+        usleep(300_000);
+
+        return null;
+    });
+    $cache->shouldNotReceive('set');
+    $transport = new ScriptedTransport();
+    $client = new IcapClient(new Config('icap.example', operationTimeout: 0.1), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        expect(fn () => $client->options('/svc')->await())->toThrow(IcapTimeoutException::class);
+    });
+
+    expect($transport->requests)->toBe([]);
     m::close();
 });
 

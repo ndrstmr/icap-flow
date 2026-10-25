@@ -21,6 +21,7 @@ declare(strict_types=1);
 use Ndrstmr\Icap\DTO\HttpRequest;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\RequestFormatter;
 
 /**
@@ -401,7 +402,7 @@ it('sends a stream body only with the Content-Length its message announces', fun
 
             expect(str_ends_with($wire, $tail))->toBeTrue($case);
             if ($fails) {
-                expect($error)->toBeInstanceOf(RuntimeException::class, $case);
+                expect($error)->toBeInstanceOf(IcapStorageException::class, $case);
             } else {
                 expect($error)->toBeNull($case);
             }

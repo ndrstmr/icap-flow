@@ -20,12 +20,13 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Transport;
 
-use Amp\ByteStream\ClosedException;
+use Amp\ByteStream\StreamException;
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Revolt\EventLoop;
@@ -116,7 +117,11 @@ final class AmpTransportSession implements TransportSession
                     // write would fail for it.
                     $checkpoint();
                     if ($chunk !== '') {
-                        $this->socket->write($chunk);
+                        try {
+                            $this->socket->write($chunk);
+                        } catch (StreamException $e) {
+                            throw self::socketFailed($e, $checkpoint);
+                        }
                     }
                     // Before the producer is asked for the next chunk.
                     $checkpoint();
@@ -148,7 +153,11 @@ final class AmpTransportSession implements TransportSession
                 $frame = $reader->readFrom(static function () use ($socket, $window, $checkpoint, $next, $streamTimeout, &$begun): ?string {
                     // No read is begun for a caller who has cancelled, nor once the stretch has run out.
                     $checkpoint();
-                    $bytes = $socket->read($window);
+                    try {
+                        $bytes = $socket->read($window);
+                    } catch (StreamException $e) {
+                        throw self::socketFailed($e, $checkpoint);
+                    }
                     // The read may have found its bytes without waiting, or been held up by something that holds the
                     // event loop. Bytes or the end of the stream count only if the caller has not cancelled and the
                     // stretch the read began in has not run out (for the first bytes: the time to begin): otherwise the
@@ -245,9 +254,8 @@ final class AmpTransportSession implements TransportSession
         } catch (\Throwable $e) {
             $this->close();
 
-            // A socket closed under a pending write reports a closed stream, a cancelled
-            // window a cancellation: say which of the two ended the call.
-            if ($e instanceof ClosedException || $e instanceof CancelledException) {
+            // A cancelled window is a cancellation: say whether the caller or the end of the window cancelled it.
+            if ($e instanceof CancelledException) {
                 $caller?->throwIfRequested();
                 if ($expired) {
                     throw new IcapTimeoutException(sprintf(
@@ -268,6 +276,17 @@ final class AmpTransportSession implements TransportSession
                 $caller->unsubscribe($watch);
             }
         }
+    }
+
+    /**
+     * A stream error of the socket is a connection failure, unless the caller or the end of the window ended the call
+     * first (the window closes the socket under a pending write): the checkpoint throws that cancellation.
+     */
+    private static function socketFailed(StreamException $e, \Closure $checkpoint): IcapConnectionException
+    {
+        $checkpoint();
+
+        return new IcapConnectionException('The connection to the server failed.', 0, $e);
     }
 
     #[\Override]

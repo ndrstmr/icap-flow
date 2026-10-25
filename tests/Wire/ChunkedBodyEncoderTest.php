@@ -19,6 +19,7 @@
 declare(strict_types=1);
 
 use Ndrstmr\Icap\ChunkedBodyEncoder;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 
 /**
@@ -175,7 +176,7 @@ it('terminates a stream body only at its confirmed end', function () {
                 : $encoder->encodeRemainderFromStream($stream, $length));
 
             if ($fails) {
-                expect($error)->toBeInstanceOf(RuntimeException::class, $case);
+                expect($error)->toBeInstanceOf(IcapStorageException::class, $case);
                 expect(str_contains($wire, "0\r\n\r\n") || str_contains($wire, 'ieof'))->toBeFalse($case);
             } else {
                 expect($error)->toBeNull($case);

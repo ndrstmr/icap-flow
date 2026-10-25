@@ -21,11 +21,9 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Transport;
 
 use Amp\Cancellation;
-use Amp\Socket;
 use Amp\Socket\Socket as SocketInterface;
 use Closure;
 use Ndrstmr\Icap\Config;
-use Ndrstmr\Icap\Exception\IcapConnectionException;
 
 /**
  * No-op connection pool: every {@see acquire()} opens a fresh TCP/TLS
@@ -51,7 +49,7 @@ final class NullConnectionPool implements ConnectionPoolInterface
      */
     public function __construct(?Closure $connector = null)
     {
-        $this->connector = $connector ?? self::defaultConnector();
+        $this->connector = $connector ?? SocketOpener::open(...);
     }
 
     #[\Override]
@@ -70,23 +68,5 @@ final class NullConnectionPool implements ConnectionPoolInterface
     public function close(): void
     {
         // Nothing to do — no idle sockets are ever stored.
-    }
-
-    /**
-     * @return Closure(Config, ?Cancellation): SocketInterface
-     */
-    private static function defaultConnector(): Closure
-    {
-        return static function (Config $config, ?Cancellation $cancellation): SocketInterface {
-            try {
-                return SocketOpener::open($config, $cancellation);
-            } catch (Socket\ConnectException $e) {
-                throw new IcapConnectionException(
-                    sprintf('NullConnectionPool connect to %s:%d failed.', $config->host, $config->port),
-                    0,
-                    $e,
-                );
-            }
-        };
     }
 }

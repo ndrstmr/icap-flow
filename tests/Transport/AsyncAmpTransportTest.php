@@ -17,6 +17,7 @@
  */
 
 use Amp\ByteStream\ClosedException;
+use Amp\ByteStream\StreamException;
 use Amp\Cancellation;
 use Amp\CancelledException;
 use Amp\DeferredCancellation;
@@ -1707,6 +1708,117 @@ it('gives a TLS handshake the limit of its own where it is longer than the strea
             $pool->close();
         }
     }
+});
+
+/*
+ * What goes wrong in the connection reaches the caller as an IcapConnectionException that keeps the cause, however the
+ * connection was opened and wherever in the exchange it failed.
+ */
+it('reports a TLS handshake that fails as IcapConnectionException with its cause, and closes the connection', function () {
+    $server = Socket\listen('127.0.0.1:0');
+    $address = $server->getAddress();
+    \assert($address instanceof Socket\InternetAddress);
+    $accepted = [];
+    $accepting = async(function () use ($server, &$accepted): void {
+        while (($peer = $server->accept()) !== null) {
+            $accepted[] = $peer;
+            $peer->write("ICAP/1.0 400 Bad Request\r\n\r\n");
+        }
+    });
+    $pool = new AmpConnectionPool(maxConnectionsPerHost: 1);
+    // The exceptions are held, and with them the arguments of their frames: only an explicit close() ends a connection.
+    $keepArgs = ini_set('zend.exception_ignore_args', '0');
+    $held = [];
+
+    try {
+        $config = new Config('127.0.0.1', $address->getPort(), socketTimeout: 5.0, streamTimeout: 5.0, tlsContext: new ClientTlsContext('127.0.0.1'));
+        $paths = [
+            'no pool'            => new AsyncAmpTransport(),
+            'NullConnectionPool' => new AsyncAmpTransport(new NullConnectionPool()),
+            'AmpConnectionPool'  => new AsyncAmpTransport($pool),
+        ];
+        foreach ($paths as $path => $transport) {
+            $thrown = thrownBy(fn () => $transport->request($config, ["OPTIONS icap://127.0.0.1/svc ICAP/1.0\r\n\r\n"])->await());
+            $held[] = $thrown;
+
+            expect($thrown)->toBeInstanceOf(IcapConnectionException::class, $path);
+            expect($thrown?->getPrevious())->toBeInstanceOf(Socket\TlsException::class, $path);
+        }
+
+        // Every connection that failed was closed, and the pool has its room back: with a cap of one, the next try
+        // would be refused for want of room, not for the handshake.
+        delay(0.1);
+        expect($accepted)->toHaveCount(3);
+        foreach ($accepted as $peer) {
+            expect(drain($peer)[1])->toBeTrue();
+        }
+        expect(thrownBy(fn () => $pool->acquire($config))?->getPrevious())->toBeInstanceOf(Socket\TlsException::class);
+    } finally {
+        if ($keepArgs !== false) {
+            ini_set('zend.exception_ignore_args', $keepArgs);
+        }
+        $pool->close();
+        $server->close();
+        $accepting->await();
+        foreach ($accepted as $peer) {
+            $peer->close();
+        }
+    }
+});
+
+it('reports a write that the socket fails as IcapConnectionException with its cause, and leaves a stream error of the producer alone', function () {
+    // The peer is gone, so the 8 MiB chunk cannot go out.
+    $gone = pairedSession(5.0);
+    $gone['peer']->close();
+    $seen = ['pulled' => 0, 'returned' => 0];
+    // A producer that fails with an Amp stream error of its own, say its upload source: not the connection's failure.
+    $own = pairedSession(5.0);
+    $sourceFailure = new StreamException('The upload source failed.');
+
+    try {
+        $thrown = thrownBy(fn () => $gone['session']->write(stalledBody($seen)));
+        $clientClosed = $gone['client']->isClosed();
+        $gone['session']->release();
+        $gone['pool']->acquire(new Config('icap.example'))->close();
+
+        expect($thrown)->toBeInstanceOf(IcapConnectionException::class);
+        expect($thrown?->getPrevious())->toBeInstanceOf(StreamException::class);
+        // The session is closed, and what it held does not go back to the pool.
+        expect($clientClosed)->toBeTrue();
+        expect($gone['opened']())->toBe(2);
+
+        $thrown = thrownBy(fn () => $own['session']->write((function () use ($sourceFailure): \Generator {
+            yield "OPTIONS icap://icap.example/scan ICAP/1.0\r\n";
+
+            throw $sourceFailure;
+        })()));
+        expect($thrown)->toBe($sourceFailure);
+    } finally {
+        foreach ([$gone, $own] as $fx) {
+            $fx['client']->close();
+            $fx['peer']->close();
+            $fx['pool']->close();
+        }
+    }
+});
+
+it('reports a read that the socket fails as IcapConnectionException with its cause, and closes the session', function () {
+    $failure = new StreamException('Failed to read from the stream.');
+    /** @var Socket\Socket&\Mockery\MockInterface $socket */
+    $socket = m::mock(Socket\Socket::class);
+    /** @var \Mockery\Expectation $read */
+    $read = $socket->shouldReceive('read');
+    $read->andThrow($failure);
+    /** @var \Mockery\Expectation $close */
+    $close = $socket->shouldReceive('close');
+    $close->atLeast()->once();
+    $session = new AmpTransportSession(new Config('icap.example', streamTimeout: 5.0), $socket, 5.0, null, 1_000_000, 8192, null);
+
+    $thrown = thrownBy(fn () => $session->readResponse());
+
+    expect($thrown)->toBeInstanceOf(IcapConnectionException::class);
+    expect($thrown?->getPrevious())->toBe($failure);
+    m::close();
 });
 
 /*

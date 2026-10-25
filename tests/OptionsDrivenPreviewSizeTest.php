@@ -24,11 +24,15 @@ use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
+use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
+use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Tests\ScriptedSource;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\TransportSession;
 
@@ -188,8 +192,9 @@ it('rejects a cached OPTIONS response whose Preview fields conflict', function (
     try {
         /** @var AsyncTestCase $this */
         $this->runAsyncTest(function () use ($client, $tmp) {
-            expect(fn () => $client->scanFileWithPreview('/avscan', $tmp)->await())
-                ->toThrow(IcapMalformedResponseException::class);
+            // The call does not throw for a cached answer it rejects; its Future does.
+            $future = $client->scanFileWithPreview('/avscan', $tmp);
+            expect(fn () => $future->await())->toThrow(IcapMalformedResponseException::class);
         });
 
         // Nothing was formatted, so no preview went out.
@@ -432,7 +437,8 @@ it('rejects a cached Preview value that is not a non-negative decimal', function
         try {
             /** @var AsyncTestCase $this */
             $this->runAsyncTest(function () use ($client, $tmp, $advertised) {
-                expect(fn () => $client->scanFileWithPreview('/avscan', $tmp)->await())
+                $future = $client->scanFileWithPreview('/avscan', $tmp);
+                expect(fn () => $future->await())
                     ->toThrow(IcapMalformedResponseException::class, '', var_export($advertised, true));
             });
 
@@ -440,6 +446,42 @@ it('rejects a cached Preview value that is not a non-negative decimal', function
             expect($captured)->toBeNull();
         } finally {
             @unlink($tmp);
+        }
+    }
+});
+
+/*
+ * The lookup of the preview size is part of the operation: a cache that fails it fails the Future, before a file is
+ * opened or a request goes out; the call does not throw.
+ */
+it('fails the Future, not the call, when the cache fails the lookup of the preview size', function () {
+    $cases = [
+        'a failure of the backend' => new IcapStorageException('The cache is down.'),
+        'a bug of the cache'       => new TypeError('A bug in the cache.'),
+    ];
+
+    foreach ($cases as $case => $failure) {
+        /** @var OptionsCacheInterface&\Mockery\MockInterface $cache */
+        $cache = m::mock(OptionsCacheInterface::class);
+        /** @var \Mockery\Expectation $get */
+        $get = $cache->shouldReceive('get');
+        $get->andThrow($failure);
+        $transport = new ScriptedTransport();
+        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+        try {
+            $path = ScriptedSource::add('preview-size', 'payload');
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $path, $failure, $case) {
+                $future = $client->scanFileWithPreview('/svc', $path);
+
+                expect(fn () => $future->await())->toThrow($failure::class, $failure->getMessage(), $case);
+            });
+
+            expect(ScriptedSource::$opened)->toBe(0, $case)
+                ->and($transport->requests)->toBe([], $case);
+        } finally {
+            ScriptedSource::reset();
         }
     }
 });

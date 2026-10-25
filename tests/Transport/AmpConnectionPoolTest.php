@@ -1775,8 +1775,8 @@ CONF);
         $failure = null;
         try {
             $second = $pool->acquire(new Config('127.0.0.1', $port, tlsContext: $other), new TimeoutCancellation(5));
-        } catch (Socket\TlsException $e) {
-            $failure = $e;
+        } catch (IcapConnectionException $e) {
+            $failure = $e->getPrevious();
         }
 
         expect($failure)->toBeInstanceOf(Socket\TlsException::class, 'the untrusting context must be refused, not served a socket');
