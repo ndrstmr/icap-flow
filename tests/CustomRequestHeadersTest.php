@@ -58,7 +58,8 @@ it('scanFile merges caller-supplied headers including Allow into the outgoing re
         $captured = $req;
         return true;
     });
-    $f->andReturn(['HEAD']);
+    // A formatter that reads the file to its end, as a scan requires of one.
+    $f->andReturnUsing(static fn (IcapRequest $request): array => iterator_to_array((new RequestFormatter())->format($request), false));
     /** @var \Mockery\Expectation $t */
     $t = $transport->shouldReceive('request');
     $t->andReturn(\Amp\Future::complete('RAW'));
@@ -254,7 +255,8 @@ it('accepts valid tchar-only header names per RFC 7230', function () {
 
     /** @var \Mockery\Expectation $f */
     $f = $formatter->shouldReceive('format');
-    $f->andReturn(['HEAD']);
+    // A formatter that reads the file to its end, as a scan requires of one.
+    $f->andReturnUsing(static fn (IcapRequest $request): array => iterator_to_array((new RequestFormatter())->format($request), false));
     /** @var \Mockery\Expectation $t */
     $t = $transport->shouldReceive('request');
     $t->andReturn(\Amp\Future::complete('RAW'));

@@ -46,7 +46,9 @@ use Ndrstmr\Icap\DTO\ScanResult;
  * closes its socket and its file handle. Code that holds the event loop and
  * does not return (a request-body producer, a slow cache) cannot be
  * interrupted; the end is looked at when control comes back, and a result
- * that comes in after it is not returned.
+ * that comes in after it is not returned. A call into the operating system
+ * that hangs does not hold the loop, but is not interrupted either: the
+ * operation ends, and the file is closed when the call returns.
  *
  * Expected operational failures ({@see \Ndrstmr\Icap\Exception\IcapExceptionInterface})
  * fail the returned Future, also when the answer comes from the OPTIONS cache;
@@ -82,13 +84,20 @@ interface IcapClientInterface
     /**
      * Scan a local file via RESPMOD.
      *
-     * The file is opened inside the returned Future and closed when the
-     * operation ends, whatever the outcome. Its size is taken from the open
-     * handle, and the body goes out with exactly that many bytes. The Future
-     * fails with an {@see \Ndrstmr\Icap\Exception\IcapStorageException} when the
-     * file cannot be opened, sized or read to its end, or has another size than
-     * its handle reported; nothing is sent as if it were an empty, shorter or
-     * longer file.
+     * The file is opened once, inside the returned Future, read through
+     * amphp/file and closed when the operation ends, whatever the outcome.
+     * Its size is that of the open file, and the body goes out with exactly
+     * that many bytes. The application keeps the file unchanged until the
+     * Future completes and relates the result to that version: a change of
+     * size is detected, new content of the same size is not. Only regular,
+     * seekable files of the local file system are supported; a relative path
+     * is taken from the working directory of the call. The Future fails with
+     * an {@see \Ndrstmr\Icap\Exception\IcapStorageException} when the path
+     * is not a regular file, the file cannot be opened, sized, read to its end
+     * or closed, has another size than when it was opened, or the request did
+     * not read it to its end;
+     * nothing is sent as if it were an empty, shorter or longer file. See
+     * docs/file-sources.md.
      *
      * @param array<string, string|string[]> $extraHeaders Extra ICAP request
      *        headers, e.g. `['X-Client-IP' => '203.0.113.5']`. `Host` and

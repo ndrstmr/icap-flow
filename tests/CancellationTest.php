@@ -26,6 +26,7 @@ use Amp\Socket;
 use Amp\TimeoutCancellation;
 use Mockery as m;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapClient;
@@ -122,7 +123,8 @@ it('scanFile() forwards a user-supplied Cancellation', function () {
 
     /** @var \Mockery\Expectation $f */
     $f = $formatter->shouldReceive('format');
-    $f->andReturn(['HEAD']);
+    // A formatter that reads the file to its end, as a scan requires of one.
+    $f->andReturnUsing(static fn (IcapRequest $request): array => iterator_to_array((new RequestFormatter())->format($request), false));
 
     $seen = null;
     /** @var \Mockery\Expectation $t */
