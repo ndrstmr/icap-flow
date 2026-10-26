@@ -77,7 +77,7 @@ final class RequestFormatter implements RequestFormatterInterface
             : '';
 
         $bodySource = $this->resolveBodySource($request);
-        $bodyLength = is_resource($bodySource) ? $this->announcedLength($request) : null;
+        $bodyLength = is_resource($bodySource) || $bodySource instanceof LocalFile ? $this->announcedLength($request) : null;
 
         $encapsulated = $this->buildEncapsulatedHeader(
             hasReqHeaders: $reqHeaderBlock !== '',
@@ -103,8 +103,8 @@ final class RequestFormatter implements RequestFormatterInterface
     /**
      * Yield the rendered header blocks, then stream the body.
      *
-     * @param  string|resource|null $bodySource
-     * @param  int|null             $bodyLength bytes a stream body has to deliver
+     * @param  string|resource|LocalFile|null $bodySource
+     * @param  int|null                       $bodyLength bytes a stream body has to deliver
      * @return iterable<string>
      */
     private function emit(
@@ -130,7 +130,7 @@ final class RequestFormatter implements RequestFormatterInterface
     }
 
     /**
-     * @return string|resource|null
+     * @return string|resource|LocalFile|null
      */
     private function resolveBodySource(IcapRequest $request): mixed
     {
@@ -341,8 +341,8 @@ final class RequestFormatter implements RequestFormatterInterface
      * preview-continue path on the same socket can reuse the exact
      * same encoding rules.
      *
-     * @param string|resource $body
-     * @param int|null        $length bytes a stream body has to deliver
+     * @param string|resource|LocalFile $body
+     * @param int|null                  $length bytes a stream body has to deliver
      * @return iterable<string>
      */
     private function chunkBody(mixed $body, ?int $length, bool $previewIsComplete): iterable

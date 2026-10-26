@@ -20,6 +20,8 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\DTO;
 
+use Ndrstmr\Icap\LocalFile;
+
 /**
  * Encapsulated HTTP response carried inside an ICAP RESPMOD request
  * (RFC 3507 §4.9) or returned in a 200 response with modifications.
@@ -38,7 +40,8 @@ final readonly class HttpResponse
      * @param int                     $statusCode  HTTP status code, e.g. 200
      * @param string                  $reasonPhrase Reason phrase, e.g. "OK"
      * @param array<string, string[]> $headers      HTTP header list
-     * @param resource|string|null    $body         HTTP body bytes, or a readable stream resource, or null for header-only
+     * @param resource|string|LocalFile|null $body  HTTP body bytes, or a readable stream resource, or null for header-only;
+     *        scanFile() and scanFileWithPreview() hand over the {@see LocalFile} they opened
      * @param string                  $httpVersion  HTTP version label, default HTTP/1.1
      */
     public function __construct(

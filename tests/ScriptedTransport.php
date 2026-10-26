@@ -38,10 +38,12 @@ final class ScriptedTransport implements TransportInterface
     public array $requests = [];
 
     /**
-     * @param list<string> $replies one reply per request, in order; 'fail' fails the request,
-     *                              and a request beyond the script is answered with 204
+     * @param list<string>                         $replies one reply per request, in order; 'fail' fails the request,
+     *                                                      and a request beyond the script is answered with 204
+     * @param (\Closure(int, string): void)|null   $onChunk called with the index and the bytes of every chunk
+     *                                                      before it is taken, for a source that changes mid-request
      */
-    public function __construct(private readonly array $replies = [])
+    public function __construct(private readonly array $replies = [], private readonly ?\Closure $onChunk = null)
     {
     }
 
@@ -49,8 +51,10 @@ final class ScriptedTransport implements TransportInterface
     public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
     {
         $wire = '';
+        $index = 0;
         try {
             foreach ($rawRequest as $chunk) {
+                ($this->onChunk)?->__invoke($index++, $chunk);
                 $wire .= $chunk;
             }
         } finally {

@@ -15,3 +15,6 @@
  * distributed under the Licence is distributed on an "AS IS" basis,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
+
+// The client reads files through one set of worker processes for the whole test process; a test that replaces them puts them back.
+Ndrstmr\Icap\Tests\FileWorkers::useDefaultDriver();

@@ -250,18 +250,18 @@ final class IcapClient implements IcapClientInterface
      * streamed into the encapsulated body, so the full file never lives in
      * memory.
      *
-     * The file is opened inside the returned Future, after a cancellation
-     * that was already requested has been honoured, and closed again when
-     * the operation ends, whatever the outcome (M08). The size comes from
-     * the open handle; a handle without one is an error, never an empty
-     * file (M07). The body goes out with exactly that many bytes: a file
-     * that grew or shrank since is an error before the final chunk, never a
-     * body of another size that looks complete. The caller's own streams
-     * (see {@see request()}) are not touched.
+     * The file is opened once, inside the returned Future, after a
+     * cancellation that was already requested has been honoured, read
+     * through amphp/file (see {@see LocalFile}) and closed when the
+     * operation ends. Its size is that of the open file, and the body goes
+     * out with exactly that many bytes: a file that grew or shrank since is
+     * an error before the final chunk. The caller's own streams (see
+     * {@see request()}) are not touched.
      *
      * The Future fails with an {@see IcapStorageException} when the file
-     * cannot be opened or sized, cannot be read to its end, or does not have
-     * the size its handle reported.
+     * cannot be opened, sized, read to its end or closed, does not have the
+     * size it had when it was opened, or the request did not read it to its
+     * end (a formatter or transport of your own that took less).
      */
     #[\Override]
     public function scanFile(
@@ -280,15 +280,15 @@ final class IcapClient implements IcapClientInterface
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
 
-            [$stream, $size] = $this->openSource($filePath);
+            $file = LocalFile::open($filePath, $deadline);
             try {
                 $httpResponse = new HttpResponse(
                     statusCode: 200,
                     headers: [
                         'Content-Type'   => ['application/octet-stream'],
-                        'Content-Length' => [(string) $size],
+                        'Content-Length' => [(string) $file->size],
                     ],
-                    body: $stream,
+                    body: $file,
                 );
 
                 $request = new IcapRequest(
@@ -301,9 +301,14 @@ final class IcapClient implements IcapClientInterface
                     encapsulatedResponse: $httpResponse,
                 );
 
-                return $this->request($request, $deadline)->await();
+                $result = $this->request($request, $deadline)->await();
+                // A formatter or transport that took less than the file leaves the verdict to another body.
+                $file->assertRead();
+                $file->close();
+
+                return $result;
             } finally {
-                fclose($stream);
+                $file->discard();
             }
         });
     }
@@ -315,19 +320,19 @@ final class IcapClient implements IcapClientInterface
      * the request is terminated with `0; ieof\r\n\r\n` (RFC 3507 §4.5)
      * and no continuation round-trip is necessary.
      *
-     * The preview size is 0 to 1 MiB (1048576 bytes) (B06); `0` sends the
+     * The preview size is 0 to 1 MiB (1048576 bytes); `0` sends the
      * headers alone. A size outside that range is refused with an
      * \InvalidArgumentException before the file or a socket is touched.
      * `ieof` is sent only after the end of the file was observed and its
-     * length matches what the open handle reported (M07), and the rest of
+     * length matches the size of the open file, and the rest of
      * the file, in the strict flow and in the full request of the two-request
      * flow, goes out with exactly that length as well. Like
-     * {@see scanFile()}, the file is opened inside the returned Future and
-     * closed when the operation ends.
+     * {@see scanFile()}, the file is opened once inside the returned Future
+     * and closed when the operation ends.
      *
      * The Future fails with an {@see IcapStorageException} when the file
-     * cannot be opened, sized or read, or has another length than its handle
-     * reported.
+     * cannot be opened, sized, read or closed, or has another length than it
+     * had when it was opened.
      *
      * @throws \InvalidArgumentException When $previewSize is outside 0..1 MiB
      */
@@ -355,33 +360,21 @@ final class IcapClient implements IcapClientInterface
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
 
-            [$stream, $fileSize] = $this->openSource($filePath);
+            $file = LocalFile::open($filePath, $deadline);
 
             try {
-                if ($this->transport instanceof SessionAwareTransport) {
+                $result = $this->transport instanceof SessionAwareTransport
                     // Strict RFC 3507 §4.5 path — preview + continuation
                     // on the same socket, one logical ICAP request.
-                    return $this->scanFileWithPreviewStrict(
-                        $service,
-                        $stream,
-                        $fileSize,
-                        $previewSize,
-                        $extraHeaders,
-                        $deadline,
-                    );
-                }
-                // Legacy two-request approximation for non-session
-                // transports (synchronous, custom impls).
-                return $this->scanFileWithPreviewLegacy(
-                    $service,
-                    $stream,
-                    $fileSize,
-                    $previewSize,
-                    $extraHeaders,
-                    $deadline,
-                );
+                    ? $this->scanFileWithPreviewStrict($service, $file, $previewSize, $extraHeaders, $deadline)
+                    // Legacy two-request approximation for non-session
+                    // transports (synchronous, custom impls).
+                    : $this->scanFileWithPreviewLegacy($service, $file, $previewSize, $extraHeaders, $deadline);
+                $file->close();
+
+                return $result;
             } finally {
-                fclose($stream);
+                $file->discard();
             }
         });
     }
@@ -391,20 +384,19 @@ final class IcapClient implements IcapClientInterface
      * continuation travel on the same socket as one logical ICAP
      * request. Requires a {@see SessionAwareTransport}.
      *
-     * @param resource                       $stream
      * @param array<string, string|string[]> $extraHeaders
      */
     private function scanFileWithPreviewStrict(
         string $service,
-        mixed $stream,
-        int $fileSize,
+        LocalFile $file,
         int $previewSize,
         array $extraHeaders,
         OperationDeadline $deadline,
     ): ScanResult {
         \assert($this->transport instanceof SessionAwareTransport);
 
-        [$previewBytes, $previewIsComplete] = $this->readPreview($stream, $fileSize, $previewSize);
+        $fileSize = $file->size;
+        [$previewBytes, $previewIsComplete] = $this->readPreview($file, $previewSize);
 
         $previewEnvelope = new HttpResponse(
             statusCode: 200,
@@ -472,7 +464,7 @@ final class IcapClient implements IcapClientInterface
             // entire remainder in memory (v2.1.2 OOM fix). The rest has the
             // length the envelope announced, or the exchange fails (M07).
             $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream(
-                $stream,
+                $file,
                 $fileSize - strlen($previewBytes),
             ));
 
@@ -497,18 +489,17 @@ final class IcapClient implements IcapClientInterface
      * (synchronous transport, custom implementations). Works against
      * permissive servers but spends a second TCP/TLS handshake.
      *
-     * @param resource                       $stream
      * @param array<string, string|string[]> $extraHeaders
      */
     private function scanFileWithPreviewLegacy(
         string $service,
-        mixed $stream,
-        int $fileSize,
+        LocalFile $file,
         int $previewSize,
         array $extraHeaders,
         OperationDeadline $deadline,
     ): ScanResult {
-        [$previewBytes, $previewIsComplete] = $this->readPreview($stream, $fileSize, $previewSize);
+        $fileSize = $file->size;
+        [$previewBytes, $previewIsComplete] = $this->readPreview($file, $previewSize);
 
         $previewEnvelope = new HttpResponse(
             statusCode: 200,
@@ -551,19 +542,17 @@ final class IcapClient implements IcapClientInterface
             );
         }
 
-        // The preview left the stream behind its first bytes; the full
-        // request needs the file from its start. A stream that cannot go
-        // back would send the rest of the file as if it were the whole.
-        if (!rewind($stream)) {
-            throw new IcapStorageException('Unable to rewind the file stream for the full request.');
-        }
+        // The preview left the file behind its first bytes; the full
+        // request needs it from its start. A file that cannot go back
+        // would send the rest of it as if it were the whole.
+        $file->rewind();
         $fullResponse = new HttpResponse(
             statusCode: 200,
             headers: [
                 'Content-Type'   => ['application/octet-stream'],
                 'Content-Length' => [(string) $fileSize],
             ],
-            body: $stream,
+            body: $file,
         );
         $fullRequest = new IcapRequest(
             method: 'RESPMOD',
@@ -573,7 +562,11 @@ final class IcapClient implements IcapClientInterface
             headers: HeaderFields::without($extraHeaders, ['Preview', 'Allow']),
             encapsulatedResponse: $fullResponse,
         );
-        return $this->request($fullRequest, $deadline)->await();
+        $result = $this->request($fullRequest, $deadline)->await();
+        // As in scanFile(): the verdict counts only if the request took the whole file.
+        $file->assertRead();
+
+        return $result;
     }
 
     private const int DEFAULT_PREVIEW_SIZE = 1024;
@@ -653,64 +646,30 @@ final class IcapClient implements IcapClientInterface
     }
 
     /**
-     * Open a file for reading and take its size from the open handle. The
-     * handle is what gets read: a second lookup of the path can describe
-     * another file by then, and a size that cannot be established is an
-     * error, not an empty file (M07).
+     * Read the preview from the start of the opened file and decide from
+     * what the file itself delivers whether it is the whole body. A preview
+     * that is complete (`ieof`) needs the end of the file to be observed and
+     * to match the size it was measured at, not an end inferred from a size
+     * taken earlier. A failing or stalling read is an error, not a shorter
+     * preview.
      *
-     * @return array{resource, int}
-     *
-     * @throws IcapStorageException When the file cannot be opened or sized
-     */
-    private function openSource(string $filePath): array
-    {
-        $stream = @fopen($filePath, 'rb');
-        if ($stream === false) {
-            throw new IcapStorageException('Unable to open file: ' . $filePath);
-        }
-
-        // The caller's `finally` closes the handle only once it has it. Until
-        // then any failure closes it here, a throwing lookup included: the
-        // trace of that exception holds the handle for as long as the
-        // exception is kept.
-        try {
-            $stat = fstat($stream);
-            if ($stat === false || $stat['size'] < 0) {
-                throw new IcapStorageException('Unable to determine the size of file: ' . $filePath);
-            }
-
-            return [$stream, $stat['size']];
-        } catch (\Throwable $e) {
-            fclose($stream);
-            throw $e;
-        }
-    }
-
-    /**
-     * Read the preview from the start of the opened source and decide from
-     * what the stream itself delivers whether it is the whole body. A
-     * preview that is complete (`ieof`) needs the end of the stream to be
-     * observed and to match the size the handle reported, not an end
-     * inferred from a size measured earlier (M07). A failing or stalling
-     * read is an error, not a shorter preview (B08).
-     *
-     * @param  resource $stream
      * @return array{string, bool} the preview bytes and whether they are the whole body
      *
-     * @throws IcapStorageException When the source cannot be read, or ends
-     *         at another length than its handle reported
+     * @throws IcapStorageException When the file cannot be read, or ends at
+     *         another length than it was measured at
      */
-    private function readPreview(mixed $stream, int $fileSize, int $previewSize): array
+    private function readPreview(LocalFile $file, int $previewSize): array
     {
+        $fileSize = $file->size;
         $complete = $fileSize <= $previewSize;
         $wanted = $complete ? $fileSize : $previewSize;
 
         $bytes = '';
         while (strlen($bytes) < $wanted) {
-            $block = $this->readSource($stream, max(1, $wanted - strlen($bytes)));
+            $block = $file->read(max(1, $wanted - strlen($bytes)));
             if ($block === null) {
                 throw new IcapStorageException(sprintf(
-                    'The file ended after %d of the %d bytes its handle reported.',
+                    'The file ended after %d of the %d bytes it was opened with.',
                     strlen($bytes),
                     $fileSize,
                 ));
@@ -718,33 +677,14 @@ final class IcapClient implements IcapClientInterface
             $bytes .= $block;
         }
 
-        if ($complete && $this->readSource($stream, 1) !== null) {
+        if ($complete && $file->read(1) !== null) {
             throw new IcapStorageException(sprintf(
-                'The file holds more than the %d bytes its handle reported.',
+                'The file holds more than the %d bytes it was opened with.',
                 $fileSize,
             ));
         }
 
         return [$bytes, $complete];
-    }
-
-    /**
-     * One read from the source: the next bytes, or null at its confirmed end.
-     *
-     * @param  resource    $stream
-     * @param  int<1, max> $length bytes to ask for
-     *
-     * @throws IcapStorageException When the read fails or makes no progress
-     *         before the end
-     */
-    private function readSource(mixed $stream, int $length): ?string
-    {
-        $block = fread($stream, $length);
-        if ($block === false || ($block === '' && !feof($stream))) {
-            throw new IcapStorageException('Unable to read the file stream to its end.');
-        }
-
-        return $block === '' ? null : $block;
     }
 
     /**

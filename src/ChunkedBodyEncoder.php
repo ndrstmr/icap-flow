@@ -30,8 +30,9 @@ use Ndrstmr\Icap\Exception\IcapStorageException;
  * server's `100 Continue` response).
  *
  * Strings are emitted as a single chunk; resources are read in
- * {@see self::CHUNK_SIZE} blocks so a multi-gigabyte body never needs
- * to reside in memory.
+ * {@see self::CHUNK_SIZE} blocks, and the files the client opens itself
+ * ({@see LocalFile}) in blocks of {@see LocalFile::BLOCK_SIZE}, so a
+ * multi-gigabyte body never needs to reside in memory.
  *
  * A stream body ends only at an end the encoder has seen. A read error, a
  * read that makes no progress before the end, and a stream that has to be
@@ -45,9 +46,9 @@ final class ChunkedBodyEncoder
     public const int CHUNK_SIZE = 8192;
 
     /**
-     * @param  string|resource  $body
-     * @param  int|null         $length bytes a stream body has to deliver, or null for "until its
-     *                                  end"; a string is its own length
+     * @param  string|resource|LocalFile $body
+     * @param  int|null                  $length bytes a stream body has to deliver, or null for "until its
+     *                                           end"; a string is its own length
      * @return iterable<string>
      *
      * @throws IcapStorageException When a stream body cannot be rewound to its
@@ -66,7 +67,7 @@ final class ChunkedBodyEncoder
             return;
         }
 
-        if (!is_resource($body)) {
+        if (!is_resource($body) && !$body instanceof LocalFile) {
             throw new \InvalidArgumentException(
                 'Encapsulated HTTP body must be a string or a readable stream resource.',
             );
@@ -75,8 +76,9 @@ final class ChunkedBodyEncoder
         // The whole body goes out, so the stream has to stand at its start.
         // One that was read before must go back; if it cannot, what was
         // consumed would be missing from the body. A stream still at its
-        // start is not touched, so a non-seekable one works as before.
-        if (ftell($body) !== 0 && !rewind($body)) {
+        // start is not touched, so a non-seekable one works as before. A
+        // LocalFile stands at its start: the client measured or rewound it.
+        if (is_resource($body) && ftell($body) !== 0 && !rewind($body)) {
             throw new IcapStorageException('The body stream was read before and cannot be rewound to its start.');
         }
 
@@ -100,8 +102,8 @@ final class ChunkedBodyEncoder
      * terminator is not written. The preview flow passes the size it
      * announced for the rest.
      *
-     * @param  resource         $stream  readable stream positioned past the preview
-     * @param  int|null         $length  bytes the stream must deliver, or null for "until its end"
+     * @param  resource|LocalFile $stream  readable stream positioned past the preview
+     * @param  int|null           $length  bytes the stream must deliver, or null for "until its end"
      * @return iterable<string>
      *
      * @throws IcapStorageException When the stream cannot be read, stops without
@@ -109,7 +111,7 @@ final class ChunkedBodyEncoder
      */
     public function encodeRemainderFromStream(mixed $stream, ?int $length = null): iterable
     {
-        if (!is_resource($stream)) {
+        if (!is_resource($stream) && !$stream instanceof LocalFile) {
             throw new \InvalidArgumentException(
                 'Expected a readable stream resource.',
             );
@@ -123,16 +125,17 @@ final class ChunkedBodyEncoder
 
     /**
      * Chunk-encode a stream from its current position to its end, in
-     * {@see self::CHUNK_SIZE} blocks. With `$length` it has to deliver exactly
-     * that many bytes and then end: at most that many are read, and a source
-     * that ends early, or still holds a byte after them, raises before the
-     * caller can write a terminator.
+     * blocks of {@see self::CHUNK_SIZE} (a LocalFile: {@see LocalFile::BLOCK_SIZE}).
+     * With `$length` it has to deliver exactly that many bytes and then end:
+     * at most that many are read, and a source that ends early, or still
+     * holds a byte after them, raises before the caller can write a
+     * terminator.
      *
      * The public methods pass its chunks on with `yield`, not `yield from`: the
      * keys of delegated chunks would collide with the terminator's for a
      * caller that collects them with `iterator_to_array()`.
      *
-     * @param  resource       $stream
+     * @param  resource|LocalFile $stream
      * @return iterable<string>
      *
      * @throws IcapStorageException When the stream cannot be read, stops without
@@ -140,15 +143,16 @@ final class ChunkedBodyEncoder
      */
     private function streamChunks(mixed $stream, ?int $length): iterable
     {
+        $block = $stream instanceof LocalFile ? LocalFile::BLOCK_SIZE : self::CHUNK_SIZE;
         $sent = 0;
         while ($length === null || $sent < $length) {
-            $want = $length === null ? self::CHUNK_SIZE : max(1, min(self::CHUNK_SIZE, $length - $sent));
-            $block = $this->readBlock($stream, $want);
-            if ($block === null) {
+            $want = $length === null ? $block : max(1, min($block, $length - $sent));
+            $bytes = $this->readBlock($stream, $want);
+            if ($bytes === null) {
                 break;
             }
-            $sent += strlen($block);
-            yield dechex(strlen($block)) . "\r\n" . $block . "\r\n";
+            $sent += strlen($bytes);
+            yield dechex(strlen($bytes)) . "\r\n" . $bytes . "\r\n";
         }
 
         if ($length === null) {
@@ -176,13 +180,17 @@ final class ChunkedBodyEncoder
      * read while the stream is not at its end, is a failure and not a
      * shorter body (B08).
      *
-     * @param  resource    $stream
-     * @param  int<1, max> $length bytes to ask for
+     * @param  resource|LocalFile $stream
+     * @param  int<1, max>        $length bytes to ask for
      *
      * @throws IcapStorageException When the read fails or makes no progress
      */
     private function readBlock(mixed $stream, int $length): ?string
     {
+        if ($stream instanceof LocalFile) {
+            return $stream->read($length);
+        }
+
         $block = fread($stream, $length);
         if ($block === false || ($block === '' && !feof($stream))) {
             throw new IcapStorageException('The body stream cannot be read to its end.');

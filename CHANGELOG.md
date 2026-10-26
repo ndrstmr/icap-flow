@@ -358,6 +358,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *(N03)*
 
 ### Changed
+- **Behaviour change:** `scanFile()` and `scanFileWithPreview()` read the file through `amphp/file` (new requirement,
+  `^4.0`) in worker processes (`amphp/parallel`, at most 8 and one for path lookups, `proc_open` needed) and no longer
+  hold the event loop. The driver set with `Amp\File\filesystem()` is not used. *(B09)*
+- A file call that hangs in the operating system ends the operation at its deadline; the handle is closed when the
+  call returns. At most 64 file calls are pending, and a call keeps its place until it has returned. *(B09)*
+- **Behaviour change:** the file is opened once, and its size is that of the open file, not of a lookup of the path.
+  The path names a regular file of the local file system (a device, FIFO or directory is refused with
+  `IcapStorageException`; no stream-wrapper URL; a relative path is taken from the working directory of the call), and
+  the application keeps the file unchanged until the call returns
+  ([`docs/file-sources.md`](docs/file-sources.md)). *(B09, M07 second stage)*
+- **Behaviour change:** a custom `RequestFormatterInterface` receives the file of the scan helpers as a `LocalFile` body
+  and passes it to `ChunkedBodyEncoder`; a scan whose request did not read the file to its end fails with
+  `IcapStorageException`. *(B09)*
+- `composer.json` sets floors for the packages `amphp/file` pulls in, the lowest versions that run without deprecation
+  notices on PHP 8.4 and 8.5: `amphp/cache` 2.0.1, `amphp/process` 2.0.3, `amphp/parallel` 2.3.3. *(B09)*
 - **Behaviour change:** a failed TLS handshake and a socket that breaks during the request or the answer are an
   `IcapConnectionException` (the Amp exception is `previous`), like a failed connect; they used to reach the caller
   as Amp exceptions. *(M11)*

@@ -14,7 +14,11 @@
     "php": "^8.4",
     "amphp/amp": "^3.1.1",
     "amphp/byte-stream": "^2.0",
+    "amphp/cache": "^2.0.1",
     "amphp/dns": "^2.1.2",
+    "amphp/file": "^4.0",
+    "amphp/parallel": "^2.3.3",
+    "amphp/process": "^2.0.3",
     "amphp/socket": "^2.3.1",
     "psr/log": "^3.0",
     "revolt/event-loop": "^1.0.8"

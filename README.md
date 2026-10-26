@@ -96,6 +96,10 @@ EventLoop::run(function () use ($icap) {
 });
 ```
 
+## Scanning files
+
+`scanFile()` and `scanFileWithPreview()` read the file through amphp/file in worker processes (`proc_open` is needed), so the event loop keeps running. The file has to stay unchanged until the call returns. See [`docs/file-sources.md`](docs/file-sources.md).
+
 ## Configuration
 
 ```php

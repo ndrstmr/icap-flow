@@ -35,6 +35,12 @@ interface RequestFormatterInterface
      * to stream large encapsulated HTTP bodies to the socket without
      * buffering the whole request in memory.
      *
+     * The body of the encapsulated message is a string, a stream or, for the
+     * file of `scanFile()` and `scanFileWithPreview()`, an object of the client
+     * that only {@see \Ndrstmr\Icap\ChunkedBodyEncoder::encode()} reads. A
+     * scan whose request did not read that file to its end fails with an
+     * {@see \Ndrstmr\Icap\Exception\IcapStorageException}.
+     *
      * @return iterable<string>
      */
     public function format(IcapRequest $request): iterable;

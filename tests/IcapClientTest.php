@@ -98,16 +98,15 @@ it('scanFile wraps the file as an encapsulated HttpResponse with Content-Length'
     file_put_contents($tmp, 'payload-bytes');
 
     $captured = null;
-    $bodyWasOpen = false;
     /** @var \Mockery\Expectation $fmt */
     $fmt = $formatter->shouldReceive('format');
     $fmt->once();
-    $fmt->withArgs(function (IcapRequest $req) use (&$captured, &$bodyWasOpen) {
+    $fmt->withArgs(function (IcapRequest $req) use (&$captured) {
         $captured = $req;
-        $bodyWasOpen = is_resource($req->encapsulatedResponse?->body);
         return $req->method === 'RESPMOD' && $req->encapsulatedResponse !== null;
     });
-    $fmt->andReturn(['HEAD']);
+    // A formatter that reads the file to its end, as a scan requires of one.
+    $fmt->andReturnUsing(static fn (IcapRequest $request): array => iterator_to_array((new RequestFormatter())->format($request), false));
 
     /** @var \Mockery\Expectation $t2 */
     $t2 = $transport->shouldReceive('request');
@@ -118,17 +117,15 @@ it('scanFile wraps the file as an encapsulated HttpResponse with Content-Length'
 
     try {
         /** @var AsyncTestCase $this */
-        $this->runAsyncTest(function () use ($client, $tmp, &$captured, &$bodyWasOpen) {
+        $this->runAsyncTest(function () use ($client, $tmp, &$captured) {
             $client->scanFile('/service', $tmp)->await();
             assert($captured instanceof IcapRequest);
             $encapsulated = $captured->encapsulatedResponse;
             assert($encapsulated !== null);
-            // The handle is the client's own: open while the request is built,
-            // closed once the scan has ended.
+            // The body is the file the client opened itself, not a stream of the caller.
             expect($encapsulated->statusCode)->toBe(200)
                 ->and($encapsulated->headers['Content-Length'])->toBe(['13'])
-                ->and($bodyWasOpen)->toBeTrue()
-                ->and(is_resource($encapsulated->body))->toBeFalse();
+                ->and($encapsulated->body)->toBeObject();
         });
     } finally {
         @unlink($tmp);
@@ -190,7 +187,8 @@ it('scanFileWithPreview consults strategy and sends remainder on CONTINUE_SENDIN
         $calls[] = $req;
         return true;
     });
-    $fmt->andReturn(['HEAD']);
+    // A formatter that reads the file to its end, as a scan requires of one.
+    $fmt->andReturnUsing(static fn (IcapRequest $request): array => iterator_to_array((new RequestFormatter())->format($request), false));
 
     /** @var \Mockery\Expectation $trans */
     $trans = $transport->shouldReceive('request');
@@ -314,7 +312,6 @@ it('closes the file it opened on every outcome, with the failed futures still he
     try {
         /** @var AsyncTestCase $this */
         $this->runAsyncTest(function () use ($cases, &$held) {
-            $baseline = count(get_resources('stream'));
             $opened = 0;
 
             foreach ($cases as $case => [$formatter, $transport, $statThrows, $method]) {
@@ -332,12 +329,10 @@ it('closes the file it opened on every outcome, with the failed futures still he
                 }
                 $opened++;
 
-                // The handle itself, not just its resource, is gone.
+                // The handle itself is closed, whatever the failed future and its exception still refer to.
                 expect(ScriptedSource::$opened)->toBe($opened, $case);
                 expect(ScriptedSource::$closed)->toBe($opened, $case);
             }
-
-            expect(count(get_resources('stream')))->toBe($baseline);
         });
     } finally {
         ScriptedSource::reset();
@@ -348,11 +343,10 @@ it('closes the file it opened on every outcome, with the failed futures still he
 });
 
 /**
- * M07 — the size comes from the handle that is read, not from a second lookup
- * of the path, and a size that cannot be established is an error, never an
- * empty file.
+ * The size is the one the open file reports, and a size that cannot be
+ * established is an error, never an empty file.
  */
-it('takes the size from the open handle and refuses a handle without metadata', function () {
+it('takes the size from the open file and refuses one without a size', function () {
     $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
 
     try {
@@ -360,8 +354,7 @@ it('takes the size from the open handle and refuses a handle without metadata', 
         $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
         /** @var AsyncTestCase $this */
         $this->runAsyncTest(function () use ($client) {
-            // The handle reports 5 bytes; a path lookup would say 99.
-            $client->scanFile('/svc', ScriptedSource::add('sized', 'abcde', size: 5, pathSize: 99))->await();
+            $client->scanFile('/svc', ScriptedSource::add('sized', 'abcde', size: 5))->await();
         });
         expect($transport->requests[0])->toContain("Content-Length: 5\r\n");
 
