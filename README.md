@@ -100,6 +100,8 @@ EventLoop::run(function () use ($icap) {
 
 `scanFile()` and `scanFileWithPreview()` read the file through amphp/file in worker processes (`proc_open` is needed), so the event loop keeps running. The file has to stay unchanged until the call returns. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
 
+**With c-icap + ClamAV, use the verified mode** (`new IcapClient(…, verdict: new CicapVerdict('/avscan'))`, [`docs/cicap-clamav.md`](docs/cicap-clamav.md)). With the default `Config` the client does not recognise c-icap's infection headers (`X-Infection-Found`, `X-Violations-Found`) and reports an infected file as clean. A wider header list recognises the infection, but still takes the `204` or the unchanged message that c-icap sends for a file it did not scan for a clean one.
+
 ## Configuration
 
 ```php
@@ -118,9 +120,9 @@ $config = (new Config(
 ))
     ->withTlsContext(new ClientTlsContext('icap.example.com'))
     ->withVirusFoundHeaders([
-        'X-Virus-Name',          // ClamAV / c-icap
-        'X-Infection-Found',     // ISS Proventia
-        'X-Violations-Found',    // Trend Micro
+        'X-Virus-Name',          // the default
+        'X-Infection-Found',     // ISS Proventia, c-icap virus_scan
+        'X-Violations-Found',    // Trend Micro, c-icap virus_scan
         'X-Virus-ID',            // Symantec
     ])
     ->withLimits(

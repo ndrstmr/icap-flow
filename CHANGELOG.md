@@ -356,6 +356,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IcapClientException` or `IcapServerException` as for any other answer; it was
   an `IcapProtocolException`, which also kept a preview 503 out of the retry.
   *(N03)*
+- **Verified mode for c-icap + ClamAV** (`verdict: new CicapVerdict('/avscan')` on `IcapClient`, also `forServer()`;
+  [`docs/cicap-clamav.md`](docs/cicap-clamav.md)). The default rules reported an infected file of this service as clean
+  and took the `204` or unchanged message it sends for a file it did not scan for a clean scan. The mode is made for
+  one service (another is an `InvalidArgumentException`), reads the infection headers by value and count, and calls a
+  file clean only after a `204` to a message that was sent whole. Any other answer without a scan is an
+  `IcapProtocolException`, including a `204` to a preview, a `100` with infection headers, and ClamAV's limit and
+  encrypted-file reports. New: `IcapResponse::$encapsulatedStatus`, `IcapRequest::isPartialPreview()`. The reference
+  service in `docker-compose.yml` is pinned by digest. *(M01)*
 
 ### Added
 - `scanFileDiscardingBody()` and `scanFileWithPreviewDiscardingBody()` (interface `DiscardingIcapClient`, implemented by

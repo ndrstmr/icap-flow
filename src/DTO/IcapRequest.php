@@ -20,6 +20,8 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\DTO;
 
+use Ndrstmr\Icap\HeaderFields;
+
 /**
  * Immutable data object representing an ICAP request.
  *
@@ -86,6 +88,16 @@ final readonly class IcapRequest
                 ));
             }
         }
+    }
+
+    /**
+     * Whether the body is only the start of the message: the request announces a `Preview` in any spelling and does not
+     * end in `ieof` (RFC 3507 §4.5). The rest follows after `100 Continue`.
+     */
+    public function isPartialPreview(): bool
+    {
+        return !$this->previewIsComplete
+            && HeaderFields::first($this->headers, ['Preview']) !== null;
     }
 
     /**

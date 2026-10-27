@@ -117,29 +117,6 @@ it('receives an echo of more than the response limit without keeping it, and lea
     }
 });
 
-/**
- * Not one transport: the session of the async transport carries the preview and the rest of the file on one socket
- * (RFC 3507 §4.5), a transport without sessions sends the file again in a request of its own.
- */
-final class OneRequestTransport implements DiscardingTransport
-{
-    public function __construct(private readonly AsyncAmpTransport $inner = new AsyncAmpTransport())
-    {
-    }
-
-    #[\Override]
-    public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
-    {
-        return $this->inner->request($config, $rawRequest, $cancellation);
-    }
-
-    #[\Override]
-    public function requestDiscardingBody(Config $config, iterable $rawRequest, int $maxResponseBytes, ?Cancellation $cancellation = null): Future
-    {
-        return $this->inner->requestDiscardingBody($config, $rawRequest, $maxResponseBytes, $cancellation);
-    }
-}
-
 it('scans with and without preview when the server answers with its whole message or with a 204', function () {
     $size = DISCARD_OVER_LIMIT;
     $echo = static fn (array $r): \Generator => IcapTestServer::echo($size);

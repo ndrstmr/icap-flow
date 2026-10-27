@@ -27,7 +27,7 @@ $result->getOriginalResponse()->discardedBodyBytes;       // 1073741824; the bod
 - `$maxResponseBytes` has no default. It bounds the bytes of each response of the exchange (head, headers, chunk framing, body, trailer) in place of `maxResponseSize`; the limits for header lines and their number are those of the `Config`.
 - `discardedBodyBytes` is set on every response that was received this way (0 without a body); it is `null` on a response whose body is in `$body`.
 - The stream timeout is the time the whole response may take once it has begun, and the operation timeout covers the whole scan: raise both for a transfer of a gigabyte.
-- `Allow: 204` is not added; the request is the one of `scanFile()`.
+- `Allow: 204` is not added (the verified mode, [`docs/cicap-clamav.md`](cicap-clamav.md), adds it); the request is the one of `scanFile()`.
 - It needs a transport that implements `DiscardingTransport` (`AsyncAmpTransport` and `SynchronousStreamTransport` do) and the `ResponseParser` of the library. With another transport or parser the call throws a `LogicException` before it opens the file. `scanFileWithPreviewDiscardingBody()` also needs the `DefaultPreviewStrategy` (status and headers): a `PreviewStrategyInterface` of your own may judge the body of the answer to the preview, which is not kept, and is refused the same way. `SynchronousIcapClient` and `RetryingIcapClient` offer the same methods if the client they wrap does.
 
 ## Driver

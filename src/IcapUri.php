@@ -44,7 +44,7 @@ final class IcapUri
 
     /** icap[s]://host[:port], optional path and query; no user info, no fragment. */
     private const string ICAP = '#^icaps?://(?<authority>(?<host>' . self::HOST . ')(?::[0-9]+)?)'
-        . '(?:/' . self::PCHAR . '*)*' . self::QUERY . '\z#i';
+        . '(?<service>(?:/' . self::PCHAR . '*)*' . self::QUERY . ')\z#i';
 
     /**
      * The ICAP URI of a service on the given server. The port is left out
@@ -56,6 +56,21 @@ final class IcapUri
      */
     public static function forService(string $host, int $port, string $service): string
     {
+        self::assertService($service);
+
+        $uri = 'icap://' . self::host($host) . ($port === 1344 ? '' : ':' . $port) . $service;
+        self::authority($uri);
+
+        return $uri;
+    }
+
+    /**
+     * A service on its own: an absolute path with an optional query and no fragment.
+     *
+     * @throws \InvalidArgumentException When it is not
+     */
+    public static function assertService(string $service): void
+    {
         // Without the leading slash the service would extend the host
         // ("icap://localhostevil"); "@" or "#" would turn part of it into
         // user info or a fragment.
@@ -65,11 +80,17 @@ final class IcapUri
                 . var_export($service, true),
             );
         }
+    }
 
-        $uri = 'icap://' . self::host($host) . ($port === 1344 ? '' : ':' . $port) . $service;
-        self::authority($uri);
-
-        return $uri;
+    /**
+     * The service a request URI names: its path and query, as they stand in the request line.
+     *
+     * @throws \InvalidArgumentException When the URI does not have the form
+     *         icap[s]://host[:port]/path[?query]
+     */
+    public static function serviceOf(string $uri): string
+    {
+        return self::parts($uri)['service'];
     }
 
     /**
@@ -81,13 +102,23 @@ final class IcapUri
      */
     public static function authority(string $uri): string
     {
+        return self::parts($uri)['authority'];
+    }
+
+    /**
+     * @return array{authority: string, service: string}
+     *
+     * @throws \InvalidArgumentException When the URI does not have the form icap[s]://host[:port]/path[?query]
+     */
+    private static function parts(string $uri): array
+    {
         if (preg_match(self::ICAP, $uri, $parts) !== 1 || !self::isHost($parts['host'])) {
             throw new \InvalidArgumentException(
                 'ICAP request URI must have the form icap://host[:port]/path[?query], without user info or fragment.',
             );
         }
 
-        return $parts['authority'];
+        return ['authority' => $parts['authority'], 'service' => $parts['service']];
     }
 
     /**

@@ -275,7 +275,7 @@ it('frames a legal response to its last byte, at every split position and in eve
             // Received without being kept (AP-15): the same response, its body counted instead of held.
             $dropped = (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))
                 ->readDiscardingBody(makeChunkProducer($chunks), 1 << 20);
-            expect($dropped)->toEqual(new IcapResponse($expected->statusCode, $expected->headers, '', strlen($body)), "{$label}, {$how}, discarding");
+            expect($dropped)->toEqual(new IcapResponse($expected->statusCode, $expected->headers, '', strlen($body), $expected->encapsulatedStatus), "{$label}, {$how}, discarding");
         }
     }
 });

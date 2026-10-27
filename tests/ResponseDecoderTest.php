@@ -234,3 +234,29 @@ it('holds nothing of a body that passes through it', function () {
         // Nothing grows with the 64 MiB.
         ->and($growth)->toBeLessThan(256 * 1024);
 });
+
+it('keeps the status of the encapsulated response, in the mode that keeps the body and in the one that discards it', function () {
+    $section = static fn (string $status): string => "HTTP/1.0 {$status}\r\nServer: C-ICAP\r\n\r\n";
+    $withSection = static fn (string $status): string => "ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, res-body=" . strlen($section($status)) . "\r\n\r\n"
+        . $section($status) . "5\r\nhello\r\n0\r\n\r\n";
+
+    // [the message, the status of its encapsulated response]
+    $cases = [
+        'a block page' => [$withSection('403 Forbidden'), 403],
+        'an echo' => [$withSection('200 OK'), 200],
+        'a status line without a phrase' => [$withSection('503'), 503],
+        'a header section without a body' => ["ICAP/1.0 200 OK\r\nEncapsulated: res-hdr=0, null-body=" . strlen($section('404 Not Found')) . "\r\n\r\n" . $section('404 Not Found'), 404],
+        'a body without a header section' => ["ICAP/1.0 200 OK\r\nEncapsulated: res-body=0\r\n\r\n5\r\nhello\r\n0\r\n\r\n", null],
+        'no message' => ["ICAP/1.0 204 No Content\r\n\r\n", null],
+        'an encapsulated request, which has no status' => ["ICAP/1.0 200 OK\r\nEncapsulated: req-hdr=0, null-body=39\r\n\r\nGET /a HTTP/1.1\r\nHost: icap.example\r\n\r\n", null],
+    ];
+    foreach ($cases as $label => [$wire, $status]) {
+        foreach ([false, true] as $discard) {
+            $decoder = new ResponseDecoder(maxResponseSize: 1 << 20, maxHeaderCount: 100, maxHeaderLineLength: 8192, collectBody: !$discard, discard: $discard);
+            foreach (str_split($wire, 7) as $part) {
+                $decoder->feed($part);
+            }
+            expect($decoder->response()->encapsulatedStatus)->toBe($status, $label . ($discard ? ', discarding' : ''));
+        }
+    }
+});

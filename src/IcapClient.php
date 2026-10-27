@@ -45,12 +45,24 @@ use Psr\Log\NullLogger;
 
 /**
  * Core asynchronous ICAP client used by the synchronous wrapper.
+ *
+ * With a {@see CicapVerdict} the client runs in the verified mode for the c-icap `virus_scan` service with ClamAV: every
+ * answer to a scan, to a preview and to the rest of the file, whichever helper asked for it, is read by that verdict, and
+ * the client scans with the service of the verdict only. Without one, the default rules apply (a 204, and a 200 or 206
+ * without a header of the {@see Config} list, are clean).
  */
 final class IcapClient implements IcapClientInterface, DiscardingIcapClient
 {
     private PreviewStrategyInterface $previewStrategy;
     private LoggerInterface $logger;
 
+    /**
+     * @param CicapVerdict|null $verdict Turns the verified mode on, for the service the verdict is made for. It decides
+     *                                   every answer, so a preview strategy of your own, which could decide before it,
+     *                                   is refused.
+     *
+     * @throws \InvalidArgumentException When a verdict is combined with a preview strategy other than the default one
+     */
     public function __construct(
         private Config $config,
         private TransportInterface $transport,
@@ -59,7 +71,13 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?PreviewStrategyInterface $previewStrategy = null,
         ?LoggerInterface $logger = null,
         private ?OptionsCacheInterface $optionsCache = null,
+        private readonly ?CicapVerdict $verdict = null,
     ) {
+        if ($verdict !== null && $previewStrategy !== null && !$previewStrategy instanceof DefaultPreviewStrategy) {
+            throw new \InvalidArgumentException(
+                $previewStrategy::class . ' would decide on the answer to a preview before the verified mode does; use one of the two.',
+            );
+        }
         $this->previewStrategy = $previewStrategy ?? new DefaultPreviewStrategy(
             $config->getVirusFoundHeaders(),
         );
@@ -69,7 +87,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     /**
      * Convenience factory for synchronous environments.
      */
-    public static function forServer(string $host, int $port = 1344): self
+    public static function forServer(string $host, int $port = 1344, ?CicapVerdict $verdict = null): self
     {
         $config = new Config($host, $port);
         return new self(
@@ -77,6 +95,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             new SynchronousStreamTransport(),
             new RequestFormatter(),
             self::parserFor($config),
+            verdict: $verdict,
         );
     }
 
@@ -103,9 +122,17 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         );
     }
 
+    /**
+     * @throws \InvalidArgumentException In the verified mode, when the request is for another service than the one of the
+     *                                   verdict
+     */
     #[\Override]
     public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
+        if ($this->verdict !== null) {
+            $this->assertVerifiedService(IcapUri::serviceOf($request->uri));
+        }
+
         return $this->requestWith($request, $cancellation, null);
     }
 
@@ -127,7 +154,8 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                     $response = $this->executeRaw($request, $deadline, $discardBudget)->await();
                     // An answer that comes in after the end of the operation is none (M10).
                     $deadline->checkpoint();
-                    $result = $this->interpretResponse($response, $this->config);
+                    // The service had the whole message unless the request ended in the start of it.
+                    $result = $this->interpretResponse($response, $this->config, complete: !$request->isPartialPreview());
                 } catch (\Throwable $e) {
                     $e = $deadline->outcome($e);
                     $this->logFailure($context, $response, $e);
@@ -329,6 +357,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?Cancellation $cancellation,
         ?int $discardBudget,
     ): Future {
+        $this->assertVerifiedService($service);
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
         // Validate first so injection attempts never reach the socket.
@@ -356,7 +385,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                     // The full request goes out without a preview handshake, so a
                     // caller Preview would announce one that never happens; it stays
                     // out in any spelling. Allow, e.g. 204, is valid here.
-                    headers: HeaderFields::without($extraHeaders, ['Preview']),
+                    headers: $this->wholeFileHeaders($extraHeaders, ['Preview']),
                     encapsulatedResponse: $httpResponse,
                 );
 
@@ -449,6 +478,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?Cancellation $cancellation,
         ?int $discardBudget,
     ): Future {
+        $this->assertVerifiedService($service);
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
         if ($previewSize !== null && ($previewSize < 0 || $previewSize > self::MAX_PREVIEW_SIZE)) {
@@ -546,21 +576,10 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                 return $result;
             }
 
-            $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
-            // The strategy is foreign code. A verdict that came in after the end of the operation, or after the caller
-            // cancelled, is none: nothing is continued on this socket, and the socket is not given back (M10).
-            $deadline->checkpoint();
-
-            if ($decision !== PreviewDecision::CONTINUE_SENDING) {
+            $result = $this->previewResult($previewIcapResponse, $deadline);
+            if ($result !== null) {
                 // Server's intermediate response is the verdict — nothing
                 // to send on this socket.
-                $result = new ScanResult(
-                    isInfected: $decision === PreviewDecision::ABORT_INFECTED,
-                    virusName: $decision === PreviewDecision::ABORT_INFECTED
-                        ? $this->extractVirusName($previewIcapResponse, $this->config)
-                        : null,
-                    originalResponse: $previewIcapResponse,
-                );
                 $reusable = !$serverCloses;
                 return $result;
             }
@@ -637,18 +656,9 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             return $this->interpretResponse($previewIcapResponse, $this->config);
         }
 
-        $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
-        // The strategy is foreign code: no second request is sent on the strength of a decision that came in after the
-        // end of the operation, or after the caller cancelled.
-        $deadline->checkpoint();
-        if ($decision !== PreviewDecision::CONTINUE_SENDING) {
-            return new ScanResult(
-                isInfected: $decision === PreviewDecision::ABORT_INFECTED,
-                virusName: $decision === PreviewDecision::ABORT_INFECTED
-                    ? $this->extractVirusName($previewIcapResponse, $this->config)
-                    : null,
-                originalResponse: $previewIcapResponse,
-            );
+        $result = $this->previewResult($previewIcapResponse, $deadline);
+        if ($result !== null) {
+            return $result;
         }
 
         // The preview left the file behind its first bytes; the full
@@ -668,7 +678,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             uri: $this->buildServiceUri($service),
             // The full request is no preview: caller values for the preview
             // headers stay out of it as well, in any spelling.
-            headers: HeaderFields::without($extraHeaders, ['Preview', 'Allow']),
+            headers: $this->wholeFileHeaders($extraHeaders, ['Preview', 'Allow']),
             encapsulatedResponse: $fullResponse,
         );
         $result = $this->requestWith($fullRequest, $deadline, $discardBudget)->await();
@@ -676,6 +686,73 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         $file->assertRead();
 
         return $result;
+    }
+
+    /**
+     * What the answer to a preview that holds only the start of the file decides: the verdict if the answer is one,
+     * null if the service wants the rest.
+     *
+     * @throws IcapProtocolException When the verified mode finds that the service did not scan the file
+     */
+    private function previewResult(IcapResponse $answer, OperationDeadline $deadline): ?ScanResult
+    {
+        if ($this->verdict !== null) {
+            // Only a 100 asks for the rest, and only one that reports no infection does. A 204 now is a service that does
+            // not scan this file. Either way the exception ends the exchange: no continuation, no reuse of the socket.
+            if ($answer->statusCode === 100) {
+                $this->verdict->assertContinuation($answer);
+
+                return null;
+            }
+
+            return $this->interpretResponse($answer, $this->config, complete: false);
+        }
+
+        $decision = $this->previewStrategy->handlePreviewResponse($answer);
+        // The strategy is foreign code. A verdict that came in after the end of the operation, or after the caller
+        // cancelled, is none: nothing is continued, and the socket is not given back (M10).
+        $deadline->checkpoint();
+
+        return $decision === PreviewDecision::CONTINUE_SENDING ? null : new ScanResult(
+            isInfected: $decision === PreviewDecision::ABORT_INFECTED,
+            virusName: $decision === PreviewDecision::ABORT_INFECTED
+                ? $this->extractVirusName($answer, $this->config)
+                : null,
+            originalResponse: $answer,
+        );
+    }
+
+    /**
+     * The verified mode holds for the service of its verdict and for no other: the answers of another one, say a service
+     * that skips a type, look like those of a scan. Checked at the call, before a file or a connection is touched.
+     *
+     * @throws \InvalidArgumentException When the mode is on and the service is not the one of the verdict
+     */
+    private function assertVerifiedService(string $service): void
+    {
+        if ($this->verdict !== null && $service !== $this->verdict->service) {
+            throw new \InvalidArgumentException(sprintf(
+                'The verified mode is made for the service %s; it does not scan with another one.',
+                $this->verdict->service,
+            ));
+        }
+    }
+
+    /**
+     * The headers of a request that carries the whole file. The ones named in `$managed` are not the caller's. In the
+     * verified mode the request offers 204: only a 204 shows that the service scanned the file, a clean file would
+     * otherwise come back as a message that looks like one it did not scan.
+     *
+     * @param array<string, string|string[]> $extraHeaders
+     * @param list<string>                   $managed
+     *
+     * @return array<string, string|string[]>
+     */
+    private function wholeFileHeaders(array $extraHeaders, array $managed): array
+    {
+        $headers = HeaderFields::without($extraHeaders, $managed);
+
+        return $this->verdict === null ? $headers : $this->mergeHeaders($headers, ['Allow' => ['204']]);
     }
 
     /**
@@ -903,10 +980,21 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * 100 is a protocol error; inside a preview the caller handles it
      * via the {@see PreviewStrategyInterface} before this method sees
      * the response.
+     *
+     * In the verified mode the rules of the {@see CicapVerdict} apply to what is
+     * left after that; `$complete` says whether the service had the whole file when
+     * it answered.
      */
-    private function interpretResponse(IcapResponse $response, Config $config): ScanResult
+    private function interpretResponse(IcapResponse $response, Config $config, bool $complete = true): ScanResult
     {
         $code = $response->statusCode;
+
+        if ($this->verdict !== null) {
+            // 100 outside a preview, 4xx and 5xx are what they are in every mode; the rest is the verdict's.
+            $this->assertSuccessfulStatus($code);
+
+            return $this->verdict->interpret($response, $complete);
+        }
 
         if ($code === 204) {
             return new ScanResult(false, null, $response);

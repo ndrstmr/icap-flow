@@ -1,33 +1,38 @@
-# Integration-test fixture for icap-flow.
-#
-# A single ClamAV+ICAP service is sufficient for all smoke scenarios
-# we currently have — OPTIONS round-trip, EICAR detection, clean-file
-# verdict. More specialised fixtures (pure c-icap SrvEcho, Squid,
-# vendor-specific stacks) can be added under separate compose
-# profiles in a follow-up.
+# Reference service for the integration tests: c-icap + ClamAV in the configuration that icap-flow's verified mode
+# is specified for (docs/cicap-clamav.md, tests/Integration/README.md).
 #
 # Usage:
 #   docker compose up -d
 #   ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
 #   ICAP_ECHO_SERVICE=/avscan \
 #   ICAP_CLAMAV_SERVICE=/avscan \
+#   ICAP_TYPED_SERVICE=/avscan_typed \
 #       composer test:integration
 #
-# The image is pinned to an exact minor tag. `docker compose pull`
-# locally picks up newer tags; CI stays on the pin so the test run is
-# reproducible across time.
+# The image is pinned by digest, not by its tag: the tag names it for the reader. `docker compose pull` and a CI run
+# stay on this build, so the test run is reproducible across time (the signature database is not: it is downloaded
+# when the container starts). Verified: c-icap 0.6.3, c-icap-modules 0.5.7, ClamAV 1.4.3 (linux/amd64 only).
 
 services:
   icap-clamav:
-    image: mnemoshare/clamav-icap:0.14.5
+    image: mnemoshare/clamav-icap:0.14.5@sha256:aa9a6b47929f545c7890a284af10d61abadbcb73a2c4af6e05dffd6c59a56d42
+    platform: linux/amd64
     container_name: icap-flow-clamav
     ports:
-      - "1344:1344"
-    # First boot downloads the ClamAV signature database (~200 MB);
-    # allow several minutes before marking the container unhealthy.
+      - "127.0.0.1:1344:1344"
+    # The reference configuration: every type is scanned, what the engine cannot inspect is a detection, and c-icap
+    # is not started before clamd answers (the image's own start script starts it anyway).
+    command: ["sh", "/opt/reference-start.sh"]
+    volumes:
+      - ./tests/Integration/reference/virus_scan.conf:/opt/c-icap/etc/virus_scan.conf:ro
+      - ./tests/Integration/reference/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./tests/Integration/reference/start.sh:/opt/reference-start.sh:ro
+      - ./tests/Integration/reference/healthcheck.sh:/opt/reference-healthcheck.sh:ro
+    # First boot downloads the ClamAV signature database (~200 MB); allow several minutes before marking the
+    # container unhealthy. Healthy means that /avscan finds the EICAR test file, not that a port is open.
     healthcheck:
-      test: ["CMD", "sh", "-c", "ss -lnt | grep -q :1344 || netstat -lnt 2>/dev/null | grep -q :1344"]
-      interval: 10s
-      timeout: 3s
-      retries: 60
+      test: ["CMD", "sh", "/opt/reference-healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
       start_period: 180s

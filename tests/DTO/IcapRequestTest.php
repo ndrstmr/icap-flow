@@ -47,3 +47,24 @@ it('keeps string and list header values and refuses any other type instead of ca
         expect(fn () => $withHeaders($headers))->toThrow(InvalidArgumentException::class, '', $case);
     }
 });
+
+it('is the start of a message only if it announces a preview and does not end in ieof', function () {
+    $uri = 'icap://icap.example/scan';
+
+    // [ICAP fields, the body ends in ieof, whether the request is the start of a message]
+    $cases = [
+        'no preview' => [[], false, false],
+        'no preview, ieof' => [[], true, false],
+        'a preview' => [['Preview' => '1'], false, true],
+        'a preview as a list' => [['Preview' => ['1']], false, true],
+        'a preview of 0' => [['Preview' => '0'], false, true],
+        'the field in lower case' => [['preview' => '1'], false, true],
+        'the field in upper case' => [['PREVIEW' => '1'], false, true],
+        'a preview that ends in ieof' => [['Preview' => '1'], true, false],
+        'a field without a value' => [['Preview' => []], false, false],
+        'another field' => [['X-Preview' => '1', 'Previews' => '1'], false, false],
+    ];
+    foreach ($cases as $label => [$headers, $ieof, $partial]) {
+        expect((new IcapRequest('RESPMOD', $uri, $headers, previewIsComplete: $ieof))->isPartialPreview())->toBe($partial, $label);
+    }
+});

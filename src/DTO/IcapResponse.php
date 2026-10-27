@@ -28,6 +28,9 @@ namespace Ndrstmr\Icap\DTO;
  * byte, but its body was not kept: `body` is then empty and `discardedBodyBytes`
  * says how many bytes the body had (0 for none). Only that field tells such a
  * response from one whose body is empty.
+ *
+ * `encapsulatedStatus` is the HTTP status of the encapsulated response (its `res-hdr` section), if the
+ * ICAP response has one: the 403 of a block page, the 200 of a message sent back.
  */
 final readonly class IcapResponse
 {
@@ -39,12 +42,14 @@ final readonly class IcapResponse
      * @param array<string, string[]> $headers Response headers
      * @param string $body Response body content
      * @param int|null $discardedBodyBytes Length of the decoded body that was received and not kept; null if the body is in `$body`
+     * @param int|null $encapsulatedStatus HTTP status of the encapsulated response; null if the response has none
      */
     public function __construct(
         public int $statusCode,
         array $headers = [],
         public string $body = '',
         public ?int $discardedBodyBytes = null,
+        public ?int $encapsulatedStatus = null,
     ) {
         $this->headers = array_map(fn ($v) => (array) $v, $headers);
     }
@@ -62,6 +67,7 @@ final readonly class IcapResponse
             $headers,
             $this->body,
             $this->discardedBodyBytes,
+            $this->encapsulatedStatus,
         );
     }
 }

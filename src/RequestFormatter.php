@@ -166,7 +166,7 @@ final class RequestFormatter implements RequestFormatterInterface
      */
     private function announcedLength(IcapRequest $request): ?int
     {
-        if ($this->isPartialPreview($request)) {
+        if ($request->isPartialPreview()) {
             return null;
         }
 
@@ -183,17 +183,6 @@ final class RequestFormatter implements RequestFormatterInterface
         }
 
         return (int) $values[0];
-    }
-
-    /**
-     * Whether the body of a request is only the start of the message: it
-     * announces a `Preview` and does not end in `ieof` (RFC 3507 §4.5). The
-     * rest follows after `100 Continue`.
-     */
-    private function isPartialPreview(IcapRequest $request): bool
-    {
-        return !$request->previewIsComplete
-            && HeaderFields::first($request->headers, ['Preview']) !== null;
     }
 
     /**
