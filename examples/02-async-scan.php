@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+use Ndrstmr\Icap\CicapVerdict;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapExceptionInterface;
 use Ndrstmr\Icap\IcapClient;
@@ -12,14 +13,9 @@ use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Revolt\EventLoop;
 
-EventLoop::run(function () {
+EventLoop::queue(function () {
     try {
-        $config = (new Config('127.0.0.1', 1344))->withVirusFoundHeaders([
-            'X-Virus-Name',
-            'X-Infection-Found',
-            'X-Violations-Found',
-            'X-Virus-ID',
-        ]);
+        $config = new Config('127.0.0.1', 1344);
 
         $eicarFile = __DIR__ . '/eicar.com';
         if (!file_exists($eicarFile)) {
@@ -29,6 +25,7 @@ EventLoop::run(function () {
             );
         }
 
+        // The c-icap + ClamAV service of docker-compose.yml: the verified mode (docs/cicap-clamav.md).
         $client = new IcapClient(
             $config,
             new AsyncAmpTransport(),
@@ -37,6 +34,7 @@ EventLoop::run(function () {
                 maxHeaderCount: $config->getMaxHeaderCount(),
                 maxHeaderLineLength: $config->getMaxHeaderLineLength(),
             ),
+            verdict: new CicapVerdict('/avscan'),
         );
 
         echo 'Scanning ' . $eicarFile . ' asynchronously...' . PHP_EOL;
@@ -50,3 +48,5 @@ EventLoop::run(function () {
         exit(1);
     }
 });
+
+EventLoop::run();

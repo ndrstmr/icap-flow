@@ -116,6 +116,7 @@ jobs:
           ICAP_PORT: 1344
           ICAP_ECHO_SERVICE: /avscan
           ICAP_CLAMAV_SERVICE: /avscan
+          ICAP_TYPED_SERVICE: /avscan_typed
         # --display-all-issues + --display-skipped print the full
         # assertion diffs that Pest normally hides behind a summary
         # line; --debug replaces the progress bar with event output.

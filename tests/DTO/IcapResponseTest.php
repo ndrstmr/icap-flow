@@ -36,3 +36,11 @@ it('tells a body that was received and not kept from one that is empty, and keep
         ->and($large->discardedBodyBytes)->toBe(1_073_741_824)
         ->and($large->body)->toBe('');
 });
+
+it('keeps the status of the encapsulated response through a copy', function () {
+    $block = new IcapResponse(200, [], '', null, 403);
+
+    expect($block->encapsulatedStatus)->toBe(403)
+        ->and($block->withHeader('X-Test', '1')->encapsulatedStatus)->toBe(403)
+        ->and((new IcapResponse(204))->encapsulatedStatus)->toBeNull();
+});

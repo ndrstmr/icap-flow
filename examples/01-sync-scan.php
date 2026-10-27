@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+use Ndrstmr\Icap\CicapVerdict;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
@@ -11,13 +12,9 @@ use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\SynchronousIcapClient;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 
-$config = (new Config('127.0.0.1', 1344))->withVirusFoundHeaders([
-    'X-Virus-Name',
-    'X-Infection-Found',
-    'X-Violations-Found',
-    'X-Virus-ID',
-]);
+$config = new Config('127.0.0.1', 1344);
 
+// The c-icap + ClamAV service of docker-compose.yml: the verified mode (docs/cicap-clamav.md).
 $client = new SynchronousIcapClient(new IcapClient(
     $config,
     new SynchronousStreamTransport(),
@@ -26,6 +23,7 @@ $client = new SynchronousIcapClient(new IcapClient(
         maxHeaderCount: $config->getMaxHeaderCount(),
         maxHeaderLineLength: $config->getMaxHeaderLineLength(),
     ),
+    verdict: new CicapVerdict('/avscan'),
 ));
 
 $eicarFile = __DIR__ . '/eicar.com';

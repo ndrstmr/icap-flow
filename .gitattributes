@@ -1,0 +1,2 @@
+# Recorded wire bytes (CRLF, no final newline of their own) for the tests: no line-ending or whitespace changes.
+tests/Fixtures/cicap-virus-scan/* -text whitespace=cr-at-eol,-blank-at-eof

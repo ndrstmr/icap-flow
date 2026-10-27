@@ -44,8 +44,9 @@ final class HeaderFields
      * Parse header lines into a {@code name => list<value>} map. Honours
      * RFC 7230 §3.2.4 obsolete line folding: a line that starts with HTAB
      * or SP is treated as a continuation of the previous header value
-     * (joined with a single space). c-icap uses this folding form for the
-     * multi-line `X-Violations-Found` header defined in RFC 3507 §6.4.
+     * (joined with a single space). c-icap uses this folding form for its
+     * multi-line `X-Violations-Found` header, a vendor extension (RFC 3507
+     * defines no virus header).
      *
      * Every line is checked as it arrived, before whitespace is trimmed or a
      * fold is joined: the name is a token (so no space before the colon and

@@ -111,6 +111,8 @@ final class ResponseDecoder
     /** @var list<string> */
     private array $sectionLines = [];
     private bool $hasBody = false;
+    /** Status of the encapsulated response (`res-hdr`), once its header section has been read. */
+    private ?int $encapsulatedStatus = null;
 
     private int $chunkLeft = 0;
     private string $body = '';
@@ -195,20 +197,20 @@ final class ResponseDecoder
     }
 
     /**
-     * Status, headers and decoded body of the message; for a decoder that discards, the body is empty and
-     * its length is in {@see IcapResponse::$discardedBodyBytes}.
+     * Status, headers, the status of the encapsulated response and the decoded body of the message; for a decoder
+     * that discards, the body is empty and its length is in {@see IcapResponse::$discardedBodyBytes}.
      */
     public function response(): IcapResponse
     {
         $this->assertComplete();
         if ($this->discard) {
-            return new IcapResponse($this->status, $this->headers, '', $this->discarded);
+            return new IcapResponse($this->status, $this->headers, '', $this->discarded, $this->encapsulatedStatus);
         }
         if (!$this->collectBody) {
             throw new \LogicException('The decoder was built to frame, not to collect the body.');
         }
 
-        return new IcapResponse($this->status, $this->headers, $this->body);
+        return new IcapResponse($this->status, $this->headers, $this->body, null, $this->encapsulatedStatus);
     }
 
     /**
@@ -403,6 +405,10 @@ final class ResponseDecoder
             throw new IcapMalformedResponseException('The encapsulated headers of the ICAP response do not end where its Encapsulated header says.');
         }
         HeaderFields::parse(array_slice($this->sectionLines, 1));
+        if ($this->sectionKind === 'res') {
+            // The start line passed isStartLine(): "HTTP/x.y " and three digits.
+            $this->encapsulatedStatus = (int) substr($this->sectionLines[0], 9, 3);
+        }
         $this->sectionLines = [];
 
         if (!$this->hasBody) {

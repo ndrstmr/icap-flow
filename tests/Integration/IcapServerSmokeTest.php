@@ -99,21 +99,14 @@ it('scans the EICAR test file against the ClamAV-backed service', function () {
     );
 
     try {
-        // c-icap reports infections in X-Violations-Found, not the
-        // ClamAV/Squid-style X-Virus-Name. Configure the multi-vendor
-        // virus-header list so the client recognises whichever header
-        // the server actually sends.
-        $config = (new Config($host, $port))->withVirusFoundHeaders([
-            'X-Virus-Name',
-            'X-Infection-Found',
-            'X-Violations-Found',
-            'X-Virus-ID',
-        ]);
+        // c-icap reports infections in X-Infection-Found and X-Violations-Found, which the default header list
+        // (X-Virus-Name) does not contain: the verified mode knows them (tests/Integration/CicapVirusScanTest.php).
         $client = new IcapClient(
-            $config,
+            new Config($host, $port),
             new \Ndrstmr\Icap\Transport\AsyncAmpTransport(),
             new \Ndrstmr\Icap\RequestFormatter(),
             new \Ndrstmr\Icap\ResponseParser(),
+            verdict: new \Ndrstmr\Icap\CicapVerdict($service),
         );
 
         /** @var AsyncTestCase $this */
@@ -142,17 +135,12 @@ it('returns a clean verdict for a harmless text file', function () {
     file_put_contents($clean, "Lorem ipsum dolor sit amet.\n");
 
     try {
-        $config = (new Config($host, $port))->withVirusFoundHeaders([
-            'X-Virus-Name',
-            'X-Infection-Found',
-            'X-Violations-Found',
-            'X-Virus-ID',
-        ]);
         $client = new IcapClient(
-            $config,
+            new Config($host, $port),
             new \Ndrstmr\Icap\Transport\AsyncAmpTransport(),
             new \Ndrstmr\Icap\RequestFormatter(),
             new \Ndrstmr\Icap\ResponseParser(),
+            verdict: new \Ndrstmr\Icap\CicapVerdict($service),
         );
 
         /** @var AsyncTestCase $this */
