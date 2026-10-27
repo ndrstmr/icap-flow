@@ -164,13 +164,73 @@ it('does work in proportion to the bytes of lines and chunks that arrive one byt
     ];
 
     foreach ($frames as $case => $frame) {
-        $decoder = new ResponseDecoder(maxResponseSize: 1 << 22, maxHeaderCount: 100, maxHeaderLineLength: 8192);
-        foreach (str_split($frame) as $byte) {
-            $decoder->feed($byte);
-        }
+        // A decoder that discards drops what it has used and must not pay for it: copying what is left each time a
+        // byte arrives would make the work grow with the square of a long line.
+        foreach (['keeping' => false, 'discarding' => true] as $how => $discard) {
+            $decoder = new ResponseDecoder(maxResponseSize: 1 << 22, maxHeaderCount: 100, maxHeaderLineLength: 8192, collectBody: false, discard: $discard);
+            foreach (str_split($frame) as $byte) {
+                $decoder->feed($byte);
+            }
 
-        expect($decoder->isComplete())->toBeTrue($case);
-        // A few passes over the bytes (search, check, copy, copy of the frame), however small the fragments.
-        expect($decoder->workedBytes())->toBeLessThanOrEqual(6 * strlen($frame), $case);
+            expect($decoder->isComplete())->toBeTrue("{$case}, {$how}");
+            // A few passes over the bytes (search, check, copy, copy of the frame), however small the fragments.
+            expect($decoder->workedBytes())->toBeLessThanOrEqual(6 * strlen($frame), "{$case}, {$how}");
+        }
     }
+});
+
+/*
+ * AP-15 (M02): a decoder that discards receives the message without keeping it, so a response is
+ * limited by a budget of bytes and not by what fits in memory.
+ */
+it('discards the message and counts the body, with status, headers and what follows as for a decoder that keeps it', function () {
+    $head = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n";
+    $frame = "ICAP/1.0 200 OK\r\nX-Virus-Name: Eicar\r\nEncapsulated: res-hdr=0, res-body=" . strlen($head) . "\r\n\r\n"
+        . $head . "5\r\nhello\r\n6\r\n world\r\n0\r\nX-T: 1\r\n\r\n";
+
+    $keeping = new ResponseDecoder(maxResponseSize: 1 << 20, maxHeaderCount: 100, maxHeaderLineLength: 8192);
+    $keeping->feed($frame);
+    $discarding = new ResponseDecoder(maxResponseSize: 1 << 20, maxHeaderCount: 100, maxHeaderLineLength: 8192, collectBody: false, discard: true);
+    foreach (str_split($frame . 'next', 5) as $part) {
+        $discarding->feed($part);
+    }
+
+    $kept = $keeping->response();
+    $dropped = $discarding->response();
+    expect($dropped->statusCode)->toBe($kept->statusCode)
+        ->and($dropped->headers)->toBe($kept->headers)
+        ->and($kept->body)->toBe('hello world')
+        ->and($kept->discardedBodyBytes)->toBeNull()
+        // An empty body that was dropped and one that was empty differ in this field alone.
+        ->and($dropped->body)->toBe('')
+        ->and($dropped->discardedBodyBytes)->toBe(11)
+        ->and($discarding->remainder())->toBe('next')
+        ->and(fn () => $discarding->frame())->toThrow(\LogicException::class);
+
+    $empty = new ResponseDecoder(maxResponseSize: 1 << 20, maxHeaderCount: 100, maxHeaderLineLength: 8192, collectBody: false, discard: true);
+    $empty->feed("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+    expect($empty->response()->discardedBodyBytes)->toBe(0);
+
+    expect(fn () => new ResponseDecoder(1, 1, 1, collectBody: true, discard: true))->toThrow(\InvalidArgumentException::class);
+});
+
+it('holds nothing of a body that passes through it', function () {
+    $size = 64 * 1024 * 1024;
+    $decoder = new ResponseDecoder(maxResponseSize: 1 << 40, maxHeaderCount: 100, maxHeaderLineLength: 8192, collectBody: false, discard: true);
+    $fragment = str_repeat('x', 8192);
+
+    // The head and the size line of one chunk as big as the body, then the body in the fragments of a socket.
+    $decoder->feed("ICAP/1.0 200 OK\r\nEncapsulated: res-body=0\r\n\r\n" . dechex($size) . "\r\n");
+    memory_reset_peak_usage();
+    $before = memory_get_usage();
+    for ($fed = 0; $fed < $size; $fed += strlen($fragment)) {
+        $decoder->feed($fragment);
+    }
+    $growth = memory_get_peak_usage() - $before;
+    $decoder->feed("\r\n0\r\n\r\n");
+
+    expect($decoder->isComplete())->toBeTrue()
+        ->and($decoder->response()->discardedBodyBytes)->toBe($size)
+        // Nothing grows with the 64 MiB.
+        ->and($growth)->toBeLessThan(256 * 1024);
 });

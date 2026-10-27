@@ -22,6 +22,7 @@ namespace Ndrstmr\Icap\Transport;
 
 use Amp\Cancellation;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Ndrstmr\Icap\IcapUri;
@@ -64,7 +65,7 @@ use Ndrstmr\Icap\OperationDeadline;
  * told, and once more when the frame is complete (the caller first, then the
  * limit of the transfer).
  */
-final class SynchronousStreamTransport implements TransportInterface
+final class SynchronousStreamTransport implements DiscardingTransport
 {
     private const int READ_CHUNK_SIZE = 8192;
 
@@ -77,6 +78,31 @@ final class SynchronousStreamTransport implements TransportInterface
      */
     #[\Override]
     public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): \Amp\Future
+    {
+        return $this->exchange($config, $rawRequest, $cancellation, static fn (ResponseFrameReader $reader, \Closure $produce): string => $reader->readFrom($produce));
+    }
+
+    /**
+     * @param iterable<string> $rawRequest
+     * @return \Amp\Future<IcapResponse>
+     */
+    #[\Override]
+    public function requestDiscardingBody(Config $config, iterable $rawRequest, int $maxResponseBytes, ?Cancellation $cancellation = null): \Amp\Future
+    {
+        return $this->exchange($config, $rawRequest, $cancellation, static fn (ResponseFrameReader $reader, \Closure $produce): IcapResponse => $reader->readDiscardingBody($produce, $maxResponseBytes));
+    }
+
+    /**
+     * The request and the response of one exchange, the response taken by `$consume` from the reader.
+     *
+     * @template T
+     *
+     * @param iterable<string>                                              $rawRequest
+     * @param \Closure(ResponseFrameReader, \Closure(): ?string): T         $consume
+     *
+     * @return \Amp\Future<T>
+     */
+    private function exchange(Config $config, iterable $rawRequest, ?Cancellation $cancellation, \Closure $consume): \Amp\Future
     {
         if ($config->getTlsContext() !== null) {
             throw new IcapConnectionException(
@@ -140,7 +166,8 @@ final class SynchronousStreamTransport implements TransportInterface
             $limit = $config->getResponseStartTimeout();
             $phaseEnds = hrtime(true) + $limit * 1e9;
             $begun = false;
-            $response = $reader->readFrom(
+            $response = $consume(
+                $reader,
                 static function () use ($stream, $cancellation, $timeout, &$limit, &$phaseEnds, &$begun): ?string {
                     $bytes = self::readChunk($stream, $cancellation, $limit, $phaseEnds, $begun ? 'Reading the response' : 'Waiting for the response to begin');
                     if ($bytes !== null && !$begun) {
@@ -154,11 +181,11 @@ final class SynchronousStreamTransport implements TransportInterface
             );
 
             // Every read waited for what was left of its phase and was looked at when it returned; what is left to look
-            // at is the time between the last of them and the complete frame, which decoding it takes. A caller who
+            // at is the time between the last of them and the complete response, which decoding it takes. A caller who
             // cancelled in it comes first, whether or not the transfer ran out as well.
             self::look($cancellation);
             if (hrtime(true) >= $phaseEnds) {
-                // A frame is complete only after its first byte: the transfer's window is the one that ran out.
+                // A response is complete only after its first byte: the transfer's window is the one that ran out.
                 throw self::timeout('Reading the response', $limit);
             }
 

@@ -22,6 +22,12 @@ namespace Ndrstmr\Icap\DTO;
 
 /**
  * Immutable DTO representing an ICAP response.
+ *
+ * A response that was read in the discarding mode of the scan helpers
+ * ({@see \Ndrstmr\Icap\DiscardingIcapClient}) was received and checked to its last
+ * byte, but its body was not kept: `body` is then empty and `discardedBodyBytes`
+ * says how many bytes the body had (0 for none). Only that field tells such a
+ * response from one whose body is empty.
  */
 final readonly class IcapResponse
 {
@@ -32,11 +38,13 @@ final readonly class IcapResponse
      * @param int $statusCode HTTP status code, e.g. 200, 204, 500
      * @param array<string, string[]> $headers Response headers
      * @param string $body Response body content
+     * @param int|null $discardedBodyBytes Length of the decoded body that was received and not kept; null if the body is in `$body`
      */
     public function __construct(
         public int $statusCode,
         array $headers = [],
-        public string $body = ''
+        public string $body = '',
+        public ?int $discardedBodyBytes = null,
     ) {
         $this->headers = array_map(fn ($v) => (array) $v, $headers);
     }
@@ -53,6 +61,7 @@ final readonly class IcapResponse
             $this->statusCode,
             $headers,
             $this->body,
+            $this->discardedBodyBytes,
         );
     }
 }

@@ -357,6 +357,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an `IcapProtocolException`, which also kept a preview 503 out of the retry.
   *(N03)*
 
+### Added
+- `scanFileDiscardingBody()` and `scanFileWithPreviewDiscardingBody()` (interface `DiscardingIcapClient`, implemented by
+  `IcapClient`, `SynchronousIcapClient` and `RetryingIcapClient`) receive the response without keeping its body: it is
+  read as it arrives, checked to its last byte and dropped. A server that echoes a large file back (no `Allow: 204`,
+  RFC 3507 §4.6) is no longer refused at the 10 MiB limit, and the memory does not grow with the size. The call takes
+  an explicit budget for the bytes of one response; the result has an empty body and `IcapResponse::$discardedBodyBytes`.
+  The existing methods keep their body and their limit. A transport has to implement `DiscardingTransport` and its
+  sessions `DiscardingTransportSession` (the built-in ones do); a client with another transport or parser, and for the
+  preview variant one with a preview strategy of its own, throws `LogicException`. Bytes that came in behind a response
+  are an `IcapMalformedResponseException` ([`docs/file-sources.md`](docs/file-sources.md)). *(M02)*
+
 ### Changed
 - **Behaviour change:** `scanFile()` and `scanFileWithPreview()` read the file through `amphp/file` (new requirement,
   `^4.0`) in worker processes (`amphp/parallel`, at most 8 and one for path lookups, `proc_open` needed) and no longer

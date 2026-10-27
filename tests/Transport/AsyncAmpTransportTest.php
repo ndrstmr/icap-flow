@@ -153,7 +153,7 @@ it('closes the socket after request() instead of returning it to the pool', func
  * A session over one end of a real socket pair; the test keeps the other end. The pool hands
  * out that one socket, so the number of connections says whether a socket came back from it.
  *
- * @return array{session: TransportSession, client: Socket\Socket, peer: Socket\Socket, pool: AmpConnectionPool, opened: \Closure(): int}
+ * @return array{session: AmpTransportSession, client: Socket\Socket, peer: Socket\Socket, pool: AmpConnectionPool, opened: \Closure(): int}
  */
 function pairedSession(float $streamTimeout, ?Cancellation $cancellation = null, ?float $responseStartTimeout = null): array
 {
@@ -1271,6 +1271,97 @@ it('does not give a socket back to the pool while it holds bytes that were not r
         $fx['client']->close();
         $fx['peer']->close();
         $fx['pool']->close();
+    }
+});
+
+/*
+ * AP-15 (M02) — a response that is received and not kept: read to its last byte as it arrives, the size of its body
+ * counted, the bytes behind it left to the session, and the socket given back only after a legal end.
+ */
+
+it('receives a response over the size limit without keeping it, and gives the socket back after a legal end', function () {
+    $size = 12 * 1024 * 1024;
+    $echo = iterator_to_array(\Ndrstmr\Icap\Tests\IcapTestServer::echo($size), false);
+
+    foreach (['kept' => false, 'not kept' => true] as $how => $discard) {
+        $fx = pairedSession(30.0);
+        try {
+            $writer = async(static function () use ($fx, $echo): void {
+                foreach ($echo as $part) {
+                    $fx['peer']->write($part);
+                }
+            });
+
+            if ($discard) {
+                $response = $fx['session']->readResponseDiscardingBody(2 * $size);
+                $writer->await();
+                expect($response->statusCode)->toBe(200)
+                    ->and($response->body)->toBe('')
+                    ->and($response->discardedBodyBytes)->toBe($size);
+
+                // A legal end and nothing behind it: the socket goes back to the pool and comes out of it again.
+                $fx['session']->release();
+                $fx['pool']->acquire(new Config('icap.example'));
+                expect($fx['opened']())->toBe(1, $how);
+            } else {
+                // The configuration allows 10 MiB.
+                expect(thrownBy(fn () => $fx['session']->readResponse()))->toBeInstanceOf(IcapMalformedResponseException::class);
+                expect($fx['client']->isClosed())->toBeTrue($how);
+                $fx['peer']->close();
+                $writer->ignore();
+            }
+        } finally {
+            $fx['client']->close();
+            $fx['peer']->close();
+            $fx['pool']->close();
+        }
+    }
+});
+
+it('refuses the bytes that follow a response it did not keep, and closes the session', function () {
+    $first = "ICAP/1.0 200 OK\r\nEncapsulated: res-body=0\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+    // label => what comes in behind the response, in the same read
+    foreach (['a second response' => "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n", 'a surplus' => 'surplus'] as $case => $behind) {
+        $fx = pairedSession(2.0);
+        try {
+            $fx['peer']->write($first . $behind);
+
+            expect(thrownBy(fn () => $fx['session']->readResponseDiscardingBody(1 << 20)))->toBeInstanceOf(IcapMalformedResponseException::class, $case);
+            expect($fx['client']->isClosed())->toBeTrue($case);
+        } finally {
+            $fx['client']->close();
+            $fx['peer']->close();
+            $fx['pool']->close();
+        }
+    }
+});
+
+it('closes the session when a response that is not kept is illegal at its end, cut off or over its budget', function () {
+    $head = "ICAP/1.0 200 OK\r\nEncapsulated: res-body=0\r\n\r\n";
+    // label => [what the peer sends, whether it then hangs up, the budget]
+    $cases = [
+        'invalid trailer'          => [$head . "5\r\nhello\r\n0\r\nnot a field\r\n\r\n", false, 1 << 20],
+        'no CRLF behind the data'  => [$head . "5\r\nhelloXX0\r\n\r\n", false, 1 << 20],
+        'cut off in the body'      => [$head . "10\r\nhello", true, 1 << 20],
+        'over the budget by a byte' => [$head . "5\r\nhello\r\n0\r\n\r\n", false, strlen($head . "5\r\nhello\r\n0\r\n\r\n") - 1],
+    ];
+
+    foreach ($cases as $case => [$wire, $hangUp, $budget]) {
+        $fx = pairedSession(2.0);
+        try {
+            $fx['peer']->write($wire);
+            if ($hangUp) {
+                $fx['peer']->close();
+            }
+
+            expect(thrownBy(fn () => $fx['session']->readResponseDiscardingBody($budget)))->toBeInstanceOf(IcapMalformedResponseException::class, $case);
+            expect($fx['client']->isClosed())->toBeTrue($case);
+        } finally {
+            $fx['client']->close();
+            $fx['peer']->close();
+            $fx['pool']->close();
+        }
     }
 });
 

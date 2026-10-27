@@ -25,3 +25,14 @@ it('can be instantiated and mutated immutably', function () {
     expect($res2)->not->toBe($res)
         ->and($res2->headers['X-Test'])->toEqual(['1']);
 });
+
+it('tells a body that was received and not kept from one that is empty, and keeps that through a copy', function () {
+    $empty = new IcapResponse(200, [], '');
+    $dropped = new IcapResponse(200, [], '', 0);
+    $large = (new IcapResponse(200, [], '', 1_073_741_824))->withHeader('X-Test', '1');
+
+    expect($empty->discardedBodyBytes)->toBeNull()
+        ->and($dropped->discardedBodyBytes)->toBe(0)
+        ->and($large->discardedBodyBytes)->toBe(1_073_741_824)
+        ->and($large->body)->toBe('');
+});

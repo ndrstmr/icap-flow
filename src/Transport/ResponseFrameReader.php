@@ -21,6 +21,7 @@ declare(strict_types=1);
 namespace Ndrstmr\Icap\Transport;
 
 use Closure;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\ResponseDecoder;
 
@@ -77,7 +78,53 @@ final class ResponseFrameReader
             maxHeaderLineLength: $this->maxHeaderLineLength,
             collectBody: false,
         );
+        $this->pending = $this->readInto($decoder, $produce);
 
+        return $decoder->frame();
+    }
+
+    /**
+     * Read a complete ICAP response like {@see readFrom()} and check it to its last byte, but keep
+     * neither the frame nor the body: the bytes are used up as they come, so what the reader holds
+     * does not depend on the size of the body. The body is counted, not kept
+     * ({@see IcapResponse::$discardedBodyBytes}). `$maxResponseBytes` is the budget for the bytes of
+     * the whole message, in place of the maximum size of the reader; the limits for header lines and
+     * their number are the reader's.
+     *
+     * A caller of this method has one request outstanding, so bytes the reader took in behind the
+     * response belong to no request: they are refused, and not kept for a next read.
+     *
+     * @param Closure(): ?string $produce
+     *
+     * @throws IcapMalformedResponseException When the bytes cannot be a legal response, the stream
+     *         ends before the response does, the response has more bytes than the budget, or bytes
+     *         came in behind it
+     */
+    public function readDiscardingBody(Closure $produce, int $maxResponseBytes): IcapResponse
+    {
+        $decoder = new ResponseDecoder(
+            maxResponseSize: $maxResponseBytes,
+            maxHeaderCount: $this->maxHeaderCount,
+            maxHeaderLineLength: $this->maxHeaderLineLength,
+            collectBody: false,
+            discard: true,
+        );
+        if ($this->readInto($decoder, $produce) !== '') {
+            throw new IcapMalformedResponseException('The server sent bytes that no request was waiting for.');
+        }
+
+        return $decoder->response();
+    }
+
+    /**
+     * Feeds the decoder until the response is complete.
+     *
+     * @param Closure(): ?string $produce
+     *
+     * @return string The bytes that came in behind the response
+     */
+    private function readInto(ResponseDecoder $decoder, Closure $produce): string
+    {
         $bytes = $this->pending;
         $this->pending = '';
         $received = strlen($bytes);
@@ -97,9 +144,7 @@ final class ResponseFrameReader
             $received += strlen($bytes);
         }
 
-        $this->pending = $decoder->remainder();
-
-        return $decoder->frame();
+        return $decoder->remainder();
     }
 
     /**

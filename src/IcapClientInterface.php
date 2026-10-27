@@ -96,8 +96,10 @@ interface IcapClientInterface
      * is not a regular file, the file cannot be opened, sized, read to its end
      * or closed, has another size than when it was opened, or the request did
      * not read it to its end;
-     * nothing is sent as if it were an empty, shorter or longer file. See
-     * docs/file-sources.md.
+     * nothing is sent as if it were an empty, shorter or longer file. The body
+     * of the response is kept, within `Config::getMaxResponseSize()`; for a
+     * server that sends a large file back, see {@see \Ndrstmr\Icap\DiscardingIcapClient}.
+     * See docs/file-sources.md.
      *
      * @param array<string, string|string[]> $extraHeaders Extra ICAP request
      *        headers, e.g. `['X-Client-IP' => '203.0.113.5']`. `Host` and

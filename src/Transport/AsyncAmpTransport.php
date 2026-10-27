@@ -25,6 +25,7 @@ use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Revolt\EventLoop;
 
@@ -68,7 +69,7 @@ use function Amp\async;
  * connection (strict RFC 3507 §4.5 preview-continue, ICAP request
  * pipelining, …) can call {@see openSession()}.
  */
-final class AsyncAmpTransport implements SessionAwareTransport
+final class AsyncAmpTransport implements SessionAwareTransport, DiscardingTransport
 {
     public function __construct(
         private ?ConnectionPoolInterface $pool = null,
@@ -82,15 +83,40 @@ final class AsyncAmpTransport implements SessionAwareTransport
     #[\Override]
     public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): \Amp\Future
     {
-        /** @var \Amp\Future<string> $future */
-        $future = async(function () use ($config, $rawRequest, $cancellation): string {
+        return $this->exchange($config, $rawRequest, $cancellation, static fn (AmpTransportSession $session): string => $session->readResponse());
+    }
+
+    /**
+     * @param iterable<string> $rawRequest
+     * @return \Amp\Future<IcapResponse>
+     */
+    #[\Override]
+    public function requestDiscardingBody(Config $config, iterable $rawRequest, int $maxResponseBytes, ?Cancellation $cancellation = null): \Amp\Future
+    {
+        return $this->exchange($config, $rawRequest, $cancellation, static fn (AmpTransportSession $session): IcapResponse => $session->readResponseDiscardingBody($maxResponseBytes));
+    }
+
+    /**
+     * One request on a session of its own, and what the caller reads from it.
+     *
+     * @template T
+     *
+     * @param iterable<string>                    $rawRequest
+     * @param \Closure(AmpTransportSession): T    $read
+     *
+     * @return \Amp\Future<T>
+     */
+    private function exchange(Config $config, iterable $rawRequest, ?Cancellation $cancellation, \Closure $read): \Amp\Future
+    {
+        /** @var \Amp\Future<T> $future */
+        $future = async(function () use ($config, $rawRequest, $cancellation, $read): mixed {
             $session = $this->openSession($config, $cancellation);
             try {
                 $session->write($rawRequest);
 
-                return $session->readResponse();
+                return $read($session);
             } finally {
-                // The caller gets a string no one has validated yet: a
+                // The caller gets a response no one has validated yet: a
                 // 100 Continue, an error status or a response with bytes
                 // behind it are indistinguishable from a clean answer
                 // here. Reuse needs a validated exchange, which only a
@@ -103,7 +129,7 @@ final class AsyncAmpTransport implements SessionAwareTransport
     }
 
     #[\Override]
-    public function openSession(Config $config, ?Cancellation $cancellation = null): TransportSession
+    public function openSession(Config $config, ?Cancellation $cancellation = null): AmpTransportSession
     {
         // Cancelled before it began: neither the pool nor the connector is asked.
         $cancellation?->throwIfRequested();

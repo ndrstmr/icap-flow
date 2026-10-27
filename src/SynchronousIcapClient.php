@@ -91,6 +91,46 @@ final class SynchronousIcapClient
     }
 
     /**
+     * {@see DiscardingIcapClient::scanFileDiscardingBody()}, awaited.
+     *
+     * @param array<string, string|string[]> $extraHeaders
+     * @throws \LogicException When the wrapped client does not implement {@see DiscardingIcapClient}
+     */
+    public function scanFileDiscardingBody(
+        string $service,
+        string $filePath,
+        int $maxResponseBytes,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): ScanResult {
+        return $this->discardingClient()->scanFileDiscardingBody($service, $filePath, $maxResponseBytes, $extraHeaders, $cancellation)->await();
+    }
+
+    /**
+     * {@see DiscardingIcapClient::scanFileWithPreviewDiscardingBody()}, awaited.
+     *
+     * @param array<string, string|string[]> $extraHeaders
+     * @throws \LogicException When the wrapped client does not implement {@see DiscardingIcapClient}
+     */
+    public function scanFileWithPreviewDiscardingBody(
+        string $service,
+        string $filePath,
+        int $maxResponseBytes,
+        ?int $previewSize = null,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): ScanResult {
+        return $this->discardingClient()->scanFileWithPreviewDiscardingBody($service, $filePath, $maxResponseBytes, $previewSize, $extraHeaders, $cancellation)->await();
+    }
+
+    private function discardingClient(): DiscardingIcapClient
+    {
+        return $this->asyncClient instanceof DiscardingIcapClient
+            ? $this->asyncClient
+            : throw new \LogicException($this->asyncClient::class . ' cannot discard the body of a response; it does not implement ' . DiscardingIcapClient::class . '.');
+    }
+
+    /**
      * @param array<string, string|string[]> $extraHeaders
      * @throws \Ndrstmr\Icap\Exception\IcapStorageException When the file cannot be opened, sized or read to its end
      */
