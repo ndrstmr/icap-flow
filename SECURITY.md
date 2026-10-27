@@ -64,7 +64,7 @@ The v2 line was reviewed against three independent due-diligence reports (`docs/
 - **Fail-secure on protocol errors.** ICAP `100 Continue` outside a preview exchange raises `IcapProtocolException` — never a clean scan result.
 - **CRLF / NUL / control-character validation** on `$service` and on every user-supplied request header (name + value), enforced before any byte hits the socket.
 - **TLS available** via `Config::withTlsContext(ClientTlsContext)`. The default `ClientTlsContext` performs hostname verification against the certificate.
-- **Bounded reads.** `Config::withLimits(maxResponseSize, maxHeaderCount, maxHeaderLineLength)` caps every response. Defaults: 10 MB total, 100 headers, 8 KB per line.
+- **Bounded reads.** `Config::withLimits(maxResponseSize, maxHeaderCount, maxHeaderLineLength)` caps every response. Defaults: 10 MB total, 100 headers, 8 KB per line. The discarding scans (`scanFileDiscardingBody()`, `scanFileWithPreviewDiscardingBody()`) take the caller's budget for the bytes of a response instead of `maxResponseSize`, read it without keeping it (memory does not grow with its size) and keep the header limits.
 - **No fail-open on 5xx.** Server errors raise `IcapServerException`. Your application is responsible for blocking the upload — the library will never silently report it as clean.
 
 ## What this library DOES provide (since v2.0 / v2.1 / v2.2 / v3.0)

@@ -34,16 +34,19 @@ use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\DiscardingTransport;
+use Ndrstmr\Icap\Transport\DiscardingTransportSession;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Ndrstmr\Icap\Transport\TransportSession;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
 /**
  * Core asynchronous ICAP client used by the synchronous wrapper.
  */
-final class IcapClient implements IcapClientInterface
+final class IcapClient implements IcapClientInterface, DiscardingIcapClient
 {
     private PreviewStrategyInterface $previewStrategy;
     private LoggerInterface $logger;
@@ -103,15 +106,25 @@ final class IcapClient implements IcapClientInterface
     #[\Override]
     public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
+        return $this->requestWith($request, $cancellation, null);
+    }
+
+    /**
+     * One request and the verdict on its response; with a budget, the body of the response is received and dropped.
+     *
+     * @return Future<ScanResult>
+     */
+    private function requestWith(IcapRequest $request, ?Cancellation $cancellation, ?int $discardBudget): Future
+    {
         return $this->run(
             OperationDeadline::begin($cancellation, $this->config->getOperationTimeout()),
-            function (OperationDeadline $deadline) use ($request): ScanResult {
+            function (OperationDeadline $deadline) use ($request, $discardBudget): ScanResult {
                 $context = $this->logContext($request);
                 $this->logger->info('ICAP request started', $context);
 
                 $response = null;
                 try {
-                    $response = $this->executeRaw($request, $deadline)->await();
+                    $response = $this->executeRaw($request, $deadline, $discardBudget)->await();
                     // An answer that comes in after the end of the operation is none (M10).
                     $deadline->checkpoint();
                     $result = $this->interpretResponse($response, $this->config);
@@ -175,13 +188,19 @@ final class IcapClient implements IcapClientInterface
      * {@see request()} or one of the `scanFile*()` methods instead. The class
      * is final: there is no outside access to this method.
      *
+     * With a `$discardBudget` the response is received and checked by the transport without being kept
+     * (see {@see DiscardingIcapClient}), and the parser is not asked.
+     *
      * @return Future<IcapResponse>
      */
-    protected function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
+    protected function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null, ?int $discardBudget = null): Future
     {
         /** @var Future<IcapResponse> $future */
-        $future = \Amp\async(function () use ($request, $cancellation): IcapResponse {
+        $future = \Amp\async(function () use ($request, $cancellation, $discardBudget): IcapResponse {
             $chunks = $this->formatter->format($request);
+            if ($discardBudget !== null) {
+                return $this->discardingTransport()->requestDiscardingBody($this->config, $chunks, $discardBudget, $cancellation)->await();
+            }
             $responseString = $this->transport->request($this->config, $chunks, $cancellation)->await();
             return $this->parser->parse($responseString);
         });
@@ -270,13 +289,53 @@ final class IcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
+        return $this->scanFileWith($service, $filePath, $extraHeaders, $cancellation, null);
+    }
+
+    /**
+     * {@see scanFile()} with the body of the response received and dropped, and only its size kept
+     * ({@see IcapResponse::$discardedBodyBytes}); for a server that echoes a large file back. See
+     * {@see DiscardingIcapClient}.
+     *
+     * @param array<string, string|string[]> $extraHeaders
+     *
+     * @return Future<ScanResult>
+     *
+     * @throws \InvalidArgumentException When the budget is below 1
+     * @throws \LogicException           When the transport or the parser cannot discard
+     */
+    #[\Override]
+    public function scanFileDiscardingBody(
+        string $service,
+        string $filePath,
+        int $maxResponseBytes,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): Future {
+        $this->assertCanDiscard($maxResponseBytes);
+
+        return $this->scanFileWith($service, $filePath, $extraHeaders, $cancellation, $maxResponseBytes);
+    }
+
+    /**
+     * @param array<string, string|string[]> $extraHeaders
+     *
+     * @return Future<ScanResult>
+     */
+    private function scanFileWith(
+        string $service,
+        string $filePath,
+        array $extraHeaders,
+        ?Cancellation $cancellation,
+        ?int $discardBudget,
+    ): Future {
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
         // Validate first so injection attempts never reach the socket.
         $this->validateIcapHeaders($extraHeaders);
         $uri = $this->buildServiceUri($service);
 
-        return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $filePath, $extraHeaders): ScanResult {
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $filePath, $extraHeaders, $discardBudget): ScanResult {
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
 
@@ -301,7 +360,7 @@ final class IcapClient implements IcapClientInterface
                     encapsulatedResponse: $httpResponse,
                 );
 
-                $result = $this->request($request, $deadline)->await();
+                $result = $this->requestWith($request, $deadline, $discardBudget)->await();
                 // A formatter or transport that took less than the file leaves the verdict to another body.
                 $file->assertRead();
                 $file->close();
@@ -344,6 +403,52 @@ final class IcapClient implements IcapClientInterface
         array $extraHeaders = [],
         ?Cancellation $cancellation = null,
     ): Future {
+        return $this->scanFileWithPreviewWith($service, $filePath, $previewSize, $extraHeaders, $cancellation, null);
+    }
+
+    /**
+     * {@see scanFileWithPreview()} with the body of every response of the exchange received and dropped, as
+     * {@see scanFileDiscardingBody()} does. The budget holds for each response on its own.
+     *
+     * @param array<string, string|string[]> $extraHeaders
+     *
+     * @return Future<ScanResult>
+     *
+     * @throws \InvalidArgumentException When the budget is below 1, or $previewSize is outside 0..1 MiB
+     * @throws \LogicException           When the transport or the parser cannot discard, or the client has a
+     *                                   preview strategy other than {@see DefaultPreviewStrategy}
+     */
+    #[\Override]
+    public function scanFileWithPreviewDiscardingBody(
+        string $service,
+        string $filePath,
+        int $maxResponseBytes,
+        ?int $previewSize = null,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): Future {
+        $this->assertCanDiscard($maxResponseBytes);
+        // A strategy of its own may read the body of the answer to the preview, which is not there.
+        if (!$this->previewStrategy instanceof DefaultPreviewStrategy) {
+            throw new \LogicException($this->previewStrategy::class . ' may judge the body of the answer to the preview, which this mode does not keep; only ' . DefaultPreviewStrategy::class . ' is used with it.');
+        }
+
+        return $this->scanFileWithPreviewWith($service, $filePath, $previewSize, $extraHeaders, $cancellation, $maxResponseBytes);
+    }
+
+    /**
+     * @param array<string, string|string[]> $extraHeaders
+     *
+     * @return Future<ScanResult>
+     */
+    private function scanFileWithPreviewWith(
+        string $service,
+        string $filePath,
+        ?int $previewSize,
+        array $extraHeaders,
+        ?Cancellation $cancellation,
+        ?int $discardBudget,
+    ): Future {
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
         if ($previewSize !== null && ($previewSize < 0 || $previewSize > self::MAX_PREVIEW_SIZE)) {
@@ -355,7 +460,7 @@ final class IcapClient implements IcapClientInterface
         }
         $this->validateIcapHeaders($extraHeaders);
 
-        return $this->run($deadline, function (OperationDeadline $deadline) use ($service, $filePath, $previewSize, $extraHeaders): ScanResult {
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($service, $filePath, $previewSize, $extraHeaders, $discardBudget): ScanResult {
             $previewSize = $this->resolvePreviewSize($service, $previewSize, $deadline);
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
@@ -366,10 +471,10 @@ final class IcapClient implements IcapClientInterface
                 $result = $this->transport instanceof SessionAwareTransport
                     // Strict RFC 3507 §4.5 path — preview + continuation
                     // on the same socket, one logical ICAP request.
-                    ? $this->scanFileWithPreviewStrict($service, $file, $previewSize, $extraHeaders, $deadline)
+                    ? $this->scanFileWithPreviewStrict($service, $file, $previewSize, $extraHeaders, $deadline, $discardBudget)
                     // Legacy two-request approximation for non-session
                     // transports (synchronous, custom impls).
-                    : $this->scanFileWithPreviewLegacy($service, $file, $previewSize, $extraHeaders, $deadline);
+                    : $this->scanFileWithPreviewLegacy($service, $file, $previewSize, $extraHeaders, $deadline, $discardBudget);
                 $file->close();
 
                 return $result;
@@ -392,6 +497,7 @@ final class IcapClient implements IcapClientInterface
         int $previewSize,
         array $extraHeaders,
         OperationDeadline $deadline,
+        ?int $discardBudget,
     ): ScanResult {
         \assert($this->transport instanceof SessionAwareTransport);
 
@@ -426,8 +532,10 @@ final class IcapClient implements IcapClientInterface
         // pool, where the next user could see misaligned bytes.
         $reusable = false;
         try {
+            // A session that cannot discard is found out before a byte is sent on it.
+            $readResponse = $this->responseReader($session, $discardBudget);
             $session->write($this->formatter->format($previewRequest));
-            $previewIcapResponse = $this->parser->parse($session->readResponse());
+            $previewIcapResponse = $readResponse();
             // Nothing is decided, and nothing pooled, on an answer that came in after the end of the operation.
             $deadline->checkpoint();
             $serverCloses = HeaderFields::hasToken($previewIcapResponse->headers, 'Connection', 'close');
@@ -468,7 +576,7 @@ final class IcapClient implements IcapClientInterface
                 $fileSize - strlen($previewBytes),
             ));
 
-            $finalIcapResponse = $this->parser->parse($session->readResponse());
+            $finalIcapResponse = $readResponse();
             $deadline->checkpoint();
             $result = $this->interpretResponse($finalIcapResponse, $this->config);
             $reusable = !$serverCloses
@@ -497,6 +605,7 @@ final class IcapClient implements IcapClientInterface
         int $previewSize,
         array $extraHeaders,
         OperationDeadline $deadline,
+        ?int $discardBudget,
     ): ScanResult {
         $fileSize = $file->size;
         [$previewBytes, $previewIsComplete] = $this->readPreview($file, $previewSize);
@@ -521,7 +630,7 @@ final class IcapClient implements IcapClientInterface
             previewIsComplete: $previewIsComplete,
         );
 
-        $previewIcapResponse = $this->executeRaw($previewRequest, $deadline)->await();
+        $previewIcapResponse = $this->executeRaw($previewRequest, $deadline, $discardBudget)->await();
         $deadline->checkpoint();
 
         if ($previewIsComplete) {
@@ -562,11 +671,56 @@ final class IcapClient implements IcapClientInterface
             headers: HeaderFields::without($extraHeaders, ['Preview', 'Allow']),
             encapsulatedResponse: $fullResponse,
         );
-        $result = $this->request($fullRequest, $deadline)->await();
+        $result = $this->requestWith($fullRequest, $deadline, $discardBudget)->await();
         // As in scanFile(): the verdict counts only if the request took the whole file.
         $file->assertRead();
 
         return $result;
+    }
+
+    /**
+     * The next response of a session, parsed from its string, or received and dropped by the session if there is a
+     * budget.
+     *
+     * @return \Closure(): IcapResponse
+     *
+     * @throws \LogicException When there is a budget and the session cannot discard
+     */
+    private function responseReader(TransportSession $session, ?int $discardBudget): \Closure
+    {
+        if ($discardBudget === null) {
+            return fn (): IcapResponse => $this->parser->parse($session->readResponse());
+        }
+        if (!$session instanceof DiscardingTransportSession) {
+            throw new \LogicException(sprintf('The session of %s cannot receive a response without keeping it.', $this->transport::class));
+        }
+
+        return static fn (): IcapResponse => $session->readResponseDiscardingBody($discardBudget);
+    }
+
+    /**
+     * The discarding mode needs a transport that can receive a response without keeping it, and the parser of this
+     * library: the response is read by the decoder, and another parser would be passed by without a word.
+     *
+     * @throws \InvalidArgumentException When the budget is below 1
+     * @throws \LogicException           When the transport or the parser cannot discard
+     */
+    private function assertCanDiscard(int $maxResponseBytes): void
+    {
+        if ($maxResponseBytes < 1) {
+            throw new \InvalidArgumentException('maxResponseBytes must be >= 1, got: ' . $maxResponseBytes);
+        }
+        $this->discardingTransport();
+        if (!$this->parser instanceof ResponseParser) {
+            throw new \LogicException('The discarding mode reads the response with the ResponseParser of this library; ' . $this->parser::class . ' would be passed by.');
+        }
+    }
+
+    private function discardingTransport(): DiscardingTransport
+    {
+        return $this->transport instanceof DiscardingTransport
+            ? $this->transport
+            : throw new \LogicException($this->transport::class . ' cannot receive a response without keeping it; use a transport that implements ' . DiscardingTransport::class . '.');
     }
 
     private const int DEFAULT_PREVIEW_SIZE = 1024;

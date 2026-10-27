@@ -18,6 +18,7 @@
 
 declare(strict_types=1);
 
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Transport\ResponseFrameReader;
@@ -270,6 +271,11 @@ it('frames a legal response to its last byte, at every split position and in eve
 
             expect($frame)->toBe($wire, "{$label}, {$how}");
             expect($parser->parse($frame))->toEqual($expected, "{$label}, {$how}");
+
+            // Received without being kept (AP-15): the same response, its body counted instead of held.
+            $dropped = (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))
+                ->readDiscardingBody(makeChunkProducer($chunks), 1 << 20);
+            expect($dropped)->toEqual(new IcapResponse($expected->statusCode, $expected->headers, '', strlen($body)), "{$label}, {$how}, discarding");
         }
     }
 });
@@ -283,6 +289,9 @@ it('refuses an illegal response, in the parser and in the framing, however it ar
             expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))
                 ->readFrom(makeChunkProducer($chunks)))
                 ->toThrow(IcapMalformedResponseException::class, '', "{$label}, {$how}");
+            expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))
+                ->readDiscardingBody(makeChunkProducer($chunks), 1 << 20))
+                ->toThrow(IcapMalformedResponseException::class, '', "{$label}, {$how}, discarding");
         }
     }
 });
@@ -295,6 +304,9 @@ it('takes the end of the stream inside a legal response for malformed, at every 
             expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))
                 ->readFrom(makeChunkProducer($prefix === '' ? [] : [$prefix])))
                 ->toThrow(IcapMalformedResponseException::class, '', "{$label}, cut after {$cut} bytes");
+            expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))
+                ->readDiscardingBody(makeChunkProducer($prefix === '' ? [] : [$prefix]), 1 << 20))
+                ->toThrow(IcapMalformedResponseException::class, '', "{$label}, cut after {$cut} bytes, discarding");
             expect(fn () => (new ResponseParser())->parse($prefix))
                 ->toThrow(IcapMalformedResponseException::class, '', "{$label}, cut after {$cut} bytes");
         }
@@ -316,6 +328,25 @@ it('leaves what follows a response for the next one, however the two arrive', fu
 
             expect($reader->readFrom($producer))->toBe($first, "{$label} then {$next}, {$how}");
             expect($reader->readFrom($producer))->toBe($second, "{$label} then {$next}, {$how}");
+        }
+    }
+});
+
+it('refuses a response that is received and dropped when bytes of another one came in behind it', function () {
+    $labels = array_keys(rfLegalResponses());
+    $legal = array_column(rfLegalResponses(), 0);
+
+    foreach ($labels as $i => $label) {
+        $first = $legal[$i];
+        $second = $legal[($i + 1) % count($labels)];
+
+        // However much of the second response came in with the end of the first.
+        for ($cut = strlen($first) + 1; $cut <= strlen($first . $second); $cut++) {
+            $wire = $first . $second;
+            $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+
+            expect(fn () => $reader->readDiscardingBody(makeChunkProducer([substr($wire, 0, $cut), substr($wire, $cut)]), 1 << 20))
+                ->toThrow(IcapMalformedResponseException::class, 'bytes', "{$label}, cut after {$cut} bytes");
         }
     }
 });
@@ -362,6 +393,12 @@ it('does not take a terminator or a forged response inside a chunk payload for t
     expect($frame)->toBe($wire);
     expect($reads)->toBe(2);
     expect((new ResponseParser())->parse($frame)->body)->toBe($payload);
+
+    // A response that is not kept is read to the same end: the terminator in the payload is payload.
+    $reads = 0;
+    $dropped = (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))->readDiscardingBody($producer, 1 << 20);
+    expect($reads)->toBe(2)
+        ->and($dropped->discardedBodyBytes)->toBe(strlen($payload));
 });
 
 it('reads the same decision from the parser and from the framing for every response', function () {
@@ -424,6 +461,8 @@ it('applies the line length and header count limits to the whole response', func
             'parser'  => fn () => (new ResponseParser(maxHeaderCount: 3, maxHeaderLineLength: 48))->parse($wire),
             'framing' => fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 48, maxHeaderCount: 3))
                 ->readFrom(makeChunkProducer([$wire])),
+            'discarding' => fn () => (new ResponseFrameReader(maxResponseSize: 1, maxHeaderLineLength: 48, maxHeaderCount: 3))
+                ->readDiscardingBody(makeChunkProducer([$wire]), 1 << 20),
         ];
         foreach ($readers as $by => $read) {
             if ($passes) {
@@ -446,6 +485,24 @@ it('gives up on a chunk that cannot fit before it reads any of its data', functi
     expect(fn () => $reader->readFrom($producer))->toThrow(IcapMalformedResponseException::class, 'max size');
     // The size line was enough to know: the data was not waited for.
     expect($reads)->toBe(1);
+
+    // The same holds for the budget of a response that is not kept.
+    $reads = 0;
+    expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 30, maxHeaderLineLength: 8192))->readDiscardingBody($producer, 200))
+        ->toThrow(IcapMalformedResponseException::class, 'max size');
+    expect($reads)->toBe(1);
+
+    // Bytes that are in but not used yet count against it as well, next to the ones that were used and dropped:
+    // the unfinished trailer line is well within the budget on its own.
+    $used = rfIcap('200 OK', 'res-body=0', "5\r\nhello\r\n0\r\n");
+    $parts = [$used, 'X-A: ' . str_repeat('a', 60)];
+    $reads = 0;
+    $producer = static function () use (&$reads, $parts): ?string {
+        return $parts[$reads++] ?? null;
+    };
+    expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 30, maxHeaderLineLength: 8192))->readDiscardingBody($producer, strlen($used) + 40))
+        ->toThrow(IcapMalformedResponseException::class, 'max size');
+    expect($reads)->toBe(2);
 });
 
 it('refuses a complete response that is over the size limit, however it arrives, and takes one at the limit', function () {
@@ -458,6 +515,15 @@ it('refuses a complete response that is over the size limit, however it arrives,
         expect((new ResponseFrameReader(maxResponseSize: strlen($wire), maxHeaderLineLength: 8192))
             ->readFrom(makeChunkProducer($chunks)))
             ->toBe($wire, $how);
+
+        // The budget of a response that is not kept counts every byte of it, framing included, and is not the
+        // maximum size of the reader.
+        expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 30, maxHeaderLineLength: 8192))
+            ->readDiscardingBody(makeChunkProducer($chunks), strlen($wire) - 1))
+            ->toThrow(IcapMalformedResponseException::class, 'max size', "{$how}, discarding");
+        expect((new ResponseFrameReader(maxResponseSize: 1, maxHeaderLineLength: 8192))
+            ->readDiscardingBody(makeChunkProducer($chunks), strlen($wire))->discardedBodyBytes)
+            ->toBe(5, "{$how}, discarding");
     }
 });
 

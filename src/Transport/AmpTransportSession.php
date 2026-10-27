@@ -26,6 +26,7 @@ use Amp\CancelledException;
 use Amp\DeferredCancellation;
 use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
@@ -72,7 +73,7 @@ use Revolt\EventLoop;
  * not given back to the pool: no request is waiting for those bytes, so they are not
  * an answer to the next one.
  */
-final class AmpTransportSession implements TransportSession
+final class AmpTransportSession implements DiscardingTransportSession
 {
     private bool $disposed = false;
 
@@ -138,6 +139,26 @@ final class AmpTransportSession implements TransportSession
     #[\Override]
     public function readResponse(): string
     {
+        return $this->receive(static fn (ResponseFrameReader $reader, \Closure $produce): string => $reader->readFrom($produce));
+    }
+
+    #[\Override]
+    public function readResponseDiscardingBody(int $maxResponseBytes): IcapResponse
+    {
+        return $this->receive(static fn (ResponseFrameReader $reader, \Closure $produce): IcapResponse => $reader->readDiscardingBody($produce, $maxResponseBytes));
+    }
+
+    /**
+     * One response, in the two windows of the read (M10), however the reader is to take it.
+     *
+     * @template T
+     *
+     * @param \Closure(ResponseFrameReader, \Closure(): ?string): T $consume
+     *
+     * @return T
+     */
+    private function receive(\Closure $consume): mixed
+    {
         $this->assertActive();
         $reader = $this->reader;
         $socket = $this->socket;
@@ -149,8 +170,8 @@ final class AmpTransportSession implements TransportSession
             $begun ? 'Reading the response' : 'Waiting for the response to begin',
             $begun ? 'stream timeout' : 'response start timeout',
             $begun ? $streamTimeout : $this->config->getResponseStartTimeout(),
-            static function (Cancellation $window, \Closure $checkpoint, \Closure $next) use ($reader, $socket, $streamTimeout, &$begun): string {
-                $frame = $reader->readFrom(static function () use ($socket, $window, $checkpoint, $next, $streamTimeout, &$begun): ?string {
+            static function (Cancellation $window, \Closure $checkpoint, \Closure $next) use ($consume, $reader, $socket, $streamTimeout, &$begun): mixed {
+                $response = $consume($reader, static function () use ($socket, $window, $checkpoint, $next, $streamTimeout, &$begun): ?string {
                     // No read is begun for a caller who has cancelled, nor once the stretch has run out.
                     $checkpoint();
                     try {
@@ -172,11 +193,11 @@ final class AmpTransportSession implements TransportSession
 
                     return $bytes;
                 });
-                // The frame is complete. A timer cannot say that its window has passed while the bytes were decoded, or
-                // while the caller cancelled: the clock and the caller are looked at before the frame is returned.
+                // The response is complete. A timer cannot say that its window has passed while the bytes were decoded, or
+                // while the caller cancelled: the clock and the caller are looked at before it is returned.
                 $checkpoint();
 
-                return $frame;
+                return $response;
             },
         );
     }

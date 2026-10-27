@@ -59,6 +59,13 @@ use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
  * number of times however it is fragmented ({@see workedBytes()}). Bytes that
  * arrive behind the end of the message are kept apart as {@see remainder()}.
  *
+ * A decoder that discards ($discard) takes the message in without keeping it:
+ * the bytes it has used are dropped, so it holds at most an unfinished line (the
+ * line length limit) and the fragment it was just given, however large the
+ * body is. It counts the body bytes instead of collecting them, and
+ * `$maxResponseSize` is then the budget for the bytes the whole message may
+ * have; the limits for header lines and their number stay what they are.
+ *
  * @internal
  */
 final class ResponseDecoder
@@ -82,6 +89,8 @@ final class ResponseDecoder
         . '(?>[ \t]*=[ \t]*(?>' . self::TOKEN . '|"(?>[\t\x20\x21\x23-\x5B\x5D-\x7E\x80-\xFF]|\\\\[\t\x20-\x7E\x80-\xFF])*"))?)*\z/';
 
     private string $buffer = '';
+    /** Bytes dropped from the front of the buffer, once a discarding decoder has used them. */
+    private int $base = 0;
     /** Where the bytes the state machine has not used yet begin. */
     private int $pos = 0;
     /** Where the next search for CRLF goes on, so that a line is never searched twice. */
@@ -105,6 +114,8 @@ final class ResponseDecoder
 
     private int $chunkLeft = 0;
     private string $body = '';
+    /** Decoded body bytes a discarding decoder has passed over. */
+    private int $discarded = 0;
     private int $trailerFields = 0;
 
     private string $frame = '';
@@ -112,15 +123,21 @@ final class ResponseDecoder
 
     /**
      * @param bool $collectBody whether to assemble the decoded body; framing alone does not need it
+     * @param bool $discard     whether to receive the message without keeping it: neither the frame nor the body
+     *                          (see the class description); excludes $collectBody
      */
     public function __construct(
         private readonly int $maxResponseSize,
         private readonly int $maxHeaderCount,
         private readonly int $maxHeaderLineLength,
         private readonly bool $collectBody = true,
+        private readonly bool $discard = false,
     ) {
         if ($maxResponseSize < 1 || $maxHeaderCount < 1 || $maxHeaderLineLength < 1) {
             throw new \InvalidArgumentException('Decoder limits must be >= 1.');
+        }
+        if ($discard && $collectBody) {
+            throw new \InvalidArgumentException('A decoder that discards the message cannot collect the body.');
         }
     }
 
@@ -142,9 +159,10 @@ final class ResponseDecoder
         $this->advance();
 
         // Not complete, and already more than the response may have.
-        if ($this->state !== self::DONE && strlen($this->buffer) > $this->maxResponseSize) {
+        if ($this->state !== self::DONE && $this->base + strlen($this->buffer) > $this->maxResponseSize) {
             throw $this->tooLarge();
         }
+        $this->release();
     }
 
     public function isComplete(): bool
@@ -158,6 +176,9 @@ final class ResponseDecoder
     public function frame(): string
     {
         $this->assertComplete();
+        if ($this->discard) {
+            throw new \LogicException('The decoder was built to discard the message, not to keep its frame.');
+        }
 
         return $this->frame;
     }
@@ -174,11 +195,15 @@ final class ResponseDecoder
     }
 
     /**
-     * Status, headers and decoded body of the message.
+     * Status, headers and decoded body of the message; for a decoder that discards, the body is empty and
+     * its length is in {@see IcapResponse::$discardedBodyBytes}.
      */
     public function response(): IcapResponse
     {
         $this->assertComplete();
+        if ($this->discard) {
+            return new IcapResponse($this->status, $this->headers, '', $this->discarded);
+        }
         if (!$this->collectBody) {
             throw new \LogicException('The decoder was built to frame, not to collect the body.');
         }
@@ -215,10 +240,34 @@ final class ResponseDecoder
                 default => false,
             };
 
-            if ($this->pos > $this->maxResponseSize) {
+            if ($this->offset() > $this->maxResponseSize) {
                 throw $this->tooLarge();
             }
         } while ($progress);
+    }
+
+    /**
+     * Where the bytes the state machine has not used yet begin, counted from the first byte of the message.
+     */
+    private function offset(): int
+    {
+        return $this->base + $this->pos;
+    }
+
+    /**
+     * Drops the bytes a discarding decoder has used, so that what it holds does not grow with the message.
+     */
+    private function release(): void
+    {
+        if (!$this->discard || $this->pos === 0 || $this->state === self::DONE) {
+            return;
+        }
+
+        $this->base += $this->pos;
+        $this->buffer = substr($this->buffer, $this->pos);
+        $this->searchFrom = max(0, $this->searchFrom - $this->pos);
+        $this->work += strlen($this->buffer);
+        $this->pos = 0;
     }
 
     private function readHead(): bool
@@ -270,7 +319,7 @@ final class ResponseDecoder
             throw new IcapMalformedResponseException('A 100 or 204 ICAP response carries no encapsulated message.');
         }
         if ($this->sectionKind !== '') {
-            $this->sectionStart = $this->pos;
+            $this->sectionStart = $this->offset();
             $this->state = self::SECTION;
         } elseif ($this->hasBody) {
             $this->state = self::SIZE;
@@ -350,7 +399,7 @@ final class ResponseDecoder
             return true;
         }
 
-        if ($this->pos !== $this->sectionStart + $this->sectionLength) {
+        if ($this->offset() !== $this->sectionStart + $this->sectionLength) {
             throw new IcapMalformedResponseException('The encapsulated headers of the ICAP response do not end where its Encapsulated header says.');
         }
         HeaderFields::parse(array_slice($this->sectionLines, 1));
@@ -377,7 +426,7 @@ final class ResponseDecoder
             throw new IcapMalformedResponseException('Invalid chunk size line in the ICAP response.');
         }
         // What is left for the data and the CRLF behind it; a size that cannot fit is refused now.
-        $size = $this->number($m[1], 16, max(0, $this->maxResponseSize - $this->pos - 2));
+        $size = $this->number($m[1], 16, max(0, $this->maxResponseSize - $this->offset() - 2));
 
         if ($size === 0) {
             $this->state = self::TRAILER;
@@ -393,7 +442,9 @@ final class ResponseDecoder
     {
         $take = min(strlen($this->buffer) - $this->pos, $this->chunkLeft);
         if ($take > 0) {
-            if ($this->collectBody) {
+            if ($this->discard) {
+                $this->discarded += $take;
+            } elseif ($this->collectBody) {
                 $this->body .= substr($this->buffer, $this->pos, $take);
                 $this->work += $take;
             }
@@ -492,9 +543,11 @@ final class ResponseDecoder
 
     private function complete(): void
     {
-        $this->frame = substr($this->buffer, 0, $this->pos);
+        if (!$this->discard) {
+            $this->frame = substr($this->buffer, 0, $this->pos);
+            $this->work += $this->pos;
+        }
         $this->remainder = substr($this->buffer, $this->pos);
-        $this->work += $this->pos;
         $this->buffer = '';
         $this->head = [];
         $this->state = self::DONE;

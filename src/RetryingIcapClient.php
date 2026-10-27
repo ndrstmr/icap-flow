@@ -38,8 +38,8 @@ use function Amp\delay;
  * **What is repeated (N03).** Only {@see options()}, and only after an
  * {@see IcapServerException} (ICAP 5xx), which is transient by RFC 3507
  * §4.3.3: OPTIONS has no body and changes nothing, so a second one is safe.
- * {@see request()}, {@see scanFile()} and {@see scanFileWithPreview()} get one
- * attempt. A 5xx, or a write that failed, does not prove that the server did
+ * {@see request()}, {@see scanFile()}, {@see scanFileWithPreview()} and their discarding
+ * variants get one attempt. A 5xx, or a write that failed, does not prove that the server did
  * not process any of the bytes it was sent, and nothing here can send an upload
  * again (a stream that was read cannot be read again, and a file may have
  * changed); an application that knows its scans are repeatable repeats them
@@ -75,7 +75,7 @@ use function Amp\delay;
  *         operationTimeout: 30.0,
  *     );
  */
-final class RetryingIcapClient implements IcapClientInterface
+final class RetryingIcapClient implements IcapClientInterface, DiscardingIcapClient
 {
     /** @var (Closure(float): void)|null */
     private ?Closure $sleeper;
@@ -195,6 +195,56 @@ final class RetryingIcapClient implements IcapClientInterface
             $cancellation,
             fn (OperationDeadline $deadline): ScanResult => $this->inner->scanFileWithPreview($service, $filePath, $previewSize, $extraHeaders, $deadline)->await(),
         );
+    }
+
+    /**
+     * @param array<string, string|string[]> $extraHeaders
+     *
+     * @throws \LogicException When the wrapped client does not implement {@see DiscardingIcapClient}
+     */
+    #[\Override]
+    public function scanFileDiscardingBody(
+        string $service,
+        string $filePath,
+        int $maxResponseBytes,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): Future {
+        $inner = $this->discardingInner();
+
+        return $this->once(
+            $cancellation,
+            fn (OperationDeadline $deadline): ScanResult => $inner->scanFileDiscardingBody($service, $filePath, $maxResponseBytes, $extraHeaders, $deadline)->await(),
+        );
+    }
+
+    /**
+     * @param array<string, string|string[]> $extraHeaders
+     *
+     * @throws \LogicException When the wrapped client does not implement {@see DiscardingIcapClient}
+     */
+    #[\Override]
+    public function scanFileWithPreviewDiscardingBody(
+        string $service,
+        string $filePath,
+        int $maxResponseBytes,
+        ?int $previewSize = null,
+        array $extraHeaders = [],
+        ?Cancellation $cancellation = null,
+    ): Future {
+        $inner = $this->discardingInner();
+
+        return $this->once(
+            $cancellation,
+            fn (OperationDeadline $deadline): ScanResult => $inner->scanFileWithPreviewDiscardingBody($service, $filePath, $maxResponseBytes, $previewSize, $extraHeaders, $deadline)->await(),
+        );
+    }
+
+    private function discardingInner(): DiscardingIcapClient
+    {
+        return $this->inner instanceof DiscardingIcapClient
+            ? $this->inner
+            : throw new \LogicException($this->inner::class . ' cannot discard the body of a response; it does not implement ' . DiscardingIcapClient::class . '.');
     }
 
     /**

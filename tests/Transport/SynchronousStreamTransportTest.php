@@ -40,7 +40,7 @@ const SYNC_FRAME = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n
  *
  * The child reads one JSON line (host, port, timeout, chunks, cancel,
  * descriptors, and for the operation budget of M10: operation, responseStart,
- * hold, client, operationTimeout), runs the transport and writes one JSON line
+ * hold, client, operationTimeout, and for AP-15 discard: a budget makes it call requestDiscardingBody() with that many bytes), runs the transport and writes one JSON line
  * back. With "operation" the transport gets the end of an operation of that many
  * seconds as its cancellation, "hold" seconds are spent (blocking) before it is
  * called, "responseStart" is the response start timeout of the Config, and
@@ -196,6 +196,11 @@ try {
     if ($job['client']) {
         $icap = new \Ndrstmr\Icap\IcapClient($config, new \Ndrstmr\Icap\Transport\SynchronousStreamTransport(), new \Ndrstmr\Icap\RequestFormatter(), new \Ndrstmr\Icap\ResponseParser());
         $out = ['response' => (string) $icap->options('/scan')->await()->statusCode];
+    } elseif ($job['discard'] !== null) {
+        $response = (new \Ndrstmr\Icap\Transport\SynchronousStreamTransport())
+            ->requestDiscardingBody($config, $chunks, $job['discard'], $cancellation)
+            ->await();
+        $out = ['status' => $response->statusCode, 'discarded' => $response->discardedBodyBytes, 'body' => $response->body];
     } else {
         $out = ['response' => (new \Ndrstmr\Icap\Transport\SynchronousStreamTransport())
             ->request($config, $chunks, $cancellation)
@@ -238,6 +243,7 @@ final class SyncChild
         float $hold = 0.0,
         bool $client = false,
         ?float $operationTimeout = null,
+        ?int $discard = null,
     ): self {
         $child = new self();
         $process = proc_open(
@@ -247,7 +253,7 @@ final class SyncChild
         );
         Assert::assertIsResource($process);
         $child->process = $process;
-        fwrite($child->pipes[0], json_encode(compact('host', 'port', 'timeout', 'chunks', 'cancel', 'descriptors', 'operation', 'responseStart', 'hold', 'client', 'operationTimeout'), JSON_THROW_ON_ERROR) . "\n");
+        fwrite($child->pipes[0], json_encode(compact('host', 'port', 'timeout', 'chunks', 'cancel', 'descriptors', 'operation', 'responseStart', 'hold', 'client', 'operationTimeout', 'discard'), JSON_THROW_ON_ERROR) . "\n");
         if ($descriptors > 0) {
             // The child says first whether its limit allows that many files; if not, the test is skipped.
             $child->reply(10.0);
@@ -267,13 +273,13 @@ final class SyncChild
      * how many chunks were asked for, the streams it left open and the notices
      * that got past its own @. A client that does not answer in time is killed.
      *
-     * @return array{response?: string, error?: class-string, message?: string, elapsed: float, asked: int, streams: int, leaked: list<string>}
+     * @return array{response?: string, status?: int, discarded?: int|null, body?: string, error?: class-string, message?: string, elapsed: float, asked: int, streams: int, leaked: list<string>}
      */
     public function outcome(float $within = 10.0): array
     {
         $outcome = $this->reply($within);
 
-        /** @var array{response?: string, error?: class-string, message?: string, elapsed: float, asked: int, streams: int, leaked: list<string>} $outcome */
+        /** @var array{response?: string, status?: int, discarded?: int|null, body?: string, error?: class-string, message?: string, elapsed: float, asked: int, streams: int, leaked: list<string>} $outcome */
         return $outcome;
     }
 
@@ -1609,4 +1615,124 @@ it('lets the cancellation of the caller win over the limit of the transfer when 
     }
 
     expect($seen)->toBe(array_map(static fn (array $case): string => $case[2], $cases));
+});
+
+/*
+ * AP-15 (M02): the same exchange with a response that is received and not kept. The client blocks in a child
+ * process, as above; the test plays the server, here with a response as large as an echo of a large file.
+ */
+it('receives a response of more than the response limit without keeping it, and refuses it when it is kept', function () {
+    $size = 12 * 1024 * 1024;
+
+    // [what the child asks of the transport, what it ends with]
+    foreach (['kept' => null, 'not kept' => 4 * $size] as $how => $budget) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 30.0, [SYNC_REQUEST], discard: $budget);
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            foreach (\Ndrstmr\Icap\Tests\IcapTestServer::echo($size) as $part) {
+                if (@fwrite($peer, $part) === false) {
+                    break;
+                }
+            }
+            $outcome = $child->outcome(30.0);
+
+            if ($budget === null) {
+                // The default limit of the configuration is 10 MiB.
+                expect($outcome['error'] ?? null)->toBe(IcapMalformedResponseException::class, $how);
+            } else {
+                expect($outcome['status'] ?? null)->toBe(200, $how)
+                    ->and($outcome['discarded'] ?? null)->toBe($size, $how)
+                    ->and($outcome['body'] ?? null)->toBe('', $how)
+                    ->and($outcome['streams'])->toBe(0, $how);
+            }
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('refuses a response that is cut, illegal at its end or over its budget, over the synchronous transport', function () {
+    $size = 3 * 1024 * 1024;
+    $parts = iterator_to_array(\Ndrstmr\Icap\Tests\IcapTestServer::echo($size), false);
+    $last = count($parts) - 1;
+    $whole = strlen(implode('', $parts));
+
+    // label => [what the server writes, the budget, whether it hangs up, what the client ends with]
+    $cases = [
+        'a legal response, budget to the byte' => [$parts, $whole, false, 200],
+        'one byte over the budget'             => [$parts, $whole - 1, false, IcapMalformedResponseException::class],
+        'an invalid trailer'                   => [[...array_slice($parts, 0, $last), "0\r\nnot a field\r\n\r\n"], 8 * $size, false, IcapMalformedResponseException::class],
+        'no CRLF behind the last data'         => [[...array_slice($parts, 0, $last - 1), substr($parts[$last - 1], 0, -2) . 'ZZ', $parts[$last]], 8 * $size, false, IcapMalformedResponseException::class],
+        'the stream ends inside the body'      => [array_slice($parts, 0, 20), 8 * $size, true, IcapMalformedResponseException::class],
+    ];
+
+    foreach ($cases as $case => [$write, $budget, $hangUp, $expected]) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 30.0, [SYNC_REQUEST], discard: $budget);
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            foreach ($write as $part) {
+                if (@fwrite($peer, $part) === false) {
+                    break;
+                }
+            }
+            if ($hangUp) {
+                fclose($peer);
+                $peer = null;
+            }
+            $outcome = $child->outcome(30.0);
+
+            expect($outcome['error'] ?? $outcome['status'] ?? null)->toBe($expected, $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
+});
+
+it('refuses bytes the server sent behind a response, over the synchronous transport', function () {
+    $stray = 'ICAP/1.0 204 No Con';
+    $parts = iterator_to_array(\Ndrstmr\Icap\Tests\IcapTestServer::echo(64 * 1024), false);
+    $last = array_pop($parts);
+
+    // label => the writes of the server; the end of the response and the bytes behind it go out in one write, after a pause
+    $cases = [
+        'behind a 200' => [...$parts, $last . $stray],
+        'behind a 204' => [\Ndrstmr\Icap\Tests\IcapTestServer::CLEAN . $stray],
+    ];
+
+    foreach ($cases as $case => $write) {
+        [$server, $port] = syncListen();
+        $child = SyncChild::start($port, 30.0, [SYNC_REQUEST], discard: 1 << 20);
+        $peer = null;
+        try {
+            [$peer] = syncServe($server, strlen(SYNC_REQUEST));
+            foreach ($write as $i => $part) {
+                if ($i === count($write) - 1 && $i > 0) {
+                    // What came before has been read when the last write arrives.
+                    usleep(100_000);
+                }
+                fwrite($peer, $part);
+            }
+            $outcome = $child->outcome(30.0);
+
+            expect($outcome['error'] ?? $outcome['status'] ?? null)->toBe(IcapMalformedResponseException::class, $case);
+        } finally {
+            $child->stop();
+            if (is_resource($peer)) {
+                fclose($peer);
+            }
+            fclose($server);
+        }
+    }
 });
