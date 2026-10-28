@@ -222,6 +222,47 @@ final class ResponseDecoder
         return $this->work;
     }
 
+    /**
+     * Whether a decoder with these limits takes the response written out the way a server sends it: `ICAP/1.0 <status> OK`,
+     * a line `Name: value` for every field value, the blank line and, if the `Encapsulated` layout names a body
+     * (`null-body` names none) or there is one, the body as one chunk and the last chunk, which is all of an empty body. A
+     * header section of the layout is left out, as the response does not hold it; the OPTIONS caches keep no such response.
+     * For a response that comes from somewhere else than the wire (a cache) and has to meet the limits of the client that
+     * reads it, as it would have from the server. A server that writes the same response with other bytes (a longer reason
+     * phrase, no space after the colon, a body in several chunks, chunk extensions, a trailer) differs from this by a few.
+     */
+    public static function admits(IcapResponse $response, int $maxResponseSize, int $maxHeaderCount, int $maxHeaderLineLength): bool
+    {
+        $lines = ['ICAP/1.0 ' . $response->statusCode . ' OK'];
+        foreach ($response->headers as $name => $values) {
+            foreach ($values as $value) {
+                $lines[] = $name . ': ' . $value;
+            }
+        }
+        // The status line is no header line.
+        if (count($lines) > $maxHeaderCount + 1) {
+            return false;
+        }
+
+        // Every line ends in CRLF, as does the blank line behind them.
+        $bytes = 2;
+        foreach ($lines as $line) {
+            $length = strlen($line);
+            if ($length > $maxHeaderLineLength) {
+                return false;
+            }
+            $bytes += $length + 2;
+        }
+        $data = strlen($response->body);
+        $layout = implode(',', HeaderFields::values($response->headers, 'Encapsulated'));
+        if ($data > 0 || preg_match('/(?:\A|,)[ \t]*(?:req|res|opt)-body[ \t]*=/i', $layout) === 1) {
+            // The last chunk with the blank line of the trailer, behind the data as one chunk: size line, data, CRLF.
+            $bytes += 5 + ($data > 0 ? strlen(dechex($data)) + 2 + $data + 2 : 0);
+        }
+
+        return $bytes <= $maxResponseSize;
+    }
+
     private function assertComplete(): void
     {
         if ($this->state !== self::DONE) {

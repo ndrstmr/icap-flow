@@ -18,6 +18,7 @@
 
 declare(strict_types=1);
 
+use Amp\Socket\ClientTlsContext;
 use Mockery as m;
 use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
 use Ndrstmr\Icap\Cache\OptionsCacheInterface;
@@ -35,9 +36,13 @@ use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\Cache\StoredEntryCases;
+use Ndrstmr\Icap\Tests\IcapTestServer;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
+use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Psr\Log\AbstractLogger;
 
 uses(AsyncTestCase::class);
 
@@ -369,51 +374,109 @@ it('does not store an answer that options() rejects and asks the server again', 
     }
 });
 
-it('does not hand out a cached answer that options() would reject', function () {
-    // status => the exception options() raises for the cached answer, null when it is handed out
-    $cases = [
-        200 => null,
-        100 => IcapProtocolException::class,
-        101 => IcapProtocolException::class,
-        204 => IcapProtocolException::class,
-        206 => IcapProtocolException::class,
-        302 => IcapProtocolException::class,
-        400 => IcapClientException::class,
-        503 => IcapServerException::class,
-        600 => IcapProtocolException::class,
+/*
+ * an answer from the cache is checked like one from the server, and one that fails the check is a miss: the
+ * server is asked, and the answer it gives is returned and stored. This holds for any cache, not only for the adapters.
+ */
+it('does not hand out a cached answer that is no usable OPTIONS answer, and asks the server instead', function () {
+    $unusable = StoredEntryCases::notKept() + [
+        'a 100' => new IcapResponse(100, ['Preview' => ['4096']]),
+        'a 302' => new IcapResponse(302, ['Preview' => ['4096']]),
+        'a 400' => new IcapResponse(400, ['Preview' => ['4096']]),
+        'a 600' => new IcapResponse(600, ['Preview' => ['4096']]),
     ];
+    $live = "ICAP/1.0 200 OK\r\nOptions-TTL: 60\r\nPreview: 2048\r\nEncapsulated: null-body=0\r\n\r\n";
 
-    foreach ($cases as $status => $exception) {
-        $cached = new IcapResponse($status, ['Options-TTL' => ['60'], 'Preview' => ['4096']]);
-        /** @var OptionsCacheInterface&\Mockery\MockInterface $cache */
-        $cache = m::mock(OptionsCacheInterface::class);
-        /** @var \Mockery\Expectation $get */
-        $get = $cache->shouldReceive('get');
-        $get->andReturn($cached);
-        $cache->shouldNotReceive('set');
-        $transport = new ScriptedTransport();
+    foreach ($unusable as $case => $cached) {
+        $cache = new SeededOptionsCache($cached);
+        $transport = new ScriptedTransport([$live]);
         $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
 
-        $thrown = null;
-        $returned = null;
+        $answer = null;
         /** @var AsyncTestCase $this */
-        $this->runAsyncTest(function () use ($client, &$thrown, &$returned) {
-            // Rejecting the cached answer is the Future's to tell, not the call's.
-            $future = $client->options('/avscan');
-            try {
-                $returned = $future->await();
-            } catch (Throwable $e) {
-                $thrown = $e;
-            }
+        $this->runAsyncTest(function () use ($client, &$answer) {
+            $answer = $client->options('/avscan')->await();
         });
 
-        expect($thrown === null ? null : $thrown::class)->toBe($exception, "status {$status}");
-        expect($returned)->toBe($exception === null ? $cached : null, "status {$status}");
-        // Served from the cache, or rejected from it: the server is not asked either way.
-        expect($transport->requests)->toBe([], "status {$status}");
+        expect($answer?->headers['Preview'])->toBe(['2048'], $case);
+        expect($transport->requests)->toHaveCount(1, $case);
+        expect($cache->ttls)->toBe([60], $case);
     }
 
-    m::close();
+    // The same cache with a usable answer: served from the cache, the server is not asked.
+    $cached = new IcapResponse(200, ['Preview' => ['4096']], 'opt-body');
+    $transport = new ScriptedTransport([$live]);
+    $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: new SeededOptionsCache($cached));
+    $answer = null;
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client, &$answer) {
+        $answer = $client->options('/avscan')->await();
+    });
+    expect($answer)->toBe($cached);
+    expect($transport->requests)->toBe([]);
+});
+
+/*
+ * a cached answer is read under the limits of the client that reads it, as the answer of the server is: the number of its
+ * header lines, their length and the size of the response. What this client would have refused over the socket is a miss, so
+ * the server is asked and the client refuses the answer as it does without a cache; what it would have taken is a hit. A client
+ * with the default limits fills the cache, and the limits that decide are the least that the wire takes and one below.
+ * An `opt-body` that is empty still ends in the last chunk, which a `null-body` does not have.
+ */
+it('hands out a cached answer only where the limits of this client take it from the server', function () {
+    $fields = "Methods: RESPMOD\r\nOptions-TTL: 60\r\nPreview: 4096\r\nISTag: \"v1\"\r\n";
+    $answers = [
+        'without a body'     => "ICAP/1.0 200 OK\r\n{$fields}Encapsulated: null-body=0\r\n\r\n",
+        'with a body'        => "ICAP/1.0 200 OK\r\n{$fields}Encapsulated: opt-body=0\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+        'with an empty body' => "ICAP/1.0 200 OK\r\n{$fields}Encapsulated: opt-body=0\r\n\r\n0\r\n\r\n",
+    ];
+    $defaults = ['maxHeaderCount' => 100, 'maxHeaderLineLength' => 8192, 'maxResponseSize' => 1_048_576];
+    $outcome = static function (IcapClient $client): string {
+        try {
+            return (string) $client->options('/avscan')->await()->statusCode;
+        } catch (IcapMalformedResponseException) {
+            return 'refused';
+        }
+    };
+
+    foreach ($answers as $shape => $answer) {
+        $lines = explode("\r\n", explode("\r\n\r\n", $answer, 2)[0]);
+        // What the wire needs: the header lines (the status line is none), the longest line and every byte.
+        $needs = [
+            'maxHeaderCount'      => count($lines) - 1,
+            'maxHeaderLineLength' => max(array_map(strlen(...), $lines)),
+            'maxResponseSize'     => strlen($answer),
+        ];
+        $server = IcapTestServer::start(static fn (array $request): array => [$answer]);
+        $clientWith = static fn (array $limits, ?OptionsCacheInterface $cache): IcapClient => new IcapClient(
+            new Config('127.0.0.1', $server->port, maxResponseSize: $limits['maxResponseSize'], maxHeaderCount: $limits['maxHeaderCount'], maxHeaderLineLength: $limits['maxHeaderLineLength']),
+            new AsyncAmpTransport(),
+            new RequestFormatter(),
+            new ResponseParser(maxHeaderCount: $limits['maxHeaderCount'], maxHeaderLineLength: $limits['maxHeaderLineLength']),
+            optionsCache: $cache,
+        );
+
+        try {
+            foreach ($needs as $kind => $least) {
+                foreach ([$least => '200', $least - 1 => 'refused'] as $limit => $expected) {
+                    $limits = [$kind => $limit] + $defaults;
+                    $case = "$shape, $kind $limit";
+
+                    // The edge of the wire is where this test says it is.
+                    expect($outcome($clientWith($limits, null)))->toBe($expected, $case);
+
+                    $cache = new InMemoryOptionsCache();
+                    expect($outcome($clientWith($defaults, $cache)))->toBe('200', $case);
+                    $asked = count($server->requests);
+
+                    expect($outcome($clientWith($limits, $cache)))->toBe($expected, $case);
+                    expect(count($server->requests) - $asked)->toBe($expected === '200' ? 0 : 1, $case);
+                }
+            }
+        } finally {
+            $server->stop();
+        }
+    }
 });
 
 /*
@@ -491,6 +554,163 @@ it('sends no request when the cache held the call up beyond its end and had no a
     m::close();
 });
 
+/*
+ * Options-TTL is read as a decimal before any cast and ends at a limit of the client, an hour: the server can
+ * shorten that time and not lengthen it. An answer without Options-TTL, or with one that is none, is not kept; the
+ * RFC says such an answer does not expire, which the client does not take as a reason to keep it.
+ */
+it('keeps an answer for its Options-TTL, at most an hour, and not at all for a value that is no decimal', function () {
+    // [Options-TTL of the answer, the seconds the cache is asked to keep it, or null for: it is not stored]
+    $cases = [
+        ['7', 7],
+        ['3600', 3600],
+        ['3601', 3600],
+        ['007', 7],
+        ['99999999999999999999', 3600],
+        [str_repeat('9', 5000), 3600],
+        ['0', null],
+        ['000', null],
+        ['', null],
+        [' ', null],
+        ['abc', null],
+        ['12abc', null],
+        ['1e3', null],
+        ['-5', null],
+        ['+5', null],
+        ['1.5', null],
+        ['0x10', null],
+        [" 7", null],
+        ["7\n", null],
+        ["\u{661}\u{662}", null],
+    ];
+
+    foreach ($cases as [$ttl, $expected]) {
+        $cache = new RecordingOptionsCache();
+        [$client] = makeOptionsClient($cache, new IcapResponse(200, ['Options-TTL' => [$ttl]]));
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client) {
+            $client->options('/avscan')->await();
+        });
+
+        expect($cache->ttls)->toBe($expected === null ? [] : [$expected], strlen($ttl) > 40 ? strlen($ttl) . ' digits' : var_export($ttl, true));
+    }
+
+    // No Options-TTL at all.
+    $cache = new RecordingOptionsCache();
+    [$client] = makeOptionsClient($cache, new IcapResponse(200, ['Methods' => ['RESPMOD']]));
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client) {
+        $client->options('/avscan')->await();
+    });
+    expect($cache->ttls)->toBe([]);
+
+    m::close();
+});
+
+it('returns an answer that is too big to be kept, and keeps nothing', function () {
+    $answer = new IcapResponse(200, ['Options-TTL' => ['60']], str_repeat('x', 70_000));
+    $cache = new RecordingOptionsCache();
+    [$client] = makeOptionsClient($cache, $answer);
+
+    $returned = null;
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($client, &$returned) {
+        $returned = $client->options('/avscan')->await();
+    });
+
+    expect($returned?->body)->toBe(str_repeat('x', 70_000));
+    expect($cache->ttls)->toBe([]);
+
+    m::close();
+});
+
+/*
+ * the key holds the security profile of the client (plain, or the TLS settings), so that clients that share one
+ * cache do not share what a server told another profile. Equal settings are one profile, also in another object.
+ */
+it('keeps clients with other TLS settings apart in one cache, and shares an entry between equal settings', function () {
+    $cache = new InMemoryOptionsCache();
+    $reply = static fn (string $preview): string => "ICAP/1.0 200 OK\r\nOptions-TTL: 60\r\nPreview: {$preview}\r\nEncapsulated: null-body=0\r\n\r\n";
+    $tls = static fn (string $ca): ClientTlsContext => (new ClientTlsContext('icap.example'))->withCaFile($ca);
+
+    // [label, TLS context of the client, the preview its server advertises, whether it has to ask the server]
+    $clients = [
+        ['plain', null, '1000', true],
+        ['TLS, CA a', $tls('/etc/ssl/ca-a.pem'), '2000', true],
+        ['TLS, CA a, another object', $tls('/etc/ssl/ca-a.pem'), '9999', false],
+        ['TLS, CA b', $tls('/etc/ssl/ca-b.pem'), '3000', true],
+        ['plain again', null, '9999', false],
+    ];
+
+    $previews = [];
+    foreach ($clients as [$label, $context, $preview, $asks]) {
+        $transport = new ScriptedTransport([$reply($preview)]);
+        $client = new IcapClient((new Config('icap.example'))->withTlsContext($context), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, &$previews, $label) {
+            $previews[$label] = $client->options('/avscan')->await()->headers['Preview'][0];
+        });
+
+        expect($transport->requests)->toHaveCount($asks ? 1 : 0, $label);
+    }
+
+    expect($previews)->toBe([
+        'plain'                     => '1000',
+        'TLS, CA a'                 => '2000',
+        'TLS, CA a, another object' => '2000',
+        'TLS, CA b'                 => '3000',
+        'plain again'               => '1000',
+    ]);
+
+    // The preview size comes from the entry of the client's own profile.
+    try {
+        foreach ([[$tls('/etc/ssl/ca-b.pem'), '3000'], [null, '1000'], [$tls('/etc/ssl/ca-c.pem'), '1024']] as [$context, $expected]) {
+            $transport = new ScriptedTransport();
+            $client = new IcapClient((new Config('icap.example'))->withTlsContext($context), $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
+            $path = ScriptedSource::add('profile', 'payload');
+
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $path) {
+                $client->scanFileWithPreview('/avscan', $path)->await();
+            });
+
+            expect($transport->requests[0])->toContain("Preview: {$expected}\r\n");
+        }
+    } finally {
+        ScriptedSource::reset();
+    }
+});
+
+/*
+ * Options-TTL counts from the moment the answer came in. An answer that the client held for longer than that,
+ * while foreign code ran, is not stored, and one that is stored has the time that is left.
+ */
+it('stores an answer for the time of its Options-TTL that is left when the client writes it', function () {
+    $reply = static fn (int $ttl): string => "ICAP/1.0 200 OK\r\nOptions-TTL: {$ttl}\r\nEncapsulated: null-body=0\r\n\r\n";
+
+    // [Options-TTL, seconds the logger holds the answer, the seconds the cache is asked to keep it, or null for: not stored]
+    $cases = [
+        'no delay'            => [3, 0.0, 3],
+        'less than a second'  => [3, 0.3, 3],
+        'a second of delay'   => [3, 1.05, 2],
+        'the whole TTL'       => [1, 1.05, null],
+    ];
+
+    foreach ($cases as $case => [$ttl, $hold, $expected]) {
+        $cache = new RecordingOptionsCache();
+        $client = new IcapClient(new Config('icap.example'), new ScriptedTransport([$reply($ttl)]), new RequestFormatter(), new ResponseParser(), logger: new OptionsHoldingLogger($hold), optionsCache: $cache);
+
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client) {
+            $client->options('/svc')->await();
+        });
+
+        expect($cache->ttls)->toBe($expected === null ? [] : [$expected], $case);
+    }
+});
+
 /**
  * An OPTIONS cache that keeps its entries in memory and remembers the keys
  * the client asked for and stored under.
@@ -502,6 +722,9 @@ final class RecordingOptionsCache implements OptionsCacheInterface
 
     /** @var list<string> */
     public array $sets = [];
+
+    /** @var list<int> the seconds each set() was asked to keep its entry */
+    public array $ttls = [];
 
     private InMemoryOptionsCache $inner;
 
@@ -528,6 +751,7 @@ final class RecordingOptionsCache implements OptionsCacheInterface
     public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
     {
         $this->sets[] = $key;
+        $this->ttls[] = $ttlSeconds;
         $this->inner->set($key, $response, $ttlSeconds, $istag);
     }
 
@@ -535,5 +759,57 @@ final class RecordingOptionsCache implements OptionsCacheInterface
     public function delete(string $key): void
     {
         $this->inner->delete($key);
+    }
+}
+
+/**
+ * An OPTIONS cache that answers every key with the one response it was given, until a set() replaces it, and records
+ * the seconds each set() asked for.
+ */
+final class SeededOptionsCache implements OptionsCacheInterface
+{
+    /** @var list<int> */
+    public array $ttls = [];
+
+    public function __construct(private ?IcapResponse $response)
+    {
+    }
+
+    #[\Override]
+    public function get(string $key): ?IcapResponse
+    {
+        return $this->response;
+    }
+
+    #[\Override]
+    public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
+    {
+        $this->ttls[] = $ttlSeconds;
+        $this->response = $response;
+    }
+
+    #[\Override]
+    public function delete(string $key): void
+    {
+        $this->response = null;
+    }
+}
+
+/**
+ * A logger that holds the event loop for a while once the answer to the request is in.
+ */
+final class OptionsHoldingLogger extends AbstractLogger
+{
+    public function __construct(private readonly float $seconds)
+    {
+    }
+
+    /** @param array<mixed> $context */
+    #[\Override]
+    public function log($level, string|\Stringable $message, array $context = []): void
+    {
+        if ((string) $message === 'ICAP request completed') {
+            usleep((int) ($this->seconds * 1_000_000));
+        }
     }
 }

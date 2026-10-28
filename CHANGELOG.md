@@ -159,8 +159,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer put in front of the key. The new keys start a cold cache: entries
   stored under the old keys are neither read nor deleted, so clean a shared
   backend yourself if you want them gone. A custom `OptionsCacheInterface`
-  receives that hash as its key. The key holds no TLS or tenant identity.
-  *(M12)*
+  receives that hash as its key. *(M12)*
+- The OPTIONS cache checks what it holds. The PSR adapters built a response from whatever the backend returned (a
+  status stored as a string was a `TypeError`), `Options-TTL` and `Preview` were cast to int, and nothing bounded an
+  entry. An entry is now one versioned item with its key, start and end, valid for the `Options-TTL` of the server (a
+  decimal, never cast) but at most an hour (`OptionsCacheInterface::MAX_TTL_SECONDS`) from the arrival of the answer;
+  an answer without a usable `Options-TTL` is not kept, which is the client's decision and no statement of the server.
+  Whatever the `OptionsCacheInterface`, a value that is not a whole entry for this key and time, an entry stored for
+  longer than its own `Options-TTL`, and an answer with a status other than 200, more than 64 KiB (fields and body) or
+  100 field values, a field without a value, malformed fields, a `Preview` that is not one decimal, `Options-TTL` and
+  `ISTag` fields that contradict each other, or an `Encapsulated` layout with a header section (`req-hdr`, `res-hdr`),
+  is a miss; so is an answer that the limits of the reading client (`maxResponseSize`, `maxHeaderCount`,
+  `maxHeaderLineLength`) would have refused from the server. The key holds the security profile of the client (plain,
+  or its TLS settings), so that clients with other TLS settings do not share an entry. **Behaviour change:** a cached
+  answer with another status, or a `Preview` that was no decimal, raised an exception; it is a miss now, and the server
+  is asked. The new keys start a cold cache; entries of earlier versions are neither read nor deleted. *(M13)*
+- **Behaviour change:** the ISTag no longer flushes the cache. It belongs to one service but invalidated the entries of
+  all, and the list of keys behind it lost entries between processes. The PSR adapters store no ISTag item and no list
+  of keys now, `InMemoryOptionsCache` no global tag; the consistency is the TTL's, so a changed service shows when its
+  entry ends, and nothing invalidates earlier or across processes. A custom `OptionsCacheInterface` must not flush on
+  a tag either. *(M14)*
+- `InMemoryOptionsCache` holds at most 64 entries (`maxEntries`) and drops what has ended whenever it stores; before,
+  an entry went only when its own key was asked for again. The PSR adapters bound the lifetime and size of an entry;
+  the number of entries in a shared backend is the backend's to bound. *(M15)*
 - The client's log no longer carries what callers and servers put into a
   request or a response. `request()` and `options()` logged the full `uri`
   (query included), the `host` and the message of the exception of a failed

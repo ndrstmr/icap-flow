@@ -26,6 +26,7 @@ use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\Cache\StoredEntryCases;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Psr\Cache\CacheItemInterface;
@@ -64,20 +65,19 @@ it('delegates delete to PSR-6', function () {
     expect($cache->get('k'))->toBeNull();
 });
 
-it('flushes all tracked entries when ISTag changes', function () {
+it('keeps the entries of the other services when a service reports a new ISTag', function () {
     $pool = new ArrayCacheItemPool();
     $cache = new Psr6OptionsCache($pool, 'icap.');
 
-    $cache->set('svc1', new IcapResponse(200), 60, 'istag-v1');
-    $cache->set('svc2', new IcapResponse(204), 60, 'istag-v1');
-    expect($cache->get('svc1'))->not->toBeNull();
-    expect($cache->get('svc2'))->not->toBeNull();
+    $cache->set('svc1', new IcapResponse(200, ['Service' => ['one']]), 60, '"v1"');
+    $cache->set('svc2', new IcapResponse(200, ['Service' => ['two']]), 60, '"v1"');
+    // Each tag belongs to its own service: svc3 and svc1 report a new one, svc2 stays as it is.
+    $cache->set('svc3', new IcapResponse(200, ['Service' => ['three']]), 60, '"v2"');
+    $cache->set('svc1', new IcapResponse(200, ['Service' => ['one, newer']]), 60, '"v2"');
 
-    // New ISTag → both entries should be flushed.
-    $cache->set('svc3', new IcapResponse(200), 60, 'istag-v2');
-    expect($cache->get('svc1'))->toBeNull();
-    expect($cache->get('svc2'))->toBeNull();
-    expect($cache->get('svc3'))->not->toBeNull();
+    expect($cache->get('svc1')?->headers['Service'])->toBe(['one, newer']);
+    expect($cache->get('svc2')?->headers['Service'])->toBe(['two']);
+    expect($cache->get('svc3')?->headers['Service'])->toBe(['three']);
 });
 
 it('does not cache when TTL is zero or negative', function () {
@@ -117,8 +117,8 @@ it('hands the pool only keys that follow the PSR-6 rules, whatever key the calle
         $cache->delete($key);
         expect($cache->get($key))->toBeNull($case);
 
-        // The entry, the ISTag and the list of tracked keys, each under a key of 64 hex digits.
-        expect(count($pool->seen))->toBe(3, $case);
+        // The entry alone, under a key of 64 hex digits: no ISTag item, no list of keys.
+        expect(count($pool->seen))->toBe(1, $case);
         foreach (array_keys($pool->seen) as $backendKey) {
             expect(preg_match('/^[0-9a-f]{64}\z/', (string) $backendKey))->toBe(1, "$case: $backendKey");
         }
@@ -130,39 +130,33 @@ it('keeps the entries of two prefixes apart even when prefix and key add up to t
     $a = new Psr6OptionsCache($pool, 'a');
     $ab = new Psr6OptionsCache($pool, 'ab');
 
-    $a->set('bc', new IcapResponse(200), 60, '"v1"');
+    $a->set('bc', new IcapResponse(200, ['Service' => ['a']]), 60, '"v1"');
     // 'a' + 'bc' is 'ab' + 'c'.
     expect($ab->get('c'))->toBeNull();
 
-    $ab->set('c', new IcapResponse(204), 60, '"v1"');
-    expect($a->get('bc')?->statusCode)->toBe(200);
-    expect($ab->get('c')?->statusCode)->toBe(204);
-
-    // A new ISTag flushes the entries of its own prefix only.
-    $a->set('x', new IcapResponse(200), 60, '"v2"');
-    expect($a->get('bc'))->toBeNull();
-    expect($ab->get('c')?->statusCode)->toBe(204);
+    $ab->set('c', new IcapResponse(200, ['Service' => ['ab']]), 60, '"v1"');
+    expect($a->get('bc')?->headers['Service'])->toBe(['a']);
+    expect($ab->get('c')?->headers['Service'])->toBe(['ab']);
 
     // The same prefix finds the same entries from another adapter.
-    expect((new Psr6OptionsCache($pool, 'ab'))->get('c')?->statusCode)->toBe(204);
+    expect((new Psr6OptionsCache($pool, 'ab'))->get('c')?->headers['Service'])->toBe(['ab']);
 });
 
-it('does not let a caller key overwrite the ISTag or the list of tracked keys', function () {
-    foreach (['__icap_istag', '__icap_keys'] as $name) {
-        $cache = new Psr6OptionsCache(new ArrayCacheItemPool());
+it('treats a caller key that was the name of a former meta entry like any other key', function () {
+    $pool = new ArrayCacheItemPool();
+    $cache = new Psr6OptionsCache($pool);
 
-        $cache->set('x', new IcapResponse(200), 60, '"v1"');
-        $cache->set($name, new IcapResponse(204), 60);
-        // The same ISTag again: nothing may be flushed.
-        $cache->set('y', new IcapResponse(200), 60, '"v1"');
-
-        expect($cache->get('x')?->statusCode)->toBe(200, $name);
-        expect($cache->get($name)?->statusCode)->toBe(204, $name);
-        expect($cache->get('y')?->statusCode)->toBe(200, $name);
+    foreach (['x', '__icap_istag', '__icap_keys', 'y'] as $name) {
+        $cache->set($name, new IcapResponse(200, ['Service' => [$name]]), 60, '"v1"');
     }
+
+    foreach (['x', '__icap_istag', '__icap_keys', 'y'] as $name) {
+        expect($cache->get($name)?->headers['Service'])->toBe([$name], $name);
+    }
+    expect(count($pool->items()))->toBe(4);
 });
 
-it('does not read entries of the old key scheme and leaves them and foreign entries in the pool', function () {
+it('does not read entries of the old key schemes and leaves them and foreign entries in the pool', function () {
     $pool = new ArrayCacheItemPool();
     $legacy = ['statusCode' => 200, 'headers' => ['Preview' => ['1']], 'body' => ''];
     // What an earlier version stored with the prefix "icap.": the entry, its ISTag and the tracked keys.
@@ -173,14 +167,168 @@ it('does not read entries of the old key scheme and leaves them and foreign entr
     $cache = new Psr6OptionsCache($pool, 'icap.');
     expect($cache->get('svc'))->toBeNull();
 
-    // A different ISTag than the old one would flush the entries the adapter knows, and only those.
-    $cache->set('svc', new IcapResponse(204), 60, '"new"');
-    expect($cache->get('svc')?->statusCode)->toBe(204);
+    $cache->set('svc', new IcapResponse(200, ['Service' => ['new']]), 60, '"new"');
+    expect($cache->get('svc')?->headers['Service'])->toBe(['new']);
 
     expect($pool->getItem('icap.svc')->get())->toBe($legacy);
     expect($pool->getItem('icap.__icap_istag')->get())->toBe('"old"');
     expect($pool->getItem('icap.__icap_keys')->get())->toBe(['svc']);
     expect($pool->getItem('app.session')->get())->toBe('not ours');
+});
+
+/*
+ * what a shared pool returns is not trusted. A value that is not a whole, current entry for this key is a miss;
+ * it neither raises a TypeError nor becomes a response.
+ */
+it('answers a miss for every stored value that is no entry for this key at this time', function () {
+    $now = 1_000_000;
+    $pool = new ArrayCacheItemPool();
+    $cache = new Psr6OptionsCache($pool, 'icap.', static function () use (&$now): int {
+        return $now;
+    });
+
+    $cache->set('svc', new IcapResponse(200, ['Preview' => ['1024'], 'ISTag' => ['"v1"']], 'opt-body'), 60, '"v1"');
+    $slot = (string) array_key_first($pool->items());
+    $entry = $pool->getItem($slot)->get();
+    expect($entry)->toBeArray();
+    /** @var array<string, mixed> $entry */
+    expect($cache->get('svc')?->body)->toBe('opt-body');
+
+    foreach (StoredEntryCases::unusable($entry, $now) as $case => $value) {
+        $pool->save($pool->getItem($slot)->set($value));
+        expect($cache->get('svc'))->toBeNull($case);
+    }
+
+    // The same slot holds the whole entry again, and so do the entries that only look like the ones above.
+    $pool->save($pool->getItem($slot)->set($entry));
+    expect($cache->get('svc')?->headers['Preview'])->toBe(['1024']);
+
+    foreach (StoredEntryCases::usable($entry, $now) as $case => $value) {
+        $pool->save($pool->getItem($slot)->set($value));
+        expect($cache->get('svc'))->not->toBeNull($case);
+    }
+});
+
+it('answers a miss for an entry that another key wrote to this slot', function () {
+    $pool = new ArrayCacheItemPool();
+    $cache = new Psr6OptionsCache($pool, 'icap.');
+
+    $cache->set('a', new IcapResponse(200, ['Service' => ['a']]), 60);
+    $slotOfA = (string) array_key_first($pool->items());
+    $cache->set('b', new IcapResponse(200, ['Service' => ['b']]), 60);
+    $slotOfB = (string) array_key_last($pool->items());
+
+    $pool->save($pool->getItem($slotOfB)->set($pool->getItem($slotOfA)->get()));
+
+    expect($cache->get('b'))->toBeNull();
+    expect($cache->get('a')?->headers['Service'])->toBe(['a']);
+});
+
+it('ends an entry at its own end, also in a pool that keeps it longer, and reading does not extend it', function () {
+    $now = 1_000_000;
+    $pool = new ArrayCacheItemPool();
+    $cache = new Psr6OptionsCache($pool, 'icap.', static function () use (&$now): int {
+        return $now;
+    });
+
+    $cache->set('svc', new IcapResponse(200), 10);
+    $now += 9;
+    expect($cache->get('svc'))->not->toBeNull();
+    expect($cache->get('svc'))->not->toBeNull();
+    $now += 1;
+    expect($cache->get('svc'))->toBeNull();
+
+    // An entry from the future is none: the clock went back, or the writer's clock is ahead.
+    $cache->set('later', new IcapResponse(200), 10);
+    $now -= 1;
+    expect($cache->get('later'))->toBeNull();
+});
+
+/*
+ * an item of the pool is the entry and nothing else, with a finite lifetime of at most an hour: no list of keys
+ * that grows with them.
+ */
+it('keeps one self-contained item per entry, each with a finite lifetime of at most an hour', function () {
+    $pool = new ArrayCacheItemPool();
+    $cache = new Psr6OptionsCache($pool, 'icap.');
+
+    foreach (['a' => 30, 'b' => 3600, 'c' => 3601, 'd' => PHP_INT_MAX] as $key => $ttl) {
+        $cache->set($key, new IcapResponse(200), $ttl, '"t"');
+    }
+
+    expect(count($pool->items()))->toBe(4);
+    expect(array_values(array_map(static fn (ArrayCacheItem $item): ?int => $item->getTtl(), $pool->items())))->toBe([30, 3600, 3600, 3600]);
+
+    $cache->delete('a');
+    expect(count($pool->items()))->toBe(3);
+});
+
+it('keeps an entry for the shortest of the TTL it is given, the Options-TTL of the answer and an hour', function () {
+    foreach (StoredEntryCases::lifetimes() as $case => [$fields, $ttl, $lifetime]) {
+        $pool = new ArrayCacheItemPool();
+        $cache = new Psr6OptionsCache($pool, 'icap.');
+
+        $cache->set('svc', new IcapResponse(200, $fields), $ttl);
+
+        // The pool is told the time, and the entry carries it for a reader that is not.
+        $item = array_values($pool->items())[0] ?? null;
+        $entry = $item?->get();
+        expect($item?->getTtl())->toBe($lifetime, $case);
+        expect($entry)->toBeArray();
+        /** @var array{stored: int, expires: int} $entry */
+        expect($entry['expires'] - $entry['stored'])->toBe($lifetime, $case);
+    }
+});
+
+it('stores nothing it would not hand out again', function () {
+    foreach (StoredEntryCases::notKept() as $case => $response) {
+        $pool = new ArrayCacheItemPool();
+        $cache = new Psr6OptionsCache($pool, 'icap.');
+
+        $cache->set('svc', $response, 60);
+
+        expect($pool->items())->toBe([], $case);
+        expect($cache->get('svc'))->toBeNull($case);
+    }
+});
+
+/*
+ * a tag belongs to its service. Writers that interleave, and a pool that drops an item, cannot invalidate the
+ * entry of another service.
+ */
+it('keeps every entry when two writers interleave and a service reports a new tag', function () {
+    $pool = new ArrayCacheItemPool();
+    $a = new Psr6OptionsCache($pool, 'icap.');
+    $b = new Psr6OptionsCache($pool, 'icap.');
+
+    // B stores its entry while A is in the middle of storing its own.
+    $pool->beforeSave = static function () use ($b): void {
+        $b->set('b', new IcapResponse(200, ['Service' => ['b']]), 60, '"old"');
+    };
+    $a->set('a', new IcapResponse(200, ['Service' => ['a']]), 60, '"old"');
+    $a->set('c', new IcapResponse(200, ['Service' => ['c']]), 60, '"new"');
+
+    foreach (['a', 'b', 'c'] as $key) {
+        expect($a->get($key)?->headers['Service'])->toBe([$key], $key);
+        expect($b->get($key)?->headers['Service'])->toBe([$key], $key);
+    }
+});
+
+it('answers a miss for an item the pool dropped, and affects no other entry', function () {
+    $pool = new ArrayCacheItemPool();
+    $cache = new Psr6OptionsCache($pool, 'icap.');
+
+    $cache->set('a', new IcapResponse(200, ['Service' => ['a']]), 60, '"v1"');
+    $slotOfA = (string) array_key_first($pool->items());
+    $cache->set('b', new IcapResponse(200, ['Service' => ['b']]), 60, '"v1"');
+
+    $pool->deleteItem($slotOfA);
+    expect($cache->get('a'))->toBeNull();
+    expect($cache->get('b')?->headers['Service'])->toBe(['b']);
+
+    $cache->set('a', new IcapResponse(200, ['Service' => ['a again']]), 60, '"v2"');
+    expect($cache->get('a')?->headers['Service'])->toBe(['a again']);
+    expect($cache->get('b')?->headers['Service'])->toBe(['b']);
 });
 
 it('stores an OPTIONS response and finds its preview size under one key of a strict pool', function () {
@@ -337,6 +485,17 @@ final class ArrayCacheItemPool implements CacheItemPoolInterface
     /** Thrown by every call that carries a key, while set. */
     public ?\Throwable $failure = null;
 
+    /** Runs once, inside the next save(), before the item is stored: a writer that gets in between. */
+    public ?\Closure $beforeSave = null;
+
+    /**
+     * @return array<string, ArrayCacheItem> every item the pool holds
+     */
+    public function items(): array
+    {
+        return $this->items;
+    }
+
     private function valid(string $key): string
     {
         if ($this->failure !== null) {
@@ -407,6 +566,11 @@ final class ArrayCacheItemPool implements CacheItemPoolInterface
     public function save(CacheItemInterface $item): bool
     {
         /** @var ArrayCacheItem $item */
+        if ($this->beforeSave !== null) {
+            $hook = $this->beforeSave;
+            $this->beforeSave = null;
+            $hook();
+        }
         $this->items[$item->getKey()] = $item;
         return true;
     }

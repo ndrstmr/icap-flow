@@ -24,12 +24,12 @@ use Amp\Cancellation;
 use Amp\Future;
 use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\Cache\OptionsCacheKey;
+use Ndrstmr\Icap\Cache\OptionsEntry;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\DTO\ScanResult;
 use Ndrstmr\Icap\Exception\IcapClientException;
-use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
@@ -249,8 +249,6 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         return $this->run($deadline, function (OperationDeadline $deadline) use ($uri, $cacheKey): IcapResponse {
             $cached = $this->cachedOptions($cacheKey, $deadline);
             if ($cached !== null) {
-                $this->assertOptionsStatus($cached->statusCode);
-
                 return $cached;
             }
 
@@ -261,6 +259,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             $response = null;
             try {
                 $response = $this->executeRaw($request, $deadline)->await();
+                $received = hrtime(true);
                 $deadline->checkpoint();
                 $this->assertOptionsStatus($response->statusCode);
             } catch (\Throwable $e) {
@@ -273,17 +272,18 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                 'statusCode' => $response->statusCode,
             ]);
 
-            // Cache the parsed IcapResponse, keyed by endpoint and service.
-            // TTL is taken from the server's Options-TTL header
-            // (RFC 3507 §4.10.2); fall back to 0 (no caching) when the
-            // server didn't specify one.
+            // Cache the answer under the key of its endpoint, service and security profile for the server's
+            // Options-TTL (RFC 3507 §4.10.2) at most an hour. The time counts from the moment the answer came in:
+            // foreign code (the logger) may have held it since, and an answer whose time is over is not written.
             if ($this->optionsCache !== null) {
                 // The logger is foreign code: a call that was cancelled, or ran out of time, while it logged the
                 // answer does not begin a write to the cache.
                 $deadline->checkpoint();
-                $ttl = (int) (HeaderFields::single($response->headers, 'Options-TTL') ?? '0');
                 $istag = HeaderFields::single($response->headers, 'ISTag');
-                $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
+                $ttl = OptionsEntry::ttl(HeaderFields::single($response->headers, 'Options-TTL')) - intdiv(hrtime(true) - $received, 1_000_000_000);
+                if ($ttl > 0 && OptionsEntry::keeps($response)) {
+                    $this->optionsCache->set($cacheKey, $response, $ttl, $istag);
+                }
             }
 
             return $response;
@@ -815,12 +815,8 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * the OPTIONS cache is consulted for the server's advertised
      * `Preview` header (RFC 3507 §4.10.2). Falls back to
      * {@see DEFAULT_PREVIEW_SIZE} when no cache is configured, the
-     * cache has no entry, or the cached response lacks a `Preview`
-     * header.
-     *
-     * @throws IcapMalformedResponseException When the cached response
-     *         carries conflicting `Preview` fields, or a `Preview` value
-     *         that is not a non-negative decimal integer
+     * cache has no usable entry (see {@see cachedOptions()}), or the cached
+     * response lacks a `Preview` header.
      */
     private function resolvePreviewSize(string $service, ?int $previewSize, OperationDeadline $deadline): int
     {
@@ -836,7 +832,9 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
 
     /**
      * The cached OPTIONS answer, or null. A call that is cancelled or over does not ask the cache, and one that ends
-     * while the cache is asked gets no answer from it.
+     * while the cache is asked gets no answer from it. Whatever the cache is, an answer that fails the check of
+     * {@see OptionsEntry::keeps()} (status, budgets, fields), or that the limits of this client would have refused from
+     * the server ({@see ResponseDecoder::admits()}), is a miss: the client does not use it.
      */
     private function cachedOptions(string $key, OperationDeadline $deadline): ?IcapResponse
     {
@@ -848,26 +846,25 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         $cached = $this->optionsCache->get($key);
         $deadline->checkpoint();
 
-        return $cached;
+        return $cached !== null
+            && OptionsEntry::keeps($cached)
+            && ResponseDecoder::admits(
+                $cached,
+                $this->config->getMaxResponseSize(),
+                $this->config->getMaxHeaderCount(),
+                $this->config->getMaxHeaderLineLength(),
+            )
+            ? $cached
+            : null;
     }
 
     /**
-     * A `Preview` value from a cached OPTIONS response is untrusted text. It
-     * is checked as a non-negative decimal before any integer cast, so a
-     * value that does not fit an int cannot wrap into something else; a
-     * valid value above the limit is clamped to it, and `0` stays `0`.
-     *
-     * @throws IcapMalformedResponseException When the value is not a
-     *         non-negative decimal integer
+     * A `Preview` value from a cached OPTIONS response, which {@see OptionsEntry::keeps()} has shown to be a
+     * non-negative decimal. The digits are measured before any integer cast, so a value that does not fit an int cannot
+     * wrap into something else; a value above the limit is clamped to it, and `0` stays `0`.
      */
     private function boundedPreviewSize(string $advertised): int
     {
-        if (preg_match('/^[0-9]+\z/', $advertised) !== 1) {
-            throw new IcapMalformedResponseException(
-                'Cached OPTIONS response carries a Preview value that is not a non-negative decimal integer.',
-            );
-        }
-
         $digits = ltrim($advertised, '0');
         if (strlen($digits) > strlen((string) self::MAX_PREVIEW_SIZE)) {
             return self::MAX_PREVIEW_SIZE;
@@ -931,11 +928,12 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
 
     /**
      * The key of the OPTIONS cache entry of a service. One place for
-     * options() and the preview size lookup, so both name the same entry (M12).
+     * options() and the preview size lookup, so both name the same entry,
+     * of this client's security profile.
      */
     private function optionsCacheKey(string $service): string
     {
-        return OptionsCacheKey::forService($this->config->host, $this->config->port, $service);
+        return OptionsCacheKey::forService($this->config->host, $this->config->port, $service, $this->config->getTlsContext());
     }
 
     /**
@@ -1023,12 +1021,13 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     }
 
     /**
-     * The status of an OPTIONS answer, fresh or from the cache: only a 200
+     * The status of an OPTIONS answer from the server: only a 200
      * (RFC 3507 §4.10.2) describes the service. 100, 4xx and 5xx keep their
      * types from {@see assertSuccessfulStatus()}; every other status is a
      * protocol error: a 204 or 206 belongs to the adaptation of a message, and
      * a 1xx, 3xx or 6xx is no answer to OPTIONS at all. What is rejected here
-     * is neither returned nor cached. Scans keep their own rules in
+     * is neither returned nor cached; a cached answer with another status is a
+     * miss ({@see cachedOptions()}). Scans keep their own rules in
      * {@see interpretResponse()}.
      *
      * @throws IcapProtocolException When the status is not 200 and not a 4xx or 5xx
