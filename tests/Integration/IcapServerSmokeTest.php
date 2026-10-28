@@ -18,10 +18,17 @@
 
 declare(strict_types=1);
 
+use Amp\Cancellation;
+use Amp\Future;
+use Ndrstmr\Icap\Cache\InMemoryOptionsCache;
+use Ndrstmr\Icap\Cache\Psr16OptionsCache;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\Cache\FileSimpleCache;
+use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
 
@@ -77,6 +84,60 @@ it('performs an OPTIONS round-trip against the configured echo service', functio
         expect($result)->toBeInstanceOf(IcapResponse::class)
             ->and($result->statusCode)->toBe(200);
     });
+});
+
+/*
+ * the real OPTIONS answer (Options-TTL, ISTag, Preview and the rest) passes the check of a cache entry, in the
+ * cache of the process and in a PSR-16 cache that two processes can share: the second call is served from it.
+ */
+it('keeps the real OPTIONS answer in a cache, so that the second call does not reach the server', function () {
+    $host = integrationEnv('ICAP_HOST');
+    $service = integrationEnv('ICAP_ECHO_SERVICE');
+    skipUnlessIntegration($host, $service);
+
+    assert($host !== null);
+    assert($service !== null);
+    $port = (int) (integrationEnv('ICAP_PORT') ?? '1344');
+    $directory = sys_get_temp_dir() . '/icap-live-cache-' . bin2hex(random_bytes(4));
+    mkdir($directory);
+
+    try {
+        $caches = ['in memory' => new InMemoryOptionsCache(), 'PSR-16' => new Psr16OptionsCache(new FileSimpleCache($directory))];
+        foreach ($caches as $label => $cache) {
+            $transport = new class (new AsyncAmpTransport()) implements TransportInterface {
+                public int $requests = 0;
+
+                public function __construct(private readonly TransportInterface $inner)
+                {
+                }
+
+                #[\Override]
+                public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
+                {
+                    $this->requests++;
+
+                    return $this->inner->request($config, $rawRequest, $cancellation);
+                }
+            };
+            $client = new IcapClient(new Config($host, $port), $transport, new \Ndrstmr\Icap\RequestFormatter(), new \Ndrstmr\Icap\ResponseParser(), optionsCache: $cache);
+
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $service, $transport, $label) {
+                $first = $client->options($service)->await();
+                $second = $client->options($service)->await();
+
+                expect($first->headers['Options-TTL'] ?? null)->not->toBeNull($label);
+                expect($second->headers)->toBe($first->headers, $label);
+                expect($second->body)->toBe($first->body, $label);
+                expect($transport->requests)->toBe(1, $label);
+            });
+        }
+    } finally {
+        foreach (glob($directory . '/*') ?: [] as $file) {
+            @unlink($file);
+        }
+        @rmdir($directory);
+    }
 });
 
 it('scans the EICAR test file against the ClamAV-backed service', function () {

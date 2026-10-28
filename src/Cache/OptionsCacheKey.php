@@ -20,6 +20,8 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Cache;
 
+use Amp\Socket\ClientTlsContext;
+
 /**
  * The keys of the OPTIONS cache (M12).
  *
@@ -37,38 +39,44 @@ namespace Ndrstmr\Icap\Cache;
  */
 final class OptionsCacheKey
 {
-    /** The response of a service. */
-    public const string DATA = 'data';
-
-    /** The ISTag the entries of an adapter were stored under. */
-    public const string ISTAG = 'istag';
-
-    /** The keys of the entries of an adapter, to flush them when the ISTag changes. */
-    public const string REGISTRY = 'registry';
-
     /**
      * The key under which the client stores and finds the OPTIONS response of
-     * a service. Host, port and service stay separate parts, in options() and
-     * in the preview size lookup alike. It does not tell TLS identities or
-     * tenants apart.
+     * a service. Host, port, service and security profile stay separate parts,
+     * in options() and in the preview size lookup alike.
+     *
+     * The security profile is `plain`, or the TLS settings the context applies to the socket: a client with other
+     * settings has another profile and never meets this client's entry in a shared cache. The settings are hashed, not
+     * the object, so that processes with the same settings share an entry. The passphrase of a certificate is left
+     * out: a secret does not belong in a key, and it does not tell one profile from another. What the key cannot see
+     * (a tenant, a proxy of a custom transport) belongs in the cache or its prefix.
      */
-    public static function forService(string $host, int $port, string $service): string
+    public static function forService(string $host, int $port, string $service, ?ClientTlsContext $tls = null): string
     {
-        return self::digest('icap-flow/options/v1', $host, (string) $port, $service);
+        return self::digest('icap-flow/options/v2', $host, (string) $port, $service, self::profile($tls));
     }
 
     /**
      * The key an adapter gives its PSR backend for one of its entries. The
-     * prefix and the role of the entry are parts of the hash: the prefix
-     * separates adapters that share a backend without making the key longer,
-     * and a caller's key can never land on the ISTag or the registry.
-     *
-     * @param string $role one of {@see DATA}, {@see ISTAG} and {@see REGISTRY}
-     * @param string $key  the caller's key; empty for the ISTag and the registry
+     * prefix is a part of the hash: it separates adapters that share a backend
+     * without making the key longer.
      */
-    public static function backend(string $prefix, string $role, string $key = ''): string
+    public static function backend(string $prefix, string $key): string
     {
-        return self::digest('icap-flow/options-cache/v1', $prefix, $role, $key);
+        return self::digest('icap-flow/options-cache/v2', $prefix, $key);
+    }
+
+    private static function profile(?ClientTlsContext $tls): string
+    {
+        if ($tls === null) {
+            return 'plain';
+        }
+
+        $options = $tls->toStreamContextArray()['ssl'] ?? [];
+        if (is_array($options)) {
+            unset($options['passphrase']);
+        }
+
+        return 'tls:' . hash('sha256', serialize($options));
     }
 
     private static function digest(string ...$parts): string

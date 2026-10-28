@@ -49,7 +49,7 @@ Migration: [`docs/migration-v2-to-v3.md`](docs/migration-v2-to-v3.md). For most 
 - **PSR-3 logger** optional, structured events on every request.
 - **Custom request headers** (`X-Client-IP`, `X-Authenticated-User`) on `scanFile()` / `scanFileWithPreview()`.
 - **External cancellation** — every public method takes an optional `Amp\Cancellation`.
-- **OPTIONS-response cache** with `Options-TTL` honour.
+- **OPTIONS-response cache**: `Options-TTL`, at most an hour; validated, bounded entries ([contract](#options-cache)).
 - **`RetryingIcapClient`** decorator: OPTIONS is repeated after a 5xx (exponential backoff with jitter); every other operation gets one attempt.
 - **Encapsulated-aware response framing** — no dependency on `Connection: close`; servers may keep the socket open.
 - **PHP 8.4** minimum; **PHP 8.5** in CI; integration tested end-to-end against `mnemoshare/clamav-icap` (c-icap 0.6.3 + ClamAV).
@@ -183,14 +183,18 @@ $pool = new AmpConnectionPool(
 $transport = new AsyncAmpTransport($pool);
 
 // Optional: pass an OPTIONS cache so the client auto-negotiates
-// preview size (0 to 1 MiB; larger advertised values are clamped, malformed
-// ones rejected) and honours Options-TTL / ISTag invalidation.
+// preview size (0 to 1 MiB; larger advertised values are clamped, an entry
+// that is no usable OPTIONS answer is ignored) and honours Options-TTL.
 $cache = new InMemoryOptionsCache();
 // For cross-process caching (Redis, APCu) use Psr16OptionsCache
 // or Psr6OptionsCache instead.
 
 $client = new IcapClient($config, $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
 ```
+
+### OPTIONS cache
+
+An entry is one OPTIONS answer (status 200, at most 64 KiB of fields and body in at most 100 field values) of one endpoint, service and security profile (plain, or the TLS settings of the client), valid for the `Options-TTL` of the server, never longer than an hour, counted from when the answer came in. An answer without a usable `Options-TTL` is not kept. Nothing invalidates an entry earlier, the ISTag included: a change of the service shows when the entry ends. What a cache returns is checked before it is used, also with a cache of your own, and must fit the limits of the client (`maxResponseSize`, `maxHeaderCount`, `maxHeaderLineLength`) as it would from the server; an entry that fails is a miss. `InMemoryOptionsCache` holds 64 entries by default (`maxEntries`). The PSR adapters store one self-contained item per entry; the number of items in a shared backend is that backend's to bound. The key knows endpoint, service and TLS settings, not a tenant: give each security domain its own cache, or its own `prefix`.
 
 ## Custom request headers
 

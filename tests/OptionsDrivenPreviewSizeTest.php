@@ -23,7 +23,6 @@ use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
-use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
@@ -52,9 +51,9 @@ uses(AsyncTestCase::class);
  * @param IcapRequest|null $capturedRequest receives the RESPMOD request via reference
  * @return array{IcapClient, OneResponseOptionsCache}
  */
-function makePreviewSizeClient(?IcapRequest &$capturedRequest, ?OneResponseOptionsCache $cache = null): array
+function makePreviewSizeClient(?IcapRequest &$capturedRequest, ?OneResponseOptionsCache $cache = null, ?Config $config = null): array
 {
-    $config = new Config('icap.example');
+    $config ??= new Config('icap.example');
     $cache ??= new OneResponseOptionsCache();
 
     /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
@@ -179,28 +178,104 @@ it('uses the advertised Preview size from a cached OPTIONS response in any spell
     }
 });
 
-it('rejects a cached OPTIONS response whose Preview fields conflict', function () {
-    $captured = null;
-    [$client, $cache] = makePreviewSizeClient($captured);
-    $cache->seed(new IcapResponse(200, [
-        'Preview' => ['64'],
-        'PREVIEW' => ['67108864'],
-    ]));
+/*
+ * a cached response that is no usable OPTIONS answer decides nothing: the preview size is the default, as if the
+ * cache had no entry. Nothing it says about the size reaches an allocation.
+ */
+it('ignores a cached OPTIONS response that is no usable answer and uses 1024', function () {
+    $fields = [];
+    for ($i = 0; $i < 101; $i++) {
+        $fields["X-Field-$i"] = ['v'];
+    }
+    $unusable = [
+        'conflicting Preview fields'    => new IcapResponse(200, ['Preview' => ['64'], 'PREVIEW' => ['67108864']]),
+        'two Preview values'            => new IcapResponse(200, ['Preview' => ['64', '65']]),
+        'a 204'                         => new IcapResponse(204, ['Preview' => ['64']]),
+        'a 404'                         => new IcapResponse(404, ['Preview' => ['64']]),
+        'a 503'                         => new IcapResponse(503, ['Preview' => ['64']]),
+        'a body over the budget'        => new IcapResponse(200, ['Preview' => ['64']], str_repeat('b', 65_536)),
+        'more fields than the budget'   => new IcapResponse(200, ['Preview' => ['64']] + $fields),
+        'a field value with a line end' => new IcapResponse(200, ['Preview' => ['64'], 'X-A' => ["a\nb"]]),
+        'a body that was discarded'     => new IcapResponse(200, ['Preview' => ['64']], '', 12),
+        'an Options-TTL of 0'           => new IcapResponse(200, ['Preview' => ['64'], 'Options-TTL' => ['0']]),
+        'two Options-TTL that differ'   => new IcapResponse(200, ['Preview' => ['64'], 'Options-TTL' => ['60', '30']]),
+        'two ISTags that differ'        => new IcapResponse(200, ['Preview' => ['64'], 'ISTag' => ['"a"', '"b"']]),
+        'a field without a value'       => new IcapResponse(200, ['Preview' => ['64'], 'X-A' => []]),
+    ];
 
-    $tmp = makeTinyFile();
+    foreach ($unusable as $case => $cached) {
+        $captured = null;
+        [$client, $cache] = makePreviewSizeClient($captured);
+        $cache->seed($cached);
+        $tmp = makeTinyFile();
 
-    try {
-        /** @var AsyncTestCase $this */
-        $this->runAsyncTest(function () use ($client, $tmp) {
-            // The call does not throw for a cached answer it rejects; its Future does.
-            $future = $client->scanFileWithPreview('/avscan', $tmp);
-            expect(fn () => $future->await())->toThrow(IcapMalformedResponseException::class);
-        });
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp) {
+                $client->scanFileWithPreview('/avscan', $tmp)->await();
+            });
 
-        // Nothing was formatted, so no preview went out.
-        expect($captured)->toBeNull();
-    } finally {
-        @unlink($tmp);
+            if (!$captured instanceof IcapRequest) {
+                throw new RuntimeException('No request was formatted for ' . $case);
+            }
+            expect($captured->headers['Preview'])->toBe(['1024'], $case);
+        } finally {
+            @unlink($tmp);
+        }
+    }
+});
+
+/*
+ * a cached answer that the limits of this client would not take from the server decides nothing either. The answer is
+ * 44 bytes: the status line of 15, a field line of 11 and one of 10 bytes, each with its line end, and the blank line.
+ * A body adds the last chunk (5 bytes) where the layout names one, even an empty one, and before it the data as one chunk
+ * (size line, data, line end) where there is any; a layout of `null-body` adds nothing.
+ */
+it('ignores a cached OPTIONS response beyond the limits of this client and uses 1024', function () {
+    $cached = new IcapResponse(200, ['Preview' => ['64'], 'ISTag' => ['"v"']]);
+    $cases = [
+        'two header lines allowed'    => [$cached, new Config('icap.example', maxHeaderCount: 2), '64'],
+        'one header line allowed'     => [$cached, new Config('icap.example', maxHeaderCount: 1), '1024'],
+        'lines of 15 bytes allowed'   => [$cached, new Config('icap.example', maxHeaderLineLength: 15), '64'],
+        'lines of 14 bytes allowed'   => [$cached, new Config('icap.example', maxHeaderLineLength: 14), '1024'],
+        '44 bytes allowed'            => [$cached, new Config('icap.example', maxResponseSize: 44), '64'],
+        '43 bytes allowed'            => [$cached, new Config('icap.example', maxResponseSize: 43), '1024'],
+    ];
+    // A status line, a `Preview` line and the blank line are 32 bytes; the rest is the layout line and the body.
+    $sizes = [
+        'a null-body'                      => [['Encapsulated' => ['null-body=0']], '', 59],
+        'an empty opt-body'                => [['Encapsulated' => ['opt-body=0']], '', 63],
+        'an empty req-body'                => [['Encapsulated' => ['req-body=0']], '', 63],
+        'an empty res-body'                => [['Encapsulated' => ['res-body=0']], '', 63],
+        'an empty body, another spelling'  => [['encapsulated' => ['OPT-BODY=0']], '', 63],
+        'a body of 3 bytes and no layout'  => [[], 'abc', 45],
+        'a body of 17 bytes and no layout' => [[], str_repeat('b', 17), 60],
+    ];
+    foreach ($sizes as $shape => [$fields, $body, $size]) {
+        $answer = new IcapResponse(200, ['Preview' => ['64']] + $fields, $body);
+        $cases["$shape, $size bytes allowed"] = [$answer, new Config('icap.example', maxResponseSize: $size), '64'];
+        $cases[$shape . ', ' . ($size - 1) . ' bytes allowed'] = [$answer, new Config('icap.example', maxResponseSize: $size - 1), '1024'];
+    }
+
+    foreach ($cases as $case => [$answer, $config, $expected]) {
+        $captured = null;
+        [$client, $cache] = makePreviewSizeClient($captured, null, $config);
+        $cache->seed($answer);
+        $tmp = makeTinyFile();
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp) {
+                $client->scanFileWithPreview('/avscan', $tmp)->await();
+            });
+
+            if (!$captured instanceof IcapRequest) {
+                throw new RuntimeException('No request was formatted for ' . $case);
+            }
+            expect($captured->headers['Preview'])->toBe([$expected], $case);
+        } finally {
+            @unlink($tmp);
+        }
     }
 });
 
@@ -427,8 +502,8 @@ it('clamps a cached Preview value to 1 MiB and keeps 0', function () {
     }
 });
 
-it('rejects a cached Preview value that is not a non-negative decimal', function () {
-    foreach (['abc', '-1', '1.5', '0x10', '1e3', '', ' 5', '+5'] as $advertised) {
+it('ignores a cached Preview value that is not a non-negative decimal and uses 1024', function () {
+    foreach (['abc', '-1', '1.5', '0x10', '1e3', '', ' 5', '+5', "5\n"] as $advertised) {
         $captured = null;
         [$client, $cache] = makePreviewSizeClient($captured);
         $cache->seed(new IcapResponse(200, ['Preview' => [$advertised]]));
@@ -436,14 +511,14 @@ it('rejects a cached Preview value that is not a non-negative decimal', function
 
         try {
             /** @var AsyncTestCase $this */
-            $this->runAsyncTest(function () use ($client, $tmp, $advertised) {
-                $future = $client->scanFileWithPreview('/avscan', $tmp);
-                expect(fn () => $future->await())
-                    ->toThrow(IcapMalformedResponseException::class, '', var_export($advertised, true));
+            $this->runAsyncTest(function () use ($client, $tmp) {
+                $client->scanFileWithPreview('/avscan', $tmp)->await();
             });
 
-            // Rejected before anything was formatted or sent.
-            expect($captured)->toBeNull();
+            if (!$captured instanceof IcapRequest) {
+                throw new RuntimeException('No request was formatted for Preview ' . var_export($advertised, true));
+            }
+            expect($captured->headers['Preview'])->toBe(['1024'], var_export($advertised, true));
         } finally {
             @unlink($tmp);
         }

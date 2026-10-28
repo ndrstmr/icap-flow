@@ -20,25 +20,24 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Cache;
 
+use Closure;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Psr\SimpleCache\CacheException;
 use Psr\SimpleCache\CacheInterface;
 
 /**
- * OPTIONS-cache adapter that delegates to any PSR-16 (Simple Cache)
- * implementation.
+ * OPTIONS-cache adapter that delegates to any PSR-16 (Simple Cache) implementation.
  *
- * The adapter stores each {@see IcapResponse} as a serializable array
- * in the backing store. ISTag tracking uses two meta entries (the last
- * ISTag and the keys of the entries) so the flush-on-change behaviour
- * works across processes (unlike {@see InMemoryOptionsCache}, which is
- * process-local).
+ * One item per entry, in the form of {@see OptionsEntry}, with a lifetime of at most an hour; nothing else is stored, no
+ * ISTag item and no list of keys, so that writers in several processes cannot lose or invalidate each other's entries.
+ * What the backend returns is not trusted: a value that is not a whole, current entry for exactly this key is a miss,
+ * also when the backend still holds it past its end. The contract and the limits are those of
+ * {@see OptionsCacheInterface}; the number of items in a backend that many applications share is the backend's to
+ * bound. Entries of earlier versions are not read and not deleted.
  *
- * Every key the backend sees is 64 hex digits from
- * {@see OptionsCacheKey::backend()}, whatever key the caller passes: the
- * PSR-16 rules for keys cannot be broken by a host name, a service path or
- * a prefix. Entries of an earlier key scheme are not read and not deleted.
+ * Every key the backend sees is 64 hex digits from {@see OptionsCacheKey::backend()}, whatever key the caller passes,
+ * so a host name, a service path or a prefix cannot break the PSR-16 rules for keys.
  *
  * A PSR-16 {@see CacheException} becomes an {@see IcapStorageException} with that exception as its cause; anything
  * else the backend throws passes unchanged.
@@ -47,56 +46,44 @@ use Psr\SimpleCache\CacheInterface;
  */
 final class Psr16OptionsCache implements OptionsCacheInterface
 {
+    /** @var Closure(): int */
+    private readonly Closure $clock;
+
     /**
-     * @param string $prefix separates adapters that share a backend; part of
-     *                       the hashed key, not put in front of it
+     * @param string                $prefix separates adapters that share a backend, tenants for one; part of the
+     *                                      hashed key, not put in front of it
+     * @param (Closure(): int)|null $clock  injectable clock for deterministic tests; defaults to time()
      */
     public function __construct(
         private readonly CacheInterface $cache,
         private readonly string $prefix = '',
+        ?Closure $clock = null,
     ) {
+        $this->clock = $clock ?? static fn (): int => time();
     }
 
     #[\Override]
     public function get(string $key): ?IcapResponse
     {
         try {
-            /** @var array{statusCode: int, headers: array<string, list<string>>, body: string}|null $data */
-            $data = $this->cache->get($this->backendKey(OptionsCacheKey::DATA, $key));
+            $stored = $this->cache->get($this->backendKey($key));
         } catch (CacheException $e) {
             throw self::failed($e);
         }
-        if ($data === null) {
-            return null;
-        }
 
-        return new IcapResponse(
-            $data['statusCode'],
-            $data['headers'],
-            $data['body'],
-        );
+        return OptionsEntry::fromStored($stored, $key, ($this->clock)())?->response;
     }
 
     #[\Override]
     public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
     {
-        if ($ttlSeconds <= 0) {
+        $entry = OptionsEntry::from($key, $response, $ttlSeconds, ($this->clock)());
+        if ($entry === null) {
             return;
         }
 
         try {
-            if ($istag !== null) {
-                $this->handleIstagChange($istag);
-            }
-
-            $data = [
-                'statusCode' => $response->statusCode,
-                'headers'    => $response->headers,
-                'body'       => $response->body,
-            ];
-
-            $this->cache->set($this->backendKey(OptionsCacheKey::DATA, $key), $data, $ttlSeconds);
-            $this->trackKey($key);
+            $this->cache->set($this->backendKey($key), $entry->toArray(), $entry->lifetime());
         } catch (CacheException $e) {
             throw self::failed($e);
         }
@@ -106,8 +93,7 @@ final class Psr16OptionsCache implements OptionsCacheInterface
     public function delete(string $key): void
     {
         try {
-            $this->cache->delete($this->backendKey(OptionsCacheKey::DATA, $key));
-            $this->untrackKey($key);
+            $this->cache->delete($this->backendKey($key));
         } catch (CacheException $e) {
             throw self::failed($e);
         }
@@ -118,50 +104,8 @@ final class Psr16OptionsCache implements OptionsCacheInterface
         return new IcapStorageException('The OPTIONS cache backend failed.', 0, $cause);
     }
 
-    /**
-     * When the ISTag changes, flush all previously tracked entries.
-     */
-    private function handleIstagChange(string $istag): void
+    private function backendKey(string $key): string
     {
-        /** @var string|null $stored */
-        $stored = $this->cache->get($this->backendKey(OptionsCacheKey::ISTAG));
-
-        if ($stored !== null && $stored !== $istag) {
-            // ISTag changed — flush all tracked entries.
-            /** @var list<string> $keys */
-            $keys = $this->cache->get($this->backendKey(OptionsCacheKey::REGISTRY)) ?? [];
-            foreach ($keys as $trackedKey) {
-                $this->cache->delete($this->backendKey(OptionsCacheKey::DATA, $trackedKey));
-            }
-            $this->cache->delete($this->backendKey(OptionsCacheKey::REGISTRY));
-        }
-
-        // Always update to the latest ISTag (no TTL — lives as long as
-        // the cache backend keeps it, which is fine because we only use
-        // it for comparison).
-        $this->cache->set($this->backendKey(OptionsCacheKey::ISTAG), $istag);
-    }
-
-    private function trackKey(string $key): void
-    {
-        /** @var list<string> $keys */
-        $keys = $this->cache->get($this->backendKey(OptionsCacheKey::REGISTRY)) ?? [];
-        if (!in_array($key, $keys, true)) {
-            $keys[] = $key;
-            $this->cache->set($this->backendKey(OptionsCacheKey::REGISTRY), $keys);
-        }
-    }
-
-    private function untrackKey(string $key): void
-    {
-        /** @var list<string> $keys */
-        $keys = $this->cache->get($this->backendKey(OptionsCacheKey::REGISTRY)) ?? [];
-        $keys = array_values(array_filter($keys, static fn (string $k): bool => $k !== $key));
-        $this->cache->set($this->backendKey(OptionsCacheKey::REGISTRY), $keys);
-    }
-
-    private function backendKey(string $role, string $key = ''): string
-    {
-        return OptionsCacheKey::backend($this->prefix, $role, $key);
+        return OptionsCacheKey::backend($this->prefix, $key);
     }
 }

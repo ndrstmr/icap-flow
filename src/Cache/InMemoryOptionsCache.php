@@ -32,25 +32,37 @@ use Ndrstmr\Icap\DTO\IcapResponse;
  * — note: vanilla php-fpm does NOT share state, use APCu or Redis
  * for that).
  *
+ * It holds at most `$maxEntries` entries: what has ended is dropped whenever an entry is stored, and when the cache is
+ * full the entry that was stored first makes room. An entry stands for one service on one endpoint with one TLS
+ * profile and holds at most 64 KiB of payload (field names, values and body) in at most 100 field values. The default
+ * of 64 entries is 4 MiB of payload at most, plus the arrays and strings around at most 6,400 values, and far more than
+ * a process talks to.
+ *
  * Not safe across processes. Implement {@see OptionsCacheInterface}
  * against your shared cache for cross-process deployments.
  */
 final class InMemoryOptionsCache implements OptionsCacheInterface
 {
-    /** @var array<string, array{response: IcapResponse, expiresAt: int, istag: ?string}> */
-    private array $entries = [];
+    public const int DEFAULT_MAX_ENTRIES = 64;
 
-    private ?string $lastKnownIstag = null;
+    /** @var array<string, OptionsEntry> in the order the entries were stored */
+    private array $entries = [];
 
     /** @var Closure(): int */
     private Closure $clock;
 
     /**
      * @param (Closure(): int)|null $clock injectable clock for deterministic tests; defaults to time()
+     *
+     * @throws \InvalidArgumentException When the capacity is below 1
      */
     public function __construct(
         ?Closure $clock = null,
+        private readonly int $maxEntries = self::DEFAULT_MAX_ENTRIES,
     ) {
+        if ($maxEntries < 1) {
+            throw new \InvalidArgumentException('The capacity of the cache must be at least 1.');
+        }
         $this->clock = $clock ?? static fn (): int => time();
     }
 
@@ -62,48 +74,34 @@ final class InMemoryOptionsCache implements OptionsCacheInterface
             return null;
         }
 
-        if (($this->clock)() >= $entry['expiresAt']) {
+        if (!$entry->isLiveAt(($this->clock)())) {
             unset($this->entries[$key]);
             return null;
         }
 
-        // ISTag drift: if a newer ISTag has been observed globally,
-        // entries stored under an older ISTag are stale.
-        if (
-            $this->lastKnownIstag !== null
-            && $entry['istag'] !== null
-            && $entry['istag'] !== $this->lastKnownIstag
-        ) {
-            unset($this->entries[$key]);
-            return null;
-        }
-
-        return $entry['response'];
+        return $entry->response;
     }
 
     #[\Override]
     public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
     {
-        if ($ttlSeconds <= 0) {
+        $now = ($this->clock)();
+        $entry = OptionsEntry::from($key, $response, $ttlSeconds, $now);
+        if ($entry === null) {
             return;
         }
 
-        // When the ISTag changes, all previously cached entries are
-        // potentially stale (the server updated its configuration or
-        // signature database). Flush them.
-        if ($istag !== null && $this->lastKnownIstag !== null && $istag !== $this->lastKnownIstag) {
-            $this->entries = [];
+        foreach ($this->entries as $storedKey => $stored) {
+            if (!$stored->isLiveAt($now)) {
+                unset($this->entries[$storedKey]);
+            }
         }
-
-        if ($istag !== null) {
-            $this->lastKnownIstag = $istag;
+        // The key moves to the end of the line, and a full cache gives up its oldest entry.
+        unset($this->entries[$key]);
+        while (count($this->entries) >= $this->maxEntries && ($oldest = array_key_first($this->entries)) !== null) {
+            unset($this->entries[$oldest]);
         }
-
-        $this->entries[$key] = [
-            'response'  => $response,
-            'expiresAt' => ($this->clock)() + $ttlSeconds,
-            'istag'     => $istag ?? $this->lastKnownIstag,
-        ];
+        $this->entries[$key] = $entry;
     }
 
     #[\Override]

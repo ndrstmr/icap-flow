@@ -20,25 +20,24 @@ declare(strict_types=1);
 
 namespace Ndrstmr\Icap\Cache;
 
+use Closure;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Psr\Cache\CacheException;
 use Psr\Cache\CacheItemPoolInterface;
 
 /**
- * OPTIONS-cache adapter that delegates to any PSR-6
- * (Cache Item Pool) implementation.
+ * OPTIONS-cache adapter that delegates to any PSR-6 (Cache Item Pool) implementation.
  *
- * The adapter stores each {@see IcapResponse} as a serializable array
- * in the backing pool. ISTag tracking uses two meta entries (the last
- * ISTag and the keys of the entries) so the flush-on-change behaviour
- * works across processes (unlike {@see InMemoryOptionsCache}, which is
- * process-local).
+ * One item per entry, in the form of {@see OptionsEntry}, with a lifetime of at most an hour; nothing else is stored, no
+ * ISTag item and no list of keys, so that writers in several processes cannot lose or invalidate each other's entries.
+ * What the pool returns is not trusted: a value that is not a whole, current entry for exactly this key is a miss, also
+ * when the pool still holds it past its end. The contract and the limits are those of {@see OptionsCacheInterface}; the
+ * number of items in a pool that many applications share is the pool's to bound. Entries of earlier versions are not
+ * read and not deleted.
  *
- * Every key the pool sees is 64 hex digits from
- * {@see OptionsCacheKey::backend()}, whatever key the caller passes: the
- * PSR-6 rules for keys cannot be broken by a host name, a service path or
- * a prefix. Entries of an earlier key scheme are not read and not deleted.
+ * Every key the pool sees is 64 hex digits from {@see OptionsCacheKey::backend()}, whatever key the caller passes, so
+ * a host name, a service path or a prefix cannot break the PSR-6 rules for keys.
  *
  * A PSR-6 {@see CacheException} becomes an {@see IcapStorageException} with that exception as its cause; anything
  * else the pool throws passes unchanged.
@@ -47,62 +46,52 @@ use Psr\Cache\CacheItemPoolInterface;
  */
 final class Psr6OptionsCache implements OptionsCacheInterface
 {
+    /** @var Closure(): int */
+    private readonly Closure $clock;
+
     /**
-     * @param string $prefix separates adapters that share a pool; part of the
-     *                       hashed key, not put in front of it
+     * @param string                $prefix separates adapters that share a pool, tenants for one; part of the hashed
+     *                                      key, not put in front of it
+     * @param (Closure(): int)|null $clock  injectable clock for deterministic tests; defaults to time()
      */
     public function __construct(
         private readonly CacheItemPoolInterface $pool,
         private readonly string $prefix = '',
+        ?Closure $clock = null,
     ) {
+        $this->clock = $clock ?? static fn (): int => time();
     }
 
     #[\Override]
     public function get(string $key): ?IcapResponse
     {
         try {
-            $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::DATA, $key));
+            $item = $this->pool->getItem($this->backendKey($key));
             if (!$item->isHit()) {
                 return null;
             }
 
-            /** @var array{statusCode: int, headers: array<string, list<string>>, body: string} $data */
-            $data = $item->get();
+            $stored = $item->get();
         } catch (CacheException $e) {
             throw self::failed($e);
         }
 
-        return new IcapResponse(
-            $data['statusCode'],
-            $data['headers'],
-            $data['body'],
-        );
+        return OptionsEntry::fromStored($stored, $key, ($this->clock)())?->response;
     }
 
     #[\Override]
     public function set(string $key, IcapResponse $response, int $ttlSeconds, ?string $istag = null): void
     {
-        if ($ttlSeconds <= 0) {
+        $entry = OptionsEntry::from($key, $response, $ttlSeconds, ($this->clock)());
+        if ($entry === null) {
             return;
         }
 
         try {
-            if ($istag !== null) {
-                $this->handleIstagChange($istag);
-            }
-
-            $data = [
-                'statusCode' => $response->statusCode,
-                'headers'    => $response->headers,
-                'body'       => $response->body,
-            ];
-
-            $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::DATA, $key));
-            $item->set($data);
-            $item->expiresAfter($ttlSeconds);
+            $item = $this->pool->getItem($this->backendKey($key));
+            $item->set($entry->toArray());
+            $item->expiresAfter($entry->lifetime());
             $this->pool->save($item);
-
-            $this->trackKey($key);
         } catch (CacheException $e) {
             throw self::failed($e);
         }
@@ -112,8 +101,7 @@ final class Psr6OptionsCache implements OptionsCacheInterface
     public function delete(string $key): void
     {
         try {
-            $this->pool->deleteItem($this->backendKey(OptionsCacheKey::DATA, $key));
-            $this->untrackKey($key);
+            $this->pool->deleteItem($this->backendKey($key));
         } catch (CacheException $e) {
             throw self::failed($e);
         }
@@ -124,60 +112,8 @@ final class Psr6OptionsCache implements OptionsCacheInterface
         return new IcapStorageException('The OPTIONS cache pool failed.', 0, $cause);
     }
 
-    /**
-     * When the ISTag changes, flush all previously tracked entries.
-     */
-    private function handleIstagChange(string $istag): void
+    private function backendKey(string $key): string
     {
-        $istagItem = $this->pool->getItem($this->backendKey(OptionsCacheKey::ISTAG));
-
-        if ($istagItem->isHit()) {
-            /** @var string $stored */
-            $stored = $istagItem->get();
-            if ($stored !== $istag) {
-                // ISTag changed — flush all tracked entries.
-                $keysItem = $this->pool->getItem($this->backendKey(OptionsCacheKey::REGISTRY));
-                /** @var list<string> $keys */
-                $keys = $keysItem->isHit() ? $keysItem->get() : [];
-                foreach ($keys as $trackedKey) {
-                    $this->pool->deleteItem($this->backendKey(OptionsCacheKey::DATA, $trackedKey));
-                }
-                $this->pool->deleteItem($this->backendKey(OptionsCacheKey::REGISTRY));
-            }
-        }
-
-        // Always update to the latest ISTag.
-        $item = $this->pool->getItem($this->backendKey(OptionsCacheKey::ISTAG));
-        $item->set($istag);
-        $this->pool->save($item);
-    }
-
-    private function trackKey(string $key): void
-    {
-        $keysItem = $this->pool->getItem($this->backendKey(OptionsCacheKey::REGISTRY));
-        /** @var list<string> $keys */
-        $keys = $keysItem->isHit() ? $keysItem->get() : [];
-        if (!in_array($key, $keys, true)) {
-            $keys[] = $key;
-            $newItem = $this->pool->getItem($this->backendKey(OptionsCacheKey::REGISTRY));
-            $newItem->set($keys);
-            $this->pool->save($newItem);
-        }
-    }
-
-    private function untrackKey(string $key): void
-    {
-        $keysItem = $this->pool->getItem($this->backendKey(OptionsCacheKey::REGISTRY));
-        /** @var list<string> $keys */
-        $keys = $keysItem->isHit() ? $keysItem->get() : [];
-        $keys = array_values(array_filter($keys, static fn (string $k): bool => $k !== $key));
-        $newItem = $this->pool->getItem($this->backendKey(OptionsCacheKey::REGISTRY));
-        $newItem->set($keys);
-        $this->pool->save($newItem);
-    }
-
-    private function backendKey(string $role, string $key = ''): string
-    {
-        return OptionsCacheKey::backend($this->prefix, $role, $key);
+        return OptionsCacheKey::backend($this->prefix, $key);
     }
 }
