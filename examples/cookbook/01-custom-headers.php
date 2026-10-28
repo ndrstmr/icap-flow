@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 require __DIR__ . '/../../vendor/autoload.php';
 
+use Ndrstmr\Icap\CicapVerdict;
+use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\SynchronousIcapClient;
 
 /*
@@ -13,9 +15,12 @@ use Ndrstmr\Icap\SynchronousIcapClient;
  * client sets Host and Encapsulated itself and drops caller values for
  * them in any spelling; scanFile() sends no preview, so a caller Preview
  * is dropped too.
+ *
+ * The client runs in the verified mode for the c-icap + ClamAV service of
+ * docker-compose.yml (docs/cicap-clamav.md), which sets Allow: 204 itself.
  */
 
-$icap = SynchronousIcapClient::create();
+$icap = new SynchronousIcapClient(IcapClient::forServer('127.0.0.1', 1344, new CicapVerdict('/avscan')));
 
 $result = $icap->scanFile('/avscan', __DIR__ . '/../eicar.com', [
     'X-Client-IP'          => '203.0.113.5',

@@ -14,8 +14,8 @@ use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 
 /*
  * TLS / mTLS — connect to an ICAP server that requires encrypted
- * transport (icaps://). Most enterprise appliances (Symantec, Trend
- * Micro, Sophos) expose their ICAP interface on port 11344 with TLS.
+ * transport (icaps://), commonly on port 11344. TLS needs the async
+ * transport; SynchronousStreamTransport refuses a TLS context.
  *
  * For mTLS (mutual TLS) the client presents its own certificate,
  * which the appliance verifies against a trusted CA. This is typical

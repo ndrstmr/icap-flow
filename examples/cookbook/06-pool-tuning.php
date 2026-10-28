@@ -21,7 +21,9 @@ use Ndrstmr\Icap\Transport\AsyncAmpTransport;
  * connections being set up, in use and idle against its limits, closes
  * stale idle sockets by itself and respects the server's connection
  * budget. A call that finds the pool full fails with an
- * IcapConnectionException, unless a queue is configured.
+ * IcapConnectionException, unless a queue is configured. A socket goes
+ * back to the pool only after the validated exchange of
+ * scanFileWithPreview(); scanFile() and request() close theirs.
  */
 
 $pool = new AmpConnectionPool(
@@ -45,7 +47,7 @@ $client = new IcapClient(
     optionsCache: $cache,
 );
 
-\Amp\async(function () use ($client, $pool) {
+\Amp\async(function () use ($client, $pool, $config) {
     // The first OPTIONS response tells us the server's connection limit.
     $options = $client->options('/avscan')->await();
     $headers = $options->headers;
@@ -56,9 +58,9 @@ $client = new IcapClient(
 
     echo 'Max-Connections: ' . ($headers['Max-Connections'][0] ?? 'not advertised') . PHP_EOL;
 
-    // Now scan — the pool will reuse sockets, close stale ones,
-    // and cap at min(localCap, serverMax).
-    $result = $client->scanFile('/avscan', __DIR__ . '/../eicar.com')->await();
+    // Now scan — the pool reuses the socket of a validated preview exchange,
+    // closes stale ones, and caps at min(localCap, serverMax).
+    $result = $client->scanFileWithPreview('/avscan', __DIR__ . '/../eicar.com')->await();
 
     echo $result->isInfected()
         ? 'Virus: ' . $result->getVirusName() . PHP_EOL

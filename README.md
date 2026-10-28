@@ -14,9 +14,9 @@
 An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, focused on RFC 3507 correctness, fail-secure semantics and a small surface area that is comfortable to drop into a Symfony / Laravel / framework-less code base.
 
 > [!WARNING]
-> **AI-assisted origin & production-use disclaimer.** Large parts of this library — code, tests, docs and CI plumbing — were authored with substantial AI assistance, captured under three independent due-diligence reviews in [`docs/review/`](docs/review/). The v2 line closes the protocol- and security-blocking findings of those reviews, but a piece of code that scans uploads for malware sits in the security-critical path of any application that uses it. **Do not deploy this in production without a deep, independent review and an integration-test bake-out against the ICAP server you actually use.** A non-exhaustive checklist:
+> **AI-assisted origin & production-use disclaimer.** Large parts of this library — code, tests, docs and CI plumbing — were authored with substantial AI assistance and reviewed in independent audits ([`docs/review/`](docs/review/)). A piece of code that scans uploads for malware sits in the security-critical path of any application that uses it. **Do not deploy this in production without a deep, independent review and an integration-test bake-out against the ICAP server you actually use.** A non-exhaustive checklist:
 >
-> - End-to-end test against your production ICAP vendor (c-icap, Symantec, Trend Micro, McAfee Web Gateway, Sophos, Kaspersky, …) — wire formats vary in subtle ways.
+> - End-to-end test against the ICAP service you use. Only c-icap `virus_scan` with ClamAV is verified ([verified mode](docs/cicap-clamav.md)); any other service is read by the default rules, which have not been verified against a product.
 > - Fail-secure verification: confirm an unreachable / 5xx / malformed-response server makes your application **block the upload**, not silently pass it through.
 > - TLS configuration review (cipher policy, hostname verification, cert pinning where appropriate).
 > - Resource limits (`Config::withLimits(...)`) tuned to your traffic profile.
@@ -24,52 +24,36 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 >
 > This software is provided AS IS under EUPL-1.2; the licence's "no warranty" clauses apply unconditionally.
 
-## What changed in v3
+## Versions
 
-`v3.0.0` is a small, deliberate breaking release. It carries no new features — it is a cleanup pass that closes three known-stale corners of the v2 API so the surface can be frozen for the upcoming Symfony bundle (`ndrstmr/icap-flow-bundle`):
+`v3.0.0`, the current release, is a small breaking release of the v2 API: `executeRaw()` is `protected` (nothing outside the `final` `IcapClient` reaches it), `options()` returns `Future<IcapResponse>`, `IcapResponseException` is gone ([migration](docs/migration-v2-to-v3.md)). `v2.0.0` made the wire format RFC 3507 compliant; v1 is deprecated ([migration](docs/migration-v1-to-v2.md)).
 
-- **`IcapClient::executeRaw()` is now `protected`.** It was always meant as an internal seam for the preview flow and never appeared in `IcapClientInterface`. Keeping it public let external callers bypass the fail-secure status-code interpretation. External callers must use `request()`, `scanFile()`, `scanFileWithPreview()` or `options()`; `IcapClient` is `final`, so there is no other access.
-- **`options()` returns `Future<IcapResponse>`** (was `Future<ScanResult>`). OPTIONS is capability discovery, not a virus verdict — callers want the headers (`Preview`, `Options-TTL`, `Methods`, `Allow`, `Service`, `ISTag`, `Max-Connections`) directly. Fail-secure is preserved: 4xx still throws `IcapClientException`, 5xx still throws `IcapServerException`, `100 Continue` still throws `IcapProtocolException` — extracted into a single `assertSuccessfulStatus()` helper shared between `interpretResponse()` and `options()`.
-- **`IcapResponseException` is removed.** Deprecated since v2.0 (`#[\Deprecated]` since v2.2). Both throw sites (`IcapClient::interpretResponse()` backstop, `DefaultPreviewStrategy::handlePreviewResponse()` `default` branch) now throw `IcapProtocolException`. Callers using `catch (IcapExceptionInterface $e)` are unaffected.
-
-Migration: [`docs/migration-v2-to-v3.md`](docs/migration-v2-to-v3.md). For most call sites the upgrade is a no-op other than bumping the constraint to `^3.0`.
-
-## What changed in v2
-
-`v2.0.0` was a **breaking** release that fixes RFC-3507-blocking bugs in v1. The v1 line is **deprecated**. Highlights:
-
-- **RFC-3507 wire format** is correct: real `Encapsulated` offsets, HTTP-in-ICAP nesting, chunked bodies for both string and stream payloads, `0; ieof` terminator on preview-complete.
-- **Streaming-safe preview** — `scanFileWithPreview()` no longer buffers the file; only the preview window is read.
-- **Fail-secure on status 100** — a stray 100 outside the preview flow now throws `IcapProtocolException` instead of silently mapping to a clean scan.
-- **CRLF / header-injection guard** on `$service` and on user-supplied ICAP headers.
-- **TLS / icaps://** support via amphp's `ClientTlsContext`.
-- **DoS limits** — `maxResponseSize`, `maxHeaderCount`, `maxHeaderLineLength`.
-- **Full status-code matrix** — 4xx → `IcapClientException`, 5xx → `IcapServerException`, 206 inspected, …
-- **Multi-vendor virus headers** — Config takes an ordered list (`X-Virus-Name`, `X-Infection-Found`, `X-Violations-Found`, `X-Virus-ID`).
-- **PSR-3 logger** optional, structured events on every request.
-- **Custom request headers** (`X-Client-IP`, `X-Authenticated-User`) on `scanFile()` / `scanFileWithPreview()`.
-- **External cancellation** — every public method takes an optional `Amp\Cancellation`.
-- **OPTIONS-response cache**: `Options-TTL`, at most an hour; validated, bounded entries ([contract](#options-cache)).
-- **`RetryingIcapClient`** decorator: OPTIONS is repeated after a 5xx (exponential backoff with jitter); every other operation gets one attempt.
-- **Encapsulated-aware response framing** — no dependency on `Connection: close`; servers may keep the socket open.
-- **PHP 8.4** minimum; **PHP 8.5** in CI; integration tested end-to-end against `mnemoshare/clamav-icap` (c-icap 0.6.3 + ClamAV).
-
-The migration guide is [`docs/migration-v1-to-v2.md`](docs/migration-v1-to-v2.md). The full per-finding closure list is in [`docs/review/consolidated_task-list.md`](docs/review/consolidated_task-list.md).
-
-> **v2.1.0** added keep-alive connection pooling and strict RFC 3507 §4.5 preview-continue (preview + continuation on the same socket). **v2.2.0** added OPTIONS-driven pool tuning (`Max-Connections`), pool idle eviction, ISTag-based cache invalidation, PSR-6/PSR-16 OPTIONS-cache adapters and a per-IO timeout model. See [`CHANGELOG.md`](CHANGELOG.md).
+This README, its examples included, describes `main`, the next major release 4.0.0, which is not released yet: the changes since 3.0.0 are listed under *Unreleased* in the [`CHANGELOG.md`](CHANGELOG.md), several of them behaviour changes, the verified mode among them.
 
 ## Installation
+
+**Release 3.0.0**, documented by its [README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md). It has no `CicapVerdict` and none of the later changes; the quickstarts below do not run on it.
 
 ```bash
 composer require ndrstmr/icap-flow:^3.0
 ```
 
+**Development: `main`, the unreleased 4.0.0**, which this README and its quickstarts describe. `dev-main` follows the branch and is not a release; `composer.lock` records the commit you got.
+
+```bash
+composer require ndrstmr/icap-flow:dev-main
+```
+
 ## Quickstart — synchronous
 
+Both quickstarts scan with the c-icap + ClamAV service of `docker-compose.yml` on `127.0.0.1:1344`, in the verified mode ([`docs/cicap-clamav.md`](docs/cicap-clamav.md)).
+
 ```php
+use Ndrstmr\Icap\CicapVerdict;
+use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\SynchronousIcapClient;
 
-$icap = SynchronousIcapClient::create();
+$icap = new SynchronousIcapClient(IcapClient::forServer('127.0.0.1', 1344, new CicapVerdict('/avscan')));
 
 $result = $icap->scanFile('/avscan', '/path/to/upload.bin');
 
@@ -81,26 +65,34 @@ echo $result->isInfected()
 ## Quickstart — asynchronous (amphp v3 / Revolt)
 
 ```php
+use Ndrstmr\Icap\CicapVerdict;
+use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\IcapClient;
-use Revolt\EventLoop;
+use Ndrstmr\Icap\RequestFormatter;
+use Ndrstmr\Icap\ResponseParser;
+use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 
-$icap = IcapClient::create();
+$icap = new IcapClient(
+    new Config('127.0.0.1'),
+    new AsyncAmpTransport(),
+    new RequestFormatter(),
+    new ResponseParser(),
+    verdict: new CicapVerdict('/avscan'),
+);
 
-EventLoop::run(function () use ($icap) {
-    $future = $icap->scanFile('/avscan', '/path/to/upload.bin');
-    $result = $future->await();
+$future = $icap->scanFile('/avscan', '/path/to/upload.bin'); // returns at once
+$result = $future->await();                                  // the event loop runs while it waits
 
-    echo $result->isInfected()
-        ? 'Virus: ' . $result->getVirusName() . PHP_EOL
-        : 'Clean' . PHP_EOL;
-});
+echo $result->isInfected()
+    ? 'Virus: ' . $result->getVirusName() . PHP_EOL
+    : 'Clean' . PHP_EOL;
 ```
 
 ## Scanning files
 
 `scanFile()` and `scanFileWithPreview()` read the file through amphp/file in worker processes (`proc_open` is needed), so the event loop keeps running. The file has to stay unchanged until the call returns. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
 
-**With c-icap + ClamAV, use the verified mode** (`new IcapClient(…, verdict: new CicapVerdict('/avscan'))`, [`docs/cicap-clamav.md`](docs/cicap-clamav.md)). With the default `Config` the client does not recognise c-icap's infection headers (`X-Infection-Found`, `X-Violations-Found`) and reports an infected file as clean. A wider header list recognises the infection, but still takes the `204` or the unchanged message that c-icap sends for a file it did not scan for a clean one.
+Without a verdict the client applies the default rules: a `204`, and a `200` or `206` without a header of `Config::getVirusFoundHeaders()` (default `X-Virus-Name`), are clean. They are verified against no product, and with c-icap they are wrong: they report an infected file as clean, and with c-icap's infection headers in the list they still take the `204` or the unchanged message it sends for a file it did not scan for a clean one. Use the verified mode there.
 
 ## Configuration
 
@@ -118,13 +110,9 @@ $config = (new Config(
     socketTimeout: 5.0,
     streamTimeout: 30.0,
 ))
-    ->withTlsContext(new ClientTlsContext('icap.example.com'))
-    ->withVirusFoundHeaders([
-        'X-Virus-Name',          // the default
-        'X-Infection-Found',     // ISS Proventia, c-icap virus_scan
-        'X-Violations-Found',    // Trend Micro, c-icap virus_scan
-        'X-Virus-ID',            // Symantec
-    ])
+    ->withTlsContext(new ClientTlsContext('icap.example.com'))   // TLS needs the async transport
+    // Default rules: the headers your server names an infection in, first match wins (default: X-Virus-Name).
+    ->withVirusFoundHeaders(['X-Virus-Name', 'X-Virus-ID'])
     ->withLimits(
         maxResponseSize: 10 * 1024 * 1024,
         maxHeaderCount: 100,
@@ -160,7 +148,7 @@ Every limit is finite; `0` is never "without limit". One operation (a public met
 $config = $config->withTimeouts(operationTimeout: 300.0, responseStartTimeout: 120.0); // large files, slow scanner
 ```
 
-The end of the operation is an `IcapTimeoutException`; your own cancellation stays an `Amp\CancelledException`. An expired call closes its socket and its file handle. A request-body producer or a cache that holds the event loop and does not return cannot be interrupted, only noticed afterwards; the synchronous transport bounds its native waits only.
+The end of the operation is an `IcapTimeoutException`; your own cancellation stays an `Amp\CancelledException`. An expired call closes its socket and its file handle; a file call that hangs in the operating system keeps its worker, and the handle is closed when that call returns ([`docs/file-sources.md`](docs/file-sources.md#deadline-and-cancellation)). A request-body producer or a cache that holds the event loop and does not return cannot be interrupted, only noticed afterwards; the synchronous transport bounds its native waits only.
 
 ### Connection pool
 
@@ -182,9 +170,9 @@ $pool = new AmpConnectionPool(
 
 $transport = new AsyncAmpTransport($pool);
 
-// Optional: pass an OPTIONS cache so the client auto-negotiates
-// preview size (0 to 1 MiB; larger advertised values are clamped, an entry
-// that is no usable OPTIONS answer is ignored) and honours Options-TTL.
+// Optional: an OPTIONS cache. scanFileWithPreview() without a size then takes
+// the Preview of the answer options() stored (0 to 1 MiB; larger values are
+// clamped, an entry that is no usable OPTIONS answer is ignored), else 1024.
 $cache = new InMemoryOptionsCache();
 // For cross-process caching (Redis, APCu) use Psr16OptionsCache
 // or Psr6OptionsCache instead.
@@ -205,31 +193,30 @@ $result = $icap->scanFile('/avscan', '/path/to/upload.bin', [
 ]);
 ```
 
-Header names and values are validated against CR / LF / NUL / control characters — injection attempts raise `InvalidArgumentException` before any byte hits the socket. The client sets `Host` and `Encapsulated` itself, and in `scanFileWithPreview()` also `Preview` / `Allow`; caller values for these are dropped in any spelling. `scanFile()` sends no preview, so it drops a caller `Preview` too, while `Allow` (e.g. `Allow: 204`) and all other headers pass through.
+Header names and values are validated against CR / LF / NUL / control characters — injection attempts raise `InvalidArgumentException` before any byte hits the socket. The client sets `Host` and `Encapsulated` itself, and in `scanFileWithPreview()` also `Preview` / `Allow`; caller values for these are dropped in any spelling. `scanFile()` sends no preview, so it drops a caller `Preview` too, while `Allow` (e.g. `Allow: 204`) and all other headers pass through. In the verified mode the scan helpers set `Allow: 204` themselves.
 
 ## Exception taxonomy
 
-Every exception this library throws implements `Ndrstmr\Icap\Exception\IcapExceptionInterface` so you can catch the whole family in one block.
+The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInterface`, so you can catch them in one block. Arguments that cannot work (a header, a service, a preview size, a `Config` value) are an `\InvalidArgumentException` before anything is sent, a discarding scan with a transport or parser that cannot discard is a `\LogicException`, and your own cancellation stays an `Amp\CancelledException`.
 
 | Exception | Trigger |
 |---|---|
-| `IcapConnectionException` | TCP-level failure (refused, timeout, TLS handshake, ...) |
+| `IcapConnectionException` | TCP-level failure (refused, connect timeout, failed TLS handshake, a socket that breaks) |
 | `IcapTimeoutException` | A limit of the client passed: the `operationTimeout` of the whole operation, or the limit of a phase (acquiring the connection, the TLS handshake, writing the request, the answer beginning or arriving; the synchronous transport reports a read that waited that long, or a write that made no progress for that long). A cancellation by the caller is not mapped; it stays `Amp\CancelledException` |
-| `IcapProtocolException` | RFC-3507 violation (e.g. status 100 outside preview, malformed `Encapsulated`) |
+| `IcapProtocolException` | RFC-3507 violation or unexpected status (e.g. status 100 outside preview); in the verified mode also an answer that does not show a scan |
 | `IcapMalformedResponseException` (extends `IcapProtocolException`) | Server response can't be parsed (no separator, header line without `:`, oversize lines) |
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |
 | `IcapServerException` | ICAP 5xx response — server failed, code is the real status |
-| `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable, or the OPTIONS cache backend fails |
-| `IcapResponseException` | Status code that doesn't fit any other bucket |
+| `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable or changed size, or the OPTIONS cache backend fails |
 
 ## Examples
 
-The `examples/` directory has runnable demos, including a full Symfony-ready async cookbook:
+The `examples/` directory has runnable demos and a cookbook:
 
-- `examples/01-sync-scan.php` — minimal synchronous scan
-- `examples/02-async-scan.php` — async scan inside `Revolt\EventLoop`
+- `examples/01-sync-scan.php` — minimal synchronous scan (verified mode)
+- `examples/02-async-scan.php` — async scan inside `Revolt\EventLoop` (verified mode)
 - `examples/cookbook/01-custom-headers.php` — `X-Client-IP`, `X-Authenticated-User`
-- `examples/cookbook/02-custom-preview-strategy.php` — vendor-specific preview interpretation
+- `examples/cookbook/02-custom-preview-strategy.php` — a preview strategy of your own (default rules)
 - `examples/cookbook/03-options-request.php` — capability discovery via OPTIONS
 - `examples/cookbook/04-tls-mtls.php` — TLS and mutual TLS (mTLS) setup
 - `examples/cookbook/05-retry-decorator.php` — exponential-backoff retry of OPTIONS on 5xx
@@ -238,19 +225,11 @@ The `examples/` directory has runnable demos, including a full Symfony-ready asy
 
 ## Integration tests
 
-A docker-compose stack (`docker-compose.yml`) brings up [`mnemoshare/clamav-icap`](https://hub.docker.com/r/mnemoshare/clamav-icap) on port 1344. The tests in `tests/Integration/` skip when `ICAP_HOST` is unset, so contributors without Docker get a green `composer test:integration` while CI exercises a real wire-level round trip on every PR.
-
-```bash
-docker compose up -d
-ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
-  ICAP_ECHO_SERVICE=/avscan \
-  ICAP_CLAMAV_SERVICE=/avscan \
-    composer test:integration
-```
+`docker compose up -d` brings up the reference service ([`mnemoshare/clamav-icap`](https://hub.docker.com/r/mnemoshare/clamav-icap), pinned by digest) on port 1344. The tests in `tests/Integration/` skip when `ICAP_HOST` is unset, so contributors without Docker get a green `composer test:integration`; a skipped test verifies nothing. CI runs them on pushes to `main` and `release/**` and nightly, not on pull requests. Variables and the service: [`tests/Integration/README.md`](tests/Integration/README.md).
 
 ## Provenance & due diligence
 
-`docs/review/` carries the three independent due-diligence reports (Claude, Codex, Jules) that drove the v2 redesign, and a verified consolidated task list. They are part of the repo, not after-the-fact marketing — every closed finding maps back to a specific file/line in those docs.
+`docs/review/` keeps the audits and task lists of earlier versions (v1, v2.1, v3.0). They describe the version they reviewed, not the current code; what has been fixed since is in the [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Developers
 
@@ -271,7 +250,7 @@ EUPL-1.2 — see [`LICENSE`](LICENSE). The licence is OpenCoDE-compatible and ex
 
 ## Security
 
-To report a vulnerability, see [`SECURITY.md`](SECURITY.md). Please **do not** open a public GitHub issue for security findings.
+To report a vulnerability, see [`SECURITY.md`](SECURITY.md). Please **do not** open a public GitHub issue for security findings. The same file says what the client guarantees and what stays with the ICAP service and your application.
 
 ## Changelog
 

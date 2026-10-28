@@ -1,7 +1,9 @@
 # Compliance Mapping
 
 This document maps `ndrstmr/icap-flow` capabilities to common regulatory and
-security frameworks relevant for European public-sector deployments.
+security frameworks relevant for European public-sector deployments. It
+describes `main`, the unreleased 4.0.0; the changes since 3.0.0 are listed
+under *Unreleased* in the [`CHANGELOG.md`](../CHANGELOG.md).
 
 > **Disclaimer.** This mapping is informational — it does not constitute a
 > certification or formal compliance statement. Large parts of this library
@@ -15,9 +17,9 @@ security frameworks relevant for European public-sector deployments.
 
 | Requirement | Coverage |
 |---|---|
-| Malware scanning of uploaded content | Core purpose — `scanFile()` / `scanFileWithPreview()` via ICAP (RFC 3507) |
-| Support for multiple AV engines | `Config::withVirusFoundHeaders()` supports ClamAV, Symantec, Trend Micro, Sophos, McAfee, Kaspersky header conventions |
-| Fail-secure on unknown status codes | `IcapClient::interpretResponse()` throws typed exceptions for anything that is not a clear clean signal (204 / 200 without virus header) |
+| Malware scanning of uploaded content | Core purpose — `scanFile()` / `scanFileWithPreview()` via ICAP (RFC 3507); the ICAP service scans |
+| Scan engines | Verified for c-icap `virus_scan` with ClamAV only (verified mode, [`cicap-clamav.md`](cicap-clamav.md)); other services are read by the default rules (virus header list of `Config::withVirusFoundHeaders()`), which have not been verified against a product |
+| Fail-secure on unknown status codes | `IcapClient::interpretResponse()` throws typed exceptions for anything that is not a clear clean signal (204, or 200/206 without a virus header; in the verified mode only a 204 to the whole file) |
 | Logging of scan results | PSR-3 structured logging with `method`, `port`, `statusCode`, `infected` and `exception_class` context keys; no URI, host, exception message or server text |
 | Retry on transient failures | `RetryingIcapClient` decorator: `options()` is repeated after a 5xx with exponential backoff and jitter; uploads and scans get one attempt (a 5xx does not prove the bytes were not processed) |
 
@@ -26,8 +28,8 @@ security frameworks relevant for European public-sector deployments.
 | Requirement | Coverage |
 |---|---|
 | Input validation on external data | Header-name validation (RFC 7230 §3.2.6 tchar whitelist), URI path validation (no CRLF/NUL injection), DoS limits on response size / header count / header line length |
-| TLS for inter-service communication | `Config::withTlsContext()` — TLS 1.2/1.3 via `amphp/socket`, mTLS supported |
-| Connection management | `AmpConnectionPool` with idle eviction, per-host caps, server-side `Max-Connections` awareness, TLS-context-isolated pool keys |
+| TLS for inter-service communication | `Config::withTlsContext()` with `AsyncAmpTransport` — TLS 1.2/1.3 via `amphp/socket`, mTLS supported |
+| Connection management | Opt-in `AmpConnectionPool` with idle eviction, per-host and total caps, server-side `Max-Connections` awareness, TLS-context-isolated pool keys |
 
 ## DSGVO / GDPR — Art. 32 (Security of Processing)
 
@@ -47,10 +49,9 @@ The library is licensed under EUPL-1.2, which is:
 
 ## AI-Assisted Development
 
-This library was developed with significant AI assistance. Four independent
-deep-research audits (Claude, Codex ×2, Jules) are documented in
-`docs/review/review_v2-1/` with a consolidated task list that tracks every
-finding to resolution. The audit consensus is TRL-7 (system prototype
-demonstration in operational environment) with scores of 74–77/100.
+This library was developed with significant AI assistance. Audits of earlier
+versions are kept in `docs/review/` (v1, v2.1, v3.0). Their ratings and
+maturity levels describe the version they reviewed, not the current code; this
+document claims no maturity level.
 
 See the [README disclaimer](../README.md) for the full statement.

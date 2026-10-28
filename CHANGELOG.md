@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Changes since 3.0.0, for the next major release, 4.0.0 (not released).
+
 ### Security
 - Virus headers and the other response headers the client evaluates
   (`Encapsulated`, `Preview`, `ISTag`, `Options-TTL`, `Max-Connections`) are
   now matched case-insensitively, for live and cached responses alike.
   Before, a server sending `x-virus-name` instead of `X-Virus-Name` got an
   infected file reported as clean, also in the preview flow. Conflicting
-  repeats of a single-valued field are rejected with
-  `IcapMalformedResponseException`; `IcapResponse::$headers` keeps the
-  server's spelling. *(B01)*
+  repeats of a single-valued field in a server response are rejected with
+  `IcapMalformedResponseException` (in a cached answer they are a miss, see
+  M13); `IcapResponse::$headers` keeps the server's spelling. *(B01)*
 - Request metadata is checked before the first byte goes out. `RequestFormatter`,
   and with it `request()`, rejects ICAP and encapsulated HTTP methods, URIs,
   request and status lines and header fields that would break the wire format
@@ -28,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values for them are ignored in any spelling instead of replacing them or
   going out twice, also in the full request after `100 Continue`. `scanFile()`
   sends no preview and drops a caller `Preview` the same way; `Allow` and
-  other extra headers pass. *(B04)*
+  other extra headers pass (in the verified mode the helpers set `Allow: 204`,
+  see M01). *(B04)*
 - Service paths must be an absolute path with an optional query, and the
   configured host must be a host name or an IP address, in the ICAP and in the
   TCP URI. A missing leading slash, user info, a fragment or a `/` or `?` in
@@ -47,14 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are checked and closes on an exception, a `100 Continue` after `ieof`, an
   unexpected status and a `close` token in `Connection` (any spelling, also in
   `keep-alive, close`), including interim and preview responses. Reuse is
-  therefore limited to `scanFileWithPreview()` on a session-capable transport
-  until the lease contract lands. *(M06, first stage)*
+  therefore limited to `scanFileWithPreview()` on a session-capable transport.
+  *(M06, first stage)*
 - A preview size can no longer decide an allocation. An explicit
   `scanFileWithPreview()` size must lie between 0 and 1 MiB and is checked
   before the file or a socket is opened. A `Preview` value from a cached
-  OPTIONS response is read as a non-negative decimal before any integer cast:
-  a larger valid value is clamped to 1 MiB and anything that is not a decimal
-  is rejected with `IcapMalformedResponseException`. Before, a cached
+  OPTIONS response is used only if it is a non-negative decimal, checked before
+  any integer cast (an entry with another value is a miss, see M13), and a
+  larger value is clamped to 1 MiB. Before, a cached
   `Preview: 67108864` made a one-byte file ask PHP for 64 MiB and killed the
   process, and a value too large for an integer was cast to something else.
   `Preview: 0` is valid now and goes out as a body section holding only
@@ -63,8 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A source that fails no longer ends a body. `ChunkedBodyEncoder` writes the
   terminator, and `ieof`, only after the end of the stream was observed: a
   failing read, an empty read before the end and a rewind that is needed but
-  fails raise a `\RuntimeException`, where they used to end the loop and send
-  the shortened body as complete. *(B08)*
+  fails raise an `IcapStorageException`, where they used to end the loop and
+  send the shortened body as complete. *(B08)*
 - `scanFile()` and `scanFileWithPreview()` take the file size from the open
   handle instead of a second path lookup, refuse a handle without one instead
   of announcing `Content-Length: 0`, and send `ieof` only after the end of the
@@ -78,10 +81,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stream passed to `request()` as well, and for a preview that ends in `ieof`;
   a preview that carries only the start of the body is exempt, since its
   `Content-Length` still describes the whole body, and a body without such a
-  field is sent as before. A change that keeps the size is not detected; binding the verdict
-  to an immutable object remains open. *(M07, first stage)*
+  field is sent as before. A change that keeps the size is not detected: the
+  application keeps the file unchanged until the call returns (see B09).
+  *(M07, first stage)*
 - `scanFile()` and `scanFileWithPreview()` close the file they opened when the
-  operation ends, whatever the outcome and also while failed Futures and
+  operation ends (one that a hanging file call holds when that call returns,
+  see B09), whatever the outcome and also while failed Futures and
   their trace arguments are still referenced, and a cancellation requested
   before the call opens no file. `scanFile()` now opens its file inside the
   returned Future, so an unreadable file fails the Future instead of throwing
@@ -119,8 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too, and timers and cancellation subscriptions are removed explicitly on
   every way out, also while the exception of a failed Future and its trace
   arguments are still referenced. A connect that exceeds `socketTimeout`
-  still raises `IcapConnectionException`, and the deadline over retries and
-  backoff remains open. *(M10, first stage)*
+  still raises `IcapConnectionException`. *(M10, first stage)*
 - The synchronous transport no longer loses part of a request, waits for ever
   on a peer that stopped reading, or takes a timeout for the end of the
   response. `SynchronousStreamTransport` ignored what `fwrite()` returned, so
@@ -151,15 +155,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend may refuse such a key, and with it the OPTIONS lookup and the
   preview size lookup fail. A prefix and key that add up to the same text as
   another pair, or a caller key that is a meta name, also met in one backend
-  entry. The client now names an entry by a hash of host, port and service,
-  the same key in `options()` and in the preview size lookup, and
-  `Psr6OptionsCache` and `Psr16OptionsCache` turn prefix, role (entry, ISTag,
-  tracked keys) and key into 64 hex digits, each part hashed with its length,
-  whatever key a caller passes. The prefix keeps adapters apart; it is no
-  longer put in front of the key. The new keys start a cold cache: entries
-  stored under the old keys are neither read nor deleted, so clean a shared
-  backend yourself if you want them gone. A custom `OptionsCacheInterface`
-  receives that hash as its key. *(M12)*
+  entry. The client now names an entry by a hash of host, port, service and
+  security profile (see M13), the same key in `options()` and in the preview
+  size lookup, and `Psr6OptionsCache` and `Psr16OptionsCache` turn prefix and
+  key into 64 hex digits, each part hashed with its length, whatever key a
+  caller passes. The prefix keeps adapters apart; it is no longer put in front
+  of the key. The new keys start a cold cache: entries stored under the old
+  keys are neither read nor deleted, so clean a shared backend yourself if you
+  want them gone. A custom `OptionsCacheInterface` receives that hash as its
+  key. *(M12)*
 - The OPTIONS cache checks what it holds. The PSR adapters built a response from whatever the backend returned (a
   status stored as a string was a `TypeError`), `Options-TTL` and `Preview` were cast to int, and nothing bounded an
   entry. An entry is now one versioned item with its key, start and end, valid for the `Options-TTL` of the server (a
@@ -172,8 +176,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is a miss; so is an answer that the limits of the reading client (`maxResponseSize`, `maxHeaderCount`,
   `maxHeaderLineLength`) would have refused from the server. The key holds the security profile of the client (plain,
   or its TLS settings), so that clients with other TLS settings do not share an entry. **Behaviour change:** a cached
-  answer with another status, or a `Preview` that was no decimal, raised an exception; it is a miss now, and the server
-  is asked. The new keys start a cold cache; entries of earlier versions are neither read nor deleted. *(M13)*
+  answer with another status, or a `Preview` that was no decimal, raised an exception; it is a miss now: `options()`
+  asks the server, and the preview size falls back to 1024. *(M13)*
 - **Behaviour change:** the ISTag no longer flushes the cache. It belongs to one service but invalidated the entries of
   all, and the list of keys behind it lost entries between processes. The PSR adapters store no ISTag item and no list
   of keys now, `InMemoryOptionsCache` no global tag; the consistency is the TTL's, so a changed service shows when its
@@ -219,9 +223,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Options-TTL` and `ISTag` were cached. They now raise
   `IcapProtocolException` (`100` as before); 4xx stays `IcapClientException`
   and 5xx `IcapServerException`. A rejected response is not cached, and a
-  cached entry that would be rejected is raised instead of returned. Scans
-  keep their own status rules. *(N02)*
-
+  cached entry with another status is a miss (see M13). Scans keep their own
+  status rules. *(N02)*
 - A response now ends where its own layout says, in the transports and in
   `ResponseParser` alike. The framing looked for `\r\n0\r\n\r\n` and took the
   first one for the end of the message: a chunk payload that contains it (any
@@ -343,11 +346,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   given back to the pool from an exchange that was over time. The end of the
   operation is an `IcapTimeoutException`; the caller's cancellation, also a
   `TimeoutCancellation`, stays a `CancelledException` and wins. An expired call
-  closes its socket and its file handle and leaves no write behind. The
+  closes its socket and its file handle (one that a hanging file call holds
+  when that call returns, see B09) and leaves no write behind. The
   synchronous transport bounds every native wait by the time that is left. A
-  producer or a file read that does not return cannot be interrupted from
-  outside (non-blocking file I/O is B09), and an inner client that ignores its
-  cancellation is waited for; the end is looked at when control comes back.
+  producer that does not return cannot be interrupted from outside, and an
+  inner client that ignores its cancellation is waited for; the end is looked
+  at when control comes back. **Behaviour change:** every operation now ends
+  after `operationTimeout`, also an upload that used to run as long as the peer
+  kept reading: raise it for larger files or slower scanners.
   *(M10, second stage)*
 - The phases of a connection and of an answer have limits of their own.
   `tlsHandshakeTimeout` bounds the TLS handshake, which `Socket\connectTls()`
@@ -363,12 +369,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error. Both new settings default to `streamTimeout`. A connect that exceeds
   `socketTimeout` still raises `IcapConnectionException`. *(M10, second stage)*
 - A retry repeats only what is safe to repeat, waits as long as the caller
-  allows and treats a preview like every other answer. `RetryingIcapClient`
-  repeats `options()` after an ICAP 5xx and nothing else: a 5xx or a failed
-  write does not prove that the server did not process the bytes of an upload,
-  so `request()`, `scanFile()` and `scanFileWithPreview()` get one attempt
-  (`maxAttempts` counts the first attempt as before; an application that knows
-  its scans are repeatable repeats them itself). The pause before the next
+  allows and treats a preview like every other answer. **Behaviour change:**
+  `RetryingIcapClient` repeats `options()` after an ICAP 5xx and nothing else:
+  a 5xx or a failed write does not prove that the server did not process the
+  bytes of an upload, so `request()`, `scanFile()` and `scanFileWithPreview()`
+  get one attempt (`maxAttempts` counts the first attempt as before; code that
+  relied on the decorator for scans repeats them itself, where it knows that
+  scanning the file again is safe). The pause before the next
   attempt is a random share, from nothing up to all of it, of the capped
   exponential delay (`random` is a seam for tests); it ends with the caller's
   cancellation and the end of the operation, and even a pause of 0 hands the
@@ -420,14 +427,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the returned Future instead of throwing at the call. *(M11)*
 - New `IcapStorageException` (extends `RuntimeException`) for an unreadable file or stream, replacing the plain
   `\RuntimeException`, and for a failing OPTIONS cache backend (PSR-6/PSR-16 adapters). *(M11)*
-- **Behaviour change:** `RetryingIcapClient` no longer repeats `request()`,
-  `scanFile()` and `scanFileWithPreview()` after an ICAP 5xx; only
-  `options()` is repeated. Code that relied on file scans being retried by
-  the decorator has to retry them itself, where it knows that scanning the
-  file again is safe. Every operation is now ended by `operationTimeout`
-  (60 seconds by default), which also bounds an upload that used to run as
-  long as the peer kept reading: raise `Config::$operationTimeout` for
-  larger files or slower scanners.
 - `composer.json` declares the runtime packages the library uses itself.
   `amphp/amp` (`async`, `Future`, `Cancellation`) and `amphp/byte-stream`
   (`ClosedException`) were only there through `amphp/socket`. The minimum

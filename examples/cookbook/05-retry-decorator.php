@@ -28,9 +28,9 @@ use Ndrstmr\Icap\Transport\AsyncAmpTransport;
  * the whole call — every attempt and pause — has one end: operationTimeout.
  * A cancellation ends a pause at once.
  *
- * Typical use case: ClamAV reloading signatures (returns 503 for a few
- * seconds) when the application asks for the server's capabilities, or a
- * vendor appliance under heavy load.
+ * Typical use case: a server that answers 503 (service overloaded,
+ * RFC 3507 §4.3.3) for a moment when the application asks for its
+ * capabilities.
  */
 
 $config = new Config('icap.example.com');
