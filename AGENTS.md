@@ -8,6 +8,8 @@ This is a PHP 8.4 Composer library for an async-ready ICAP client. Production co
 
 Every DEV-agent must work in its own assigned Git worktree under `.worktrees/<task-name>/` in the main checkout's repository root. This directory is gitignored via `/.worktrees/`. Do not create agent worktrees outside that directory or inside another worktree.
 
+Name branches by purpose, such as `fix/`, `refactor/`, `docs/` or `feat/`. Never use `codex/` or other agent prefixes.
+
 The main checkout retains the untracked task lists, audits, and evidence. Copy required context into the assigned worktree; preserve the originals and do not stage, move, delete, stash, reset, or clean them. Keep supplied context copies out of implementation changes. Install dependencies in the assigned worktree; do not use a writable `vendor` symlink to the main checkout.
 
 Before editing, verify `pwd`, `git rev-parse --show-toplevel`, `git worktree list --porcelain`, and `git status --short`. Report the worktree path, HEAD, and initial working-tree status with the review submission.
