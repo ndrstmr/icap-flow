@@ -22,9 +22,10 @@ use Ndrstmr\Icap\Transport\AsyncAmpTransport;
  *   2. User-initiated: the HTTP client cancelled the upload, so
  *      there's no point continuing the scan.
  *
- * Both use amphp's Cancellation hierarchy. The library combines the
- * user-supplied Cancellation with its own per-IO TimeoutCancellation
- * via CompositeCancellation — whichever fires first wins.
+ * Both use amphp's Cancellation hierarchy. Your cancellation ends the
+ * scan with Amp\CancelledException; the client's own limits
+ * (operationTimeout and the limit of each phase) end it with
+ * IcapTimeoutException. Where both apply, your cancellation wins.
  */
 
 $config = new Config('icap.example.com');

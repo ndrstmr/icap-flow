@@ -1,53 +1,46 @@
 # Async — amphp v3 / Revolt — icap-flow
 
-icap-flow nutzt **amphp v3** (`amphp/socket: ^2.3`) und **Revolt EventLoop**. Symfony HttpClient kommt **nicht** zum Einsatz — der Vergleichscode aus dem Lotse-Workspace gilt hier ausdrücklich nicht. Diese Datei erklärt die Patterns, die in `src/` aktiv sind.
+icap-flow nutzt **amphp v3** (`amphp/socket: ^2.3`, `amphp/file` für Dateiquellen) und **Revolt EventLoop**. Symfony HttpClient kommt **nicht** zum Einsatz. Diese Datei erklärt die Patterns, die in `src/` aktiv sind; die verbindlichen Regeln stehen in [CLAUDE.md](../../../../CLAUDE.md).
 
 ## Mental-Model
 
 - `Amp\Future<T>` ist das Promise-Äquivalent — `await()` blockiert die aktuelle Fiber, bis der Wert da ist.
-- `\Amp\async(fn (): T => ...)` startet eine neue Fiber und gibt ein `Future<T>` zurück. So entstehen alle public-async-Methoden im `IcapClient`.
+- `\Amp\async(fn (): T => ...)` startet eine neue Fiber und gibt ein `Future<T>` zurück. Die öffentlichen Methoden des `IcapClient` laufen so über `IcapClient::run()`.
 - `Amp\Cancellation` ist der zentrale Abbruch-Mechanismus. Jede public Methode des `IcapClient` nimmt ein optionales `?Cancellation` als letzten Parameter — Patches müssen dieses Muster halten.
 - Cancellation des Aufrufers und Library-Timeout bilden je IO-Phase (Erwerb in `openSession()`, `write()`, `readResponse()`) ein Fenster: ein `DeferredCancellation`, ausgelöst von `EventLoop::delay()` (`streamTimeout`; die Antwort: `responseStartTimeout` bis zum ersten Byte, dann `streamTimeout` als Höchstdauer; TLS-Handshake: `tlsHandshakeTimeout` in `SocketOpener`) und einer Subscription auf der User-Cancellation. Die User-Cancellation ist im Client die `OperationDeadline` des Aufrufs (`operationTimeout`): Ende der Operation und Cancel des Aufrufers laufen so durch dieselben Fenster, der Cancel gewinnt und bleibt `CancelledException`, das Ende ist `IcapTimeoutException`. Der Cancel des Aufrufers bleibt `Amp\CancelledException`, das eigene Fenster ist `IcapTimeoutException`. Ein `read()`, der seine Bytes ohne Suspendieren findet, gibt dem Timer keinen Loop-Turn: der Checkpoint prüft Caller und Uhr vor und unmittelbar nach jedem Read (auch bei EOF; beim ersten Read, bevor das Übertragungsfenster das Startfenster ersetzt) und vor der Rückgabe des Frames; `release()` poolt keinen Socket einer abgebrochenen oder abgelaufenen Operation.
 
 ## Standardsignatur einer öffentlichen Async-Methode
 
 ```php
-// [EUPL-Header]
-declare(strict_types=1);
-
-namespace Ndrstmr\Icap;
-
-use Amp\Cancellation;
-use Amp\Future;
-
 #[\Override]
 public function options(string $service, ?Cancellation $cancellation = null): Future
 {
-    /** @var Future<ScanResult> $future */
-    $future = \Amp\async(function () use ($service, $cancellation): ScanResult {
-        // ... Orchestrierung, await(), interpretResponse()
-        return $result;
-    });
+    $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
+    $uri = $this->buildServiceUri($service);   // prüfen, bevor ein Byte oder ein Cache-Key entsteht
 
-    return $future;
+    return $this->run($deadline, function (OperationDeadline $deadline) use ($uri): IcapResponse {
+        // ... executeRaw($request, $deadline)->await(), $deadline->checkpoint(), assertOptionsStatus()
+    });
 }
 ```
 
-Drei Regeln, die bei jeder neuen Async-Methode greifen:
+Regeln, die bei jeder neuen Async-Methode greifen:
 1. **Return-Type-Annotation `Future<X>` per PHPDoc**, da PHP keine generischen Native-Types kennt — PHPStan Level 9 mahnt sonst.
-2. **Logging-Sandwich**: `info` beim Start, `warning` im `catch`, `info` beim Erfolg. Keys `method`, `port`, `statusCode`, `infected`, im Fehlerfall `exception_class`; nie URI, Host, Exception-Message oder Throwable. Vorbild: `IcapClient::request()` mit `logContext()` und `logFailure()`.
-3. **Try/Finally für Resource-Lifecycle** — Streams schließen, Sessions zurückgeben (`release()`) oder hart schließen (`close()`).
+2. **Eine Endzeit je Aufruf**: `OperationDeadline::begin()` beim Aufruf, `run()` prüft die Uhr vor dem Rückgabewert und schließt die Deadline in `finally`.
+3. **Logging-Sandwich**: `info` beim Start, `warning` im `catch`, `info` beim Erfolg. Keys `method`, `port`, `statusCode`, `infected`, im Fehlerfall `exception_class`; nie URI, Host, Exception-Message oder Throwable. Vorbild: `IcapClient::requestWith()` mit `logContext()` und `logFailure()`.
+4. **Try/Finally für Resource-Lifecycle** — Dateien schließen (`close()`/`discard()`), Sessions zurückgeben (`release()`) oder hart schließen (`close()`).
 
 ## Cancellation richtig durchreichen
 
-`Cancellation` reicht **immer** bis zum Socket runter. Niemals abschneiden, weil die Methode "nur kurz" ist.
+`Cancellation` reicht **immer** bis zum Socket runter. Niemals abschneiden, weil die Methode "nur kurz" ist. Im Client ist es die `OperationDeadline` des Aufrufs:
 
 ```php
-public function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null): Future
+protected function executeRaw(IcapRequest $request, ?Cancellation $cancellation = null, ?int $discardBudget = null): Future
 {
     /** @var Future<IcapResponse> $future */
-    $future = \Amp\async(function () use ($request, $cancellation): IcapResponse {
-        $chunks         = $this->formatter->format($request);
+    $future = \Amp\async(function () use ($request, $cancellation, $discardBudget): IcapResponse {
+        $chunks = $this->formatter->format($request);
+        // ... mit $discardBudget: requestDiscardingBody()
         $responseString = $this->transport->request($this->config, $chunks, $cancellation)->await();
 
         return $this->parser->parse($responseString);
@@ -57,89 +50,13 @@ public function executeRaw(IcapRequest $request, ?Cancellation $cancellation = n
 }
 ```
 
-In `AsyncAmpTransport::openSession()` (Erwerb: Pool, Connect, TLS) und in `AmpTransportSession::inWindow()` (für `write()` und `readResponse()`) fließen Library-Timeout und User-Abbruch zu einem Fenster zusammen. Timer und Subscription werden in `finally` ausdrücklich entfernt: `TimeoutCancellation` und `CompositeCancellation` räumen erst im Destruktor auf, und eine gehaltene Exception hält die Argumente ihrer Frames, damit beide, am Leben.
-
-```php
-$cancellation?->throwIfRequested();       // vorab gecancelt: Pool und Connector bleiben unberührt
-$endsAt = hrtime(true) + $config->getStreamTimeout() * 1e9;
-$window = new DeferredCancellation();
-$expired = false;
-$deadline = EventLoop::delay($config->getStreamTimeout(), function () use (&$expired, $window): void {
-    $expired = true;
-    $window->cancel();
-});
-$watch = $cancellation?->subscribe(static function () use ($window): void {
-    $window->cancel();
-});
-$socket = null;
-
-try {
-    $socket = $this->acquireSocket($config, $window->getCancellation());
-
-    // Ein Connector muss den Token nicht beachten; blockiert er den Event-Loop, feuert der Timer nicht.
-    $cancellation?->throwIfRequested();
-    if (hrtime(true) >= $endsAt) {
-        $expired = true;
-        $window->cancel();
-    }
-    $window->getCancellation()->throwIfRequested();
-} catch (\Throwable $e) {
-    $socket?->close();                    // ein nach Abbruch gelieferter Socket wird nicht benutzt
-    if ($e instanceof CancelledException) {
-        $cancellation?->throwIfRequested();   // der Cancel des Aufrufers bleibt, wie er ist
-        if ($expired) {
-            throw new IcapTimeoutException(/* ... */);
-        }
-    }
-    throw $e;
-} finally {
-    EventLoop::cancel($deadline);
-    if ($cancellation !== null && $watch !== null) {
-        $cancellation->unsubscribe($watch);
-    }
-}
-```
+In `AsyncAmpTransport::openSession()` (Erwerb: Pool, Connect, TLS) und in `AmpTransportSession::inWindow()` (für `write()` und `readResponse()`) fließen Library-Timeout und User-Abbruch zu einem Fenster zusammen; dort steht das Muster: vorab gecancelt → Pool und Connector bleiben unberührt, Fensterende als `IcapTimeoutException`, der Cancel des Aufrufers bleibt, ein nach Abbruch gelieferter Socket wird geschlossen. Timer und Subscription werden in `finally` ausdrücklich entfernt: `TimeoutCancellation` und `CompositeCancellation` räumen erst im Destruktor auf, und eine gehaltene Exception hält die Argumente ihrer Frames, damit beide, am Leben.
 
 **Per-IO, nicht Session-Lifetime:** Jeder `write()`- und `readResponse()`-Aufruf bekommt ein neues Fenster; bei `write()` gilt es für alle Chunks des Aufrufs und wird dort, wo der Producer die Kontrolle zurückgibt (jeder Chunk, auch ein leerer; nach jedem Write; vor der Rückgabe), zusätzlich an einer monotonen Endzeit geprüft, weil der Timer nicht feuert, solange ein Producer den Event-Loop hält. `Socket::write()` hat keinen Cancellation-Parameter: ein unter Backpressure festhängender Write endet nur, indem die Session (der Socket) geschlossen wird. Ein Aufruf, der nicht fertig wird, schließt die Session dauerhaft; `release()` danach poolt nichts.
 
 ## Sessions — Strict-§4.5-Preview-Continue
 
-`SessionAwareTransport` ist die Voraussetzung dafür, dass Preview und Continuation auf demselben Socket leben. Lebenszyklus einer Session:
-
-```php
-$session = $this->transport->openSession($this->config, $cancellation);
-$reusable = false;   // Standard: schließen
-try {
-    $session->write($this->formatter->format($previewRequest));
-    $previewIcapResponse = $this->parser->parse($session->readResponse());
-    $serverCloses = HeaderFields::hasToken($previewIcapResponse->headers, 'Connection', 'close');
-
-    if ($previewIsComplete) {
-        $result = $this->interpretResponse($previewIcapResponse, $this->config);
-        $reusable = !$serverCloses;
-        return $result;
-    }
-
-    $decision = $this->previewStrategy->handlePreviewResponse($previewIcapResponse);
-
-    if ($decision !== PreviewDecision::CONTINUE_SENDING) {
-        $result = new ScanResult(/* ... */);
-        $reusable = !$serverCloses;
-        return $result;
-    }
-
-    // §4.5 continuation: NUR die Chunked-Body-Reste, kein neuer ICAP-Head.
-    $session->write((new ChunkedBodyEncoder())->encodeRemainderFromStream($stream));
-
-    $finalIcapResponse = $this->parser->parse($session->readResponse());
-    $result = $this->interpretResponse($finalIcapResponse, $this->config);
-    $reusable = !$serverCloses
-        && !HeaderFields::hasToken($finalIcapResponse->headers, 'Connection', 'close');
-    return $result;
-} finally {
-    $reusable ? $session->release() : $session->close();
-}
-```
+`SessionAwareTransport` ist die Voraussetzung dafür, dass Preview und Continuation auf demselben Socket leben. Ablauf in `IcapClient::scanFileWithPreviewStrict()`: `openSession()`, Preview schreiben, Antwort lesen; ist das Preview die ganze Datei, entscheidet `interpretResponse()`, sonst `previewResult()` (Strategie oder Verdikt); bei `100 Continue` geht nur der Rest des Chunked-Bodys hinaus (`ChunkedBodyEncoder::encodeRemainderFromStream()`, kein neuer ICAP-Head), dann entscheidet `interpretResponse()` die finale Antwort.
 
 Faustregeln:
 - `release()` erst nach geprüftem Frame, erlaubtem Status/Verdikt und ohne `close`-Token in `Connection` einer Antwort des Austauschs.
@@ -153,55 +70,27 @@ Faustregeln:
 2. encapsulated HTTP-Header-Block
 3. Chunked-Body (HTTP/1.1) inkl. Terminator (`0\r\n\r\n` regulär, `0; ieof\r\n\r\n` bei Preview-Complete).
 
-Niemals den Body in einen einzigen String puffern. `scanFile()` öffnet die Datei innerhalb des Futures (`fopen()`, dann `fstat()` am Handle), reicht den Stream als `body` in den `HttpResponse` und lässt den Encoder daraus Chunks ziehen; den eigenen Handle schließt es in `finally`. Übergebene Streams liest der Client nur. Der Encoder terminiert (`0\r\n\r\n` / `0; ieof`) erst nach bestätigtem EOF; Lesefehler, leerer Read vor dem Ende oder ein nötiger, fehlgeschlagener Rewind werfen. Kündigt die Nachricht eine einzelne `Content-Length` an, muss der Stream genau so viele Bytes liefern (der Formatter reicht sie an den Encoder), sonst wirft er vor dem Abschlusschunk (außer bei einem Teil-Preview: `Preview` ohne `ieof`).
-
-**v2.1.2-Bug (Item #7):** Die heutige Strict-§4.5-Continuation in `IcapClient.php:399` macht `stream_get_contents($stream)` und puffert dadurch die Datei nach Preview komplett in RAM. Fix: `ChunkedBodyEncoder::encodeRemainderFromStream($stream)` ergänzen und den `stream_get_contents`-Call ersetzen. Memory-Watermark-Test (2-GB-Stream unter `php -d memory_limit=128M`) gehört in den gleichen PR.
+Niemals den Body in einen einzigen String puffern. `scanFile()` öffnet die Datei innerhalb des Futures über `LocalFile::open()` (amphp/file, eigene Worker-Prozesse), nimmt die Größe der offenen Datei, reicht sie als `body` in den `HttpResponse` und lässt den Encoder daraus Chunks ziehen; nach dem Austausch prüft `assertRead()`, dass der Request bis EOF gelesen hat, und `close()`/`discard()` schließen sie. Übergebene Streams liest der Client nur. Der Encoder terminiert (`0\r\n\r\n` / `0; ieof`) erst nach bestätigtem EOF; Lesefehler, leerer Read vor dem Ende oder ein nötiger, fehlgeschlagener Rewind werfen `IcapStorageException`. Kündigt die Nachricht eine einzelne `Content-Length` an, muss der Stream genau so viele Bytes liefern (der Formatter reicht sie an den Encoder), sonst wirft er vor dem Abschlusschunk (außer bei einem Teil-Preview: `Preview` ohne `ieof`). Details: [`docs/file-sources.md`](../../../../docs/file-sources.md).
 
 ## TLS — `icaps://`
 
-`Config::withTlsContext(new ClientTlsContext($host))` schaltet auf TLS um. `AsyncAmpTransport` ruft dann `Socket\connectTls()` statt `Socket\connect()`:
-
-```php
-$context = (new ConnectContext())->withConnectTimeout($config->getSocketTimeout());
-if ($tls !== null) {
-    $context = $context->withTlsContext($tls);
-    return Socket\connectTls($url, $context, $cancellation);
-}
-return Socket\connect($url, $context, $cancellation);
-```
+`Config::withTlsContext(new ClientTlsContext($host))` schaltet auf TLS um, nur mit `AsyncAmpTransport` (der synchrone Transport lehnt einen TLS-Kontext mit `IcapConnectionException` ab). `SocketOpener::open()` ist der eine Weg zu einer Verbindung (Transport, Pool, NullPool): TCP in `socketTimeout`, dann `setupTls()` in `tlsHandshakeTimeout`, nie `connectTls()`.
 
 **Pool-Key:** `AmpConnectionPool::bucketOf()` hängt ein vom Pool vergebenes, nie wiederverwendetes Token je `ClientTlsContext`-Objekt an (`\WeakMap`, B07). Gleiche Objekte teilen Sockets, verschiedene nie — auch nicht, nachdem das Original freigegeben wurde.
 
 ## Connection-Pool
 
-```php
-final class AmpConnectionPool implements ConnectionPoolInterface
-{
-    /** @var array<string, list<SocketInterface>> */
-    private array $idle = [];
-
-    public function acquire(Config $config, Cancellation $cancellation): SocketInterface { /* ... */ }
-
-    public function release(Config $config, SocketInterface $socket): void { /* ... */ }
-}
-```
-
-Verhalten heute:
-- LIFO pro Bucket (warmer Socket zuerst).
+Opt-in über `new AsyncAmpTransport($pool)`; ohne Pool öffnet jeder Request eine eigene Verbindung. Verhalten:
+- LIFO pro Bucket (warmer Socket zuerst); Idle-Sockets älter als `maxIdleSeconds` schließt der Pool in allen Buckets (monotone Uhr).
 - `acquire()` reserviert vor dem Connect Platz (Endpoint-Cap `maxConnectionsPerHost` und Gesamtcap `maxConnections` über verbindende, aktive und idle Sockets) und wirft `IcapConnectionException`, wenn der Pool voll ist und keine Queue (`maxWaiters`, `waitTimeout`) konfiguriert ist. Einen Idle-Socket liest es vor der Ausgabe einmal (Bytes oder EOF schließen ihn).
 - `release()` nimmt nur verliehene Sockets zurück und nur für ihren Bucket; Fremdsockets, ein anderer Endpoint/TLS-Kontext und ein Socket über einem gesenkten Cap werden geschlossen. Ein zweites Release im Idle-Zustand ändert nichts (ein Eintrag, eine Ausgabe); ein spätes nach erneuter Ausgabe ist ohne Lease-Token nicht vom Release des neuen Halters zu unterscheiden (die Session schützt sich mit `disposed`).
-
-v2.2-Erweiterungen, die auf der Roadmap stehen:
-- TLS-Fingerprint im Key (Hotfix in v2.1.1)
-- `maxIdleAge` (Default 30 s) + Eviction-Sweep
-- `Config::autoTunePoolFromOptions` — `effectiveCap = min(localCap, serverMaxConnections)` aus dem OPTIONS-Header
+- `tuneFromOptions($response, $config)` senkt die Caps auf `Max-Connections` (positive Dezimalzahl bis 9 Stellen).
 
 ## Concurrency-Primitiven aus amphp
 
 - `\Amp\async(fn (): T): Future<T>` — neuer Fiber-Job, sofort gestartet.
 - `\Amp\delay(float $seconds, ?Cancellation): void` — Sleep, der Cancellation respektiert. Vorbild: `RetryingIcapClient`-Backoff.
-- `Future::complete($value)` — bereits-gelöstes Future. Sinnvoll für Cache-Hits in `options()`.
-- `Future::await()` — blockiert die aktuelle Fiber bis Resolve.
+- `Future::await()` — blockiert die aktuelle Fiber bis Resolve; außerhalb einer Fiber läuft dabei der Event-Loop.
 - `Amp\async()`-Closures dürfen **nicht** auf `$this->state` schreiben, ohne sich der Fiber-Re-Entrancy bewusst zu sein. In icap-flow sind alle Async-Methoden re-entrant-safe, weil `IcapClient` selbst stateless ist (`$transport`, `$formatter`, `$parser` werden nur gelesen).
 
 ## Synchroner Pfad
@@ -225,12 +114,13 @@ Der synchrone Pfad ist **nicht** `SessionAwareTransport`, also fällt `scanFileW
 
 | Tool | Use case | Vorkommen in icap-flow |
 |---|---|---|
-| `\Amp\async()` | Public-Async-Methode | `IcapClient::request()`, `options()`, `scanFileWithPreview()` |
+| `\Amp\async()` | Public-Async-Methode | `IcapClient::run()`, `executeRaw()` |
 | `Future<T>::await()` | In Fiber blockierend warten | Fast alle async-Methoden |
 | `Cancellation` Param | Externes Abbrechen | Pflicht-Last-Param public-API |
-| `DeferredCancellation` + `EventLoop::delay()` | User-Abbruch + Lib-Fenster je IO-Phase | `AsyncAmpTransport::openSession()`, `AmpTransportSession::inWindow()`, `Config::getStreamTimeout()` |
+| `OperationDeadline` | Eine Endzeit je öffentlichem Aufruf | `IcapClient`, `RetryingIcapClient` |
+| `DeferredCancellation` + `EventLoop::delay()` | User-Abbruch + Lib-Fenster je IO-Phase | `AsyncAmpTransport::openSession()`, `AmpTransportSession::inWindow()` |
 | `SessionAwareTransport` | Multi-IO auf einem Socket | Strict-§4.5-Pfad |
-| `Socket\connect()` / `connectTls()` | Plain / TLS | `AsyncAmpTransport::acquireSocket()` |
+| `SocketOpener::open()` | TCP, dann `setupTls()` | Transport, Pool, `NullConnectionPool` |
 | `\Amp\delay()` | Cancellation-aware Sleep | `RetryingIcapClient`-Backoff |
 | Symfony HttpClient | — | **nicht verwendet** in icap-flow |
 | ReactPHP / Swoole | — | **nicht verwendet** |

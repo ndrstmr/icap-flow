@@ -10,11 +10,12 @@ Jede Klasse hat eine klar abgegrenzte Verantwortung und einen fachlichen Grund, 
 | Klasse | Verantwortung |
 |---|---|
 | `RequestFormatter` | bytes-out: `IcapRequest` → iterable<string> RFC-3507-Wire |
-| `ResponseParser` | bytes-in: `string` → `IcapResponse`, mit DoS-Limits |
+| `ResponseParser` / `ResponseFrameReader` | bytes-in über denselben internen `ResponseDecoder`, mit DoS-Limits |
 | `ChunkedBodyEncoder` | RFC-7230-Chunked-Encoding einer einzelnen Body-Quelle |
 | `TransportInterface` | Socket-I/O, kein Protokollwissen |
-| `AmpConnectionPool` | Keep-Alive-Sockets pro `host:port[:tls]`-Key |
+| `AmpConnectionPool` | Verbindungsgrenzen und Keep-Alive-Sockets pro `host:port[:tls]`-Bucket |
 | `PreviewStrategyInterface` | Entscheidung „weitermachen / abbrechen" nach Preview |
+| `CicapVerdict` | verifizierter Modus: Antworten von c-icap `virus_scan` + ClamAV |
 | `IcapClient` | Orchestrierung; Fail-Secure-Statuscode-Auswertung |
 | `RetryingIcapClient` | Decorator: wiederholt nur `options()` nach 5xx (Full-Jitter-Backoff), eine Endzeit je Aufruf |
 
@@ -23,26 +24,25 @@ Trenne eine eigenständige Verantwortung ab, wenn sie einen anderen Änderungsgr
 ### Open/Closed
 Erweiterung läuft über Interfaces, nicht Subklassen:
 
-- Neuer Vendor-Header? `Config::withVirusFoundHeaders([...])`, kein Subclass-`IcapClient`.
-- Vendor-spezifische Preview-Interpretation? Eigene `PreviewStrategyInterface`-Impl, in den Konstruktor des `IcapClient` reichen.
-- Anderes Caching-Backend? Eigene `OptionsCacheInterface`-Impl (PSR-16-Adapter ist auf der v2.2-Roadmap).
-- Anderes Pool-Backend? `ConnectionPoolInterface`-Impl. `NullConnectionPool` ist das v2.2-Item, das diesen Slot offiziell macht.
+- Weiterer Virus-Header? `Config::withVirusFoundHeaders([...])`, kein Subclass-`IcapClient`.
+- Eigene Preview-Interpretation? Eigene `PreviewStrategyInterface`-Impl, in den Konstruktor des `IcapClient` reichen (nicht mit dem verifizierten Modus und nicht mit `scanFileWithPreviewDiscardingBody()`).
+- Anderes Caching-Backend? `Psr6OptionsCache`/`Psr16OptionsCache` oder eine eigene `OptionsCacheInterface`-Impl.
+- Anderes Pool-Backend? `ConnectionPoolInterface`-Impl; `NullConnectionPool` öffnet je `acquire()` eine Verbindung und poolt nichts.
 
 ### Liskov Substitution
-Alle `TransportInterface`-Implementierungen müssen denselben Wire-Vertrag erfüllen — was `AsyncAmpTransport` zurückgibt, muss byte-identisch `SynchronousStreamTransport` zurückgeben können (gleicher Server vorausgesetzt). Tests in `tests/Transport/TransportInterfaceTest.php` prüfen genau das.
+Alle `TransportInterface`-Implementierungen müssen denselben Wire-Vertrag erfüllen: Beide eingebauten Transporte rahmen Antworten mit demselben `ResponseFrameReader`, gleicher Server vorausgesetzt liefern sie dieselben Bytes.
 
 ### Interface Segregation
-Beispiel: `SessionAwareTransport` ist ein zusätzliches Interface neben `TransportInterface`, nicht eine Methode, die jede Impl erfüllen müsste. Der Synchronous-Transport implementiert nur `TransportInterface` — er kann keine Sessions, also gibt's auch keinen No-Op-Stub. `IcapClient::scanFileWithPreview()` prüft `instanceof SessionAwareTransport` und wählt den Pfad.
+Optionale Fähigkeiten sind eigene Interfaces, keine Pflichtmethoden: `SessionAwareTransport` (Sessions für Strict-§4.5) und `DiscardingTransport` (Antworten ohne gespeicherten Body). Der synchrone Transport implementiert `DiscardingTransport`, aber nicht `SessionAwareTransport` — kein No-Op-Stub. `IcapClient::scanFileWithPreview()` prüft `instanceof SessionAwareTransport` und wählt den Pfad.
 
 ```php
-if ($this->transport instanceof SessionAwareTransport) {
-    return $this->scanFileWithPreviewStrict(...);
-}
-return $this->scanFileWithPreviewLegacy(...);
+$result = $this->transport instanceof SessionAwareTransport
+    ? $this->scanFileWithPreviewStrict(...)
+    : $this->scanFileWithPreviewLegacy(...);
 ```
 
 ### Dependency Inversion
-`IcapClient` hängt **ausschließlich** an Interfaces:
+`IcapClient` hängt an Interfaces; konkret sind nur die Werte `Config` und `CicapVerdict`:
 
 ```php
 public function __construct(
@@ -53,6 +53,7 @@ public function __construct(
     ?PreviewStrategyInterface $previewStrategy = null,
     ?LoggerInterface $logger = null,
     private ?OptionsCacheInterface $optionsCache = null,
+    private readonly ?CicapVerdict $verdict = null,
 ) { ... }
 ```
 
@@ -96,88 +97,56 @@ Nie `Mockery` für die Wire-Tests verwenden — die ganze Idee ist, dass **echte
 ## Eingesetzte Patterns — und wo sie liegen
 
 ### Strategy
-- `PreviewStrategyInterface` → `DefaultPreviewStrategy` (+ Cookbook 02 zeigt Vendor-Custom-Strategie).
-- v2.1.1-Hotfix erweitert die Default-Strategie um den 200/206-Branch (Virus-Header → `ABORT_INFECTED`).
+- `PreviewStrategyInterface` → `DefaultPreviewStrategy` (+ Cookbook 02 zeigt eine eigene Strategie).
 
 ### Decorator
 - `RetryingIcapClient` wickelt einen `IcapClientInterface` und wiederholt **nur `options()`** nach 5xx, mit Exponential-Backoff und Full Jitter; alle anderen Operationen bekommen einen Versuch. Ein Aufruf hat eine Endzeit (`operationTimeout`, `OperationDeadline`), die der innere Client als Cancellation bekommt und nicht verlängern kann.
-- Geplant für v2.2: `OtelTracingIcapClient` als weiterer Decorator (OpenTelemetry-Spans). **Niemals** den Retry- oder Tracing-Code in `IcapClient` selbst einbauen — das wäre eine SRP-Verletzung.
-
-```php
-final class RetryingIcapClient implements IcapClientInterface
-{
-    public function __construct(
-        private IcapClientInterface $inner,
-        private int $maxRetries = 3,
-        private float $baseDelaySeconds = 0.5,
-    ) {
-    }
-
-    #[\Override]
-    public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
-    {
-        return \Amp\async(function () use ($request, $cancellation): ScanResult {
-            $attempt = 0;
-            while (true) {
-                try {
-                    return $this->inner->request($request, $cancellation)->await();
-                } catch (IcapServerException $e) {
-                    if (++$attempt > $this->maxRetries) {
-                        throw $e;
-                    }
-                    delay($this->baseDelaySeconds * (2 ** ($attempt - 1)));
-                }
-            }
-        });
-    }
-}
-```
+- **Niemals** Retry- oder Tracing-Code in `IcapClient` selbst einbauen — das wäre eine SRP-Verletzung.
 
 Decorator-Regel: **gleiches Interface, kein erweitertes Interface**. Wer `RetryingIcapClient` einsetzt, muss kein Wissen über das Wrapping haben.
 
 ### Facade
 - `SynchronousIcapClient` ist eine Facade auf `IcapClient`, die `await()` aufruft und Framework-lose Aufrufer von Revolt-EventLoop abschirmt.
-- `IcapClient` selbst ist Facade für die vier Worker-Klassen `RequestFormatter`, `ResponseParser`, `TransportInterface`, `PreviewStrategyInterface`.
+- `IcapClient` selbst ist Facade für die Worker-Klassen `RequestFormatter`, `ResponseParser`, `TransportInterface`, `PreviewStrategyInterface`.
 
 ### Factory
-- `IcapClient::create()`, `IcapClient::forServer($host, $port = 1344)`, `SynchronousIcapClient::create()` — Convenience-Factories mit Default-Verdrahtung.
-- Geplante v2.3.0-Bundle nutzt eine echte `IcapClientFactory` (siehe `references/symfony-bundle.md`).
+- `IcapClient::create()`, `IcapClient::forServer($host, $port = 1344, ?CicapVerdict $verdict = null)`, `SynchronousIcapClient::create()` — Convenience-Factories mit Default-Verdrahtung; `create()` und `SynchronousIcapClient::create()` laufen mit den Standardregeln.
 
 ### Session-Object
 - `TransportSession` (Interface) + `AmpTransportSession` (Impl) für Strict-§4.5-Preview-Continue.
 - Lifecycle: `openSession()` → `write()` → `readResponse()` → `release()` (zurück in den Pool) nur nach geprüftem Austausch, sonst `close()`; Standard ist `close()`.
 
 ### Object-Pool
-- `AmpConnectionPool` mit LIFO-Stack pro `host:port[:tls]`-Bucket; Caps zählen verbindende, aktive und idle Sockets (Endpoint = `host:port`).
+- `AmpConnectionPool` mit LIFO-Stack pro `host:port[:tls]`-Bucket; Caps zählen verbindende, aktive und idle Sockets (Endpoint = `host:port`); Idle-Sockets altern nach `maxIdleSeconds` aus.
 - Pool-Key: `host:port` plus, mit TLS, ein nie wiederverwendetes Token je `ClientTlsContext`-Objekt (`\WeakMap`); kein `spl_object_hash()` als Identität (B07).
-- Geplant v2.2: `maxIdleAge` (Default 30 s) und Eviction-Sweep.
 
 ### Null-Object
-- v2.2-Item: `NullConnectionPool` als expliziter Opt-Out. Heute reicht `null` — das soll explizit werden, wenn das Bundle-Repo den Slot in DI-Configs braucht.
+- `NullConnectionPool` als expliziter Opt-Out: jede Anfrage eine eigene Verbindung, wie ohne Pool.
 
 ## Anti-Patterns, die hier nicht reinkommen
 
 - **Service-Locator** — keine globale Registry. Alles per Constructor-DI.
 - **Static State** in `src/` — auch nicht für Caches. `OptionsCacheInterface` ist ein Konstruktor-Argument.
 - **Template-Method-Subclassing** — wir haben keine Abstract-Base-Klassen. Alles ist `final`.
-- **God-Objects** — `IcapClient` ist 638 Zeilen, ist aber Orchestrator. Wenn er größer als ~700 Zeilen wird, ein neues Helper-Object extrahieren (z. B. `PreviewExchange` für die Strict-§4.5-Logik).
+- **God-Objects** — `IcapClient` orchestriert nur; Wire-Format, Transport, Pool, Cache und Verdikt liegen in eigenen Klassen.
 - **Mutable DTOs** — `Config::withFoo()` muss eine neue Instanz liefern, nicht `$this` mutieren.
 - **Exception-Mapping in der Mitte** — Exceptions werden dort geworfen, wo der semantische Kontext liegt (Wire-Layer wirft `IcapMalformedResponseException`, Transport-Layer `IcapConnectionException`). `IcapClient` mappt nur Statuscodes, nichts anderes.
 
 ## BC-Stabilität
 
-Public-API-Liste, die v2-stabil ist und **bis v3.0.0** nicht angefasst wird:
+Zur öffentlichen API (SemVer) gehören:
 
-- `IcapClientInterface`
-- `IcapClient`-Public-Methoden inklusive `executeRaw()` (v3-Item: `protected` oder ins Interface heben)
-- `SynchronousIcapClient`
-- `Config` und ihre `with*()`-Methoden
-- `TransportInterface`, `SessionAwareTransport`, `TransportSession`
+- `IcapClientInterface`, `DiscardingIcapClient`
+- `IcapClient`, `SynchronousIcapClient`, `RetryingIcapClient` und ihre öffentlichen Methoden
+- `Config` und ihre `with*()`-Methoden, `CicapVerdict`
+- `TransportInterface`, `SessionAwareTransport`, `TransportSession`, `DiscardingTransport`, `DiscardingTransportSession`
 - `PreviewStrategyInterface`, `PreviewDecision`
 - `RequestFormatterInterface`, `ResponseParserInterface`
 - `OptionsCacheInterface`, `ConnectionPoolInterface`
 - Alle Exception-Klassen unter `Ndrstmr\Icap\Exception\` plus `IcapExceptionInterface`
 - Alle DTOs unter `Ndrstmr\Icap\DTO\`
+
+Klassen mit `@internal` gehören nicht dazu.
 
 | Aktion | Erlaubt? |
 |---|---|
@@ -191,4 +160,4 @@ Public-API-Liste, die v2-stabil ist und **bis v3.0.0** nicht angefasst wird:
 | Public-Method entfernen | ❌ Breaking |
 | Return-Type spezialisieren | ❌ Breaking |
 
-Alle ❌-Items kommen in den **v3.0.0-Bucket der `consolidated_v2.1_task-list.md`**. Trigger v3.0.0 ist explizit: erst wenn mindestens zwei der drei dort gelisteten BC-Breaks durch User-Feedback erzwungen werden.
+Ein ❌-Item geht nur in eine Major-Version, derzeit das unveröffentlichte 4.0.0 (`[Unreleased]` im CHANGELOG, dort markiert), und nur mit ausdrücklicher Freigabe im Auftrag (AGENTS.md).

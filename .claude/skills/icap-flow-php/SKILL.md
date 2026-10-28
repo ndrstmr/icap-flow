@@ -1,12 +1,12 @@
 ---
 name: icap-flow-php
-description: Use when working in the ndrstmr/icap-flow library — PHP 8.4/8.5, amphp v3, Pest 3, RFC 3507 ICAP wire format. Activates fail-secure semantics, BC-stable interface design, PHPStan level 9 + bleedingEdge, EUPL-1.2 file headers, SOLID/TDD discipline. Anwenden bei Arbeit an icap-flow — also bei Transport-Code, IcapClient-Facade, Preview-Strategy, ConnectionPool, Wire-Formatter/Parser, RetryingIcapClient, DTOs, OPTIONS-Cache oder dem geplanten Symfony-7.4-Bundle in v2.3.0.
+description: Use when working in the ndrstmr/icap-flow library — PHP 8.4/8.5, amphp v3, Pest 3, RFC 3507 ICAP wire format. Activates fail-secure semantics, BC-stable interface design, PHPStan level 9 + bleedingEdge, EUPL-1.2 file headers, SOLID/TDD discipline. Anwenden bei Arbeit an icap-flow — also bei Transport-Code, IcapClient-Facade, Preview-Strategy, verifiziertem Modus (CicapVerdict), ConnectionPool, Wire-Formatter/Parser, RetryingIcapClient, DTOs oder OPTIONS-Cache.
 license: EUPL-1.2
 metadata:
   author: https://github.com/ndrstmr
   version: "1.0.0"
   domain: language
-  triggers: PHP, PHP 8.4, PHP 8.5, ICAP, RFC 3507, amphp, Revolt, Pest, PHPStan, PSR-12, EUPL, fail-secure, RESPMOD, REQMOD, OPTIONS, Preview, Encapsulated, Connection Pool, Symfony 7.4, Bundle, readonly, value object, Fail-Secure, Strategy, Decorator, Facade, ChunkedBodyEncoder, ResponseFrameReader
+  triggers: PHP, PHP 8.4, PHP 8.5, ICAP, RFC 3507, amphp, Revolt, Pest, PHPStan, PSR-12, EUPL, fail-secure, RESPMOD, REQMOD, OPTIONS, Preview, Encapsulated, Connection Pool, CicapVerdict, readonly, value object, Fail-Secure, Strategy, Decorator, Facade, ChunkedBodyEncoder, ResponseFrameReader
   role: specialist
   scope: implementation
   output-format: code
@@ -39,8 +39,7 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 | SOLID, TDD & Architektur-Patterns | `references/architecture-patterns.md` | Strategy / Decorator / Facade / Factory / Pool / DI in dieser Codebase angefasst werden |
 | amphp v3 / Revolt / Async | `references/async-amphp.md` | `Future<T>`, `Cancellation`, `\Amp\async()`, Sockets, Sessions oder Connection-Pool berührt werden |
 | icap-flow-spezifische Invarianten | `references/icap-flow-patterns.md` | Fail-Secure, Wire-Format, Preview-§4.5, Header-/URI-Validation, Pool-Key-TLS, OPTIONS-Cache |
-| Pest 3, Mockery, PHPStan, Mutation | `references/testing-pest.md` | Tests, Mocks, Coverage-Hotspots, PHPStan-Level-9-Hürden anstehen |
-| Symfony 7.4 Bundle (v2.3.0-Vorbereitung) | `references/symfony-bundle.md` | DI / Configuration-Tree / Profiler / Console-Commands für das geplante `ndrstmr/icap-flow-bundle`-Repo entworfen werden |
+| Pest 3, Mockery, PHPStan, Mutation | `references/testing-pest.md` | Tests, Mocks, PHPStan-Level-9-Hürden anstehen |
 
 ## Constraints
 
@@ -55,18 +54,18 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 - PSR-12 via `composer cs-fix`. Kein Hand-Format.
 - Fail-Secure-Statuscode-Auswertung **ausschließlich** in `IcapClient::interpretResponse()`. Externe Aufrufer rufen `request()` / `scanFile*()`, niemals direkt `executeRaw()`.
 - Header- und URI-Eingaben prüfen, bevor irgendein Byte das Socket erreicht: URIs über `IcapUri` (`forService()`, `authority()`, `tcp()`), Header über `HeaderFields::validated()`. `RequestFormatter::format()` prüft jeden Request, bevor der erste Chunk entsteht.
-- Verwaltete Header in jeder Schreibweise aus Caller-Input entfernen (`HeaderFields::without()`): `Host`/`Encapsulated` setzt immer der Formatter, `Preview`/`Allow` der Preview-Flow über `mergeHeaders()`; `scanFile()` verwirft `Preview`, `Allow` geht dort mit.
-- BC-Promise: Public-API von `IcapClient`, `SynchronousIcapClient`, `Config`, `IcapClientInterface`, `TransportInterface`, `PreviewStrategyInterface`, `OptionsCacheInterface`, `ConnectionPoolInterface` und alle Exception-Klassen sind v2-stabil. BC-Breaks gehen in den v3.0.0-Bucket.
+- Verwaltete Header in jeder Schreibweise aus Caller-Input entfernen (`HeaderFields::without()`): `Host`/`Encapsulated` setzt immer der Formatter, `Preview`/`Allow` der Preview-Flow über `mergeHeaders()`; `scanFile()` verwirft `Preview`, `Allow` geht dort mit (im verifizierten Modus setzt der Client `Allow: 204`).
+- BC: Die öffentliche API (Klassen, Interfaces, DTOs und Exceptions ohne `@internal`) folgt SemVer. `main` ist das unveröffentlichte 4.0.0 (`[Unreleased]` im CHANGELOG); ein BC-Break geht nur im freigegebenen Umfang dorthin und ist dort markiert.
 
 ### DARF NICHT
 - `mixed` ohne `@var`/`@param`-Eingrenzung in PHPDoc.
 - `@phpstan-ignore`, Baseline-Einträge oder `assert()`-Workarounds, um PHPStan-Findings stillzulegen — Root-Cause fixen.
 - Encapsulated-Bodies in einen einzigen String puffern. `RequestFormatter::format()` liefert ein iterierbares Chunk-Array; das ist kein Implementations-Detail.
-- Stille Fallbacks in `interpretResponse()` für unbekannte Statuscodes — alles, was nicht 204 / 200 / 206 ohne Virus-Header ist, wirft eine typisierte Exception.
+- Stille Fallbacks in `interpretResponse()` für unbekannte Statuscodes — alles außer 204 und 200/206 wirft eine typisierte Exception; im verifizierten Modus jede Antwort ohne Scan-Beleg.
 - Einen Socket nach Framing-Fehler oder Exception in den Pool zurückgeben. `AsyncAmpTransport` schließt ihn dann hart.
-- Generische `\RuntimeException` in den Hot-Path. Stattdessen `IcapConnectionException`, `IcapTimeoutException`, `IcapProtocolException`, `IcapMalformedResponseException`, `IcapClientException` (4xx), `IcapServerException` (5xx), `IcapResponseException` (Fallback). Alle implementieren `IcapExceptionInterface`.
+- Generische `\RuntimeException` in den Hot-Path. Stattdessen `IcapConnectionException`, `IcapTimeoutException`, `IcapProtocolException`, `IcapMalformedResponseException`, `IcapClientException` (4xx), `IcapServerException` (5xx), `IcapStorageException` (Datei, Stream, Cache-Backend). Alle implementieren `IcapExceptionInterface`.
 - Neue Codepfade in v1-Compat-Layern. v1 ist deprecated.
-- Symfony-Komponenten in `src/`. Optional bleibt `psr/log`. Symfony-7.4-Integration kommt erst in v2.3.0 als separates Repo `ndrstmr/icap-flow-bundle`.
+- Symfony-Komponenten in `src/`; zur Laufzeit ist `psr/log` die einzige PSR-Abhängigkeit (`psr/cache`, `psr/simple-cache` nur für die Adapter). Ein Bundle gehört in ein eigenes Repo (Plan: `docs/todos/01-symfony-bundle/`).
 
 ## Umsetzung und Übergabe
 
@@ -80,5 +79,5 @@ Für Umsetzung, Tests, Dokumentation und Übergabe gilt [AGENTS.md — Engineeri
 - **Tests:** Pest 3 (PHPUnit 11 darunter), Mockery (Intersection-Type-Hints `Foo&\Mockery\MockInterface`), `pestphp/pest --mutate`.
 - **Quality:** PHPStan 2 Level 9 + bleedingEdge, PHP-CS-Fixer 3 mit eigenem `@PSR12`-Setup + EUPL-Header, `composer audit` + `roave/security-advisories`.
 - **Logging:** PSR-3 (`Psr\Log\LoggerInterface`), strukturierte, datensparsame Log-Events mit `method`, `port`, `statusCode`, `infected`, `exception_class` — nie URI, Host, Exception-Message oder Server-/Headerzeilen.
-- **Vendoring:** c-icap, ClamAV (Referenz-Server), Symantec, Trend Micro, McAfee Web Gateway, Sophos, Kaspersky (Header-Liste in `Config::withVirusFoundHeaders()`).
+- **Server:** verifiziert ist nur c-icap `virus_scan` + ClamAV (`CicapVerdict`, `docs/cicap-clamav.md`, Referenzdienst in `docker-compose.yml`); andere Dienste laufen mit den Standardregeln (Header-Liste in `Config::withVirusFoundHeaders()`), ohne Verifikation.
 - **Lizenz:** EUPL-1.2 (OpenCoDE-kompatibel).

@@ -39,9 +39,9 @@ namespace Ndrstmr\Icap\DTO;
 final readonly class ScanResult
 {
     public function __construct(
-        public bool $isInfected,
-        public ?string $virusName,
-        public IcapResponse $originalResponse,
+        private bool $isInfected,
+        private ?string $virusName,
+        private IcapResponse $originalResponse,
     ) {
     }
 
@@ -54,14 +54,19 @@ final readonly class ScanResult
     {
         return $this->virusName;
     }
+
+    public function getOriginalResponse(): IcapResponse
+    {
+        return $this->originalResponse;
+    }
 }
 ```
 
-`Config` ist `final readonly`, mutiert via `with*()`-Methoden, die neue Instanzen liefern (`withTlsContext`, `withVirusFoundHeaders`, `withLimits`). Keine Setter.
+`Config` ist `final readonly`, mutiert via `with*()`-Methoden, die neue Instanzen liefern (`withTlsContext`, `withVirusFoundHeaders`, `withLimits`, `withTimeouts`). Keine Setter.
 
-## Enums mit Methoden — Strategy-Entscheidungen
+## Enums — Strategy-Entscheidungen
 
-Verwende einen Backed-Enum statt Konstanten oder Strings, sobald eine endliche Menge von Zuständen mit eigener Logik existiert. Beispiel aus `src/PreviewDecision.php`:
+Verwende einen Backed-Enum statt Konstanten oder Strings, sobald eine endliche Menge von Zuständen existiert. Beispiel aus `src/PreviewDecision.php`:
 
 ```php
 // [EUPL-Header]
@@ -71,46 +76,29 @@ namespace Ndrstmr\Icap;
 
 enum PreviewDecision: string
 {
-    case ABORT_CLEAN     = 'abort_clean';
-    case ABORT_INFECTED  = 'abort_infected';
-    case CONTINUE_SENDING = 'continue_sending';
-
-    public function isTerminal(): bool
-    {
-        return $this !== self::CONTINUE_SENDING;
-    }
+    case CONTINUE_SENDING = 'continue';
+    case ABORT_CLEAN = 'abort_clean';
+    case ABORT_INFECTED = 'abort_infected';
 }
 ```
 
-Im v2.1.1-Hotfix wird `DefaultPreviewStrategy::handlePreviewResponse()` um den 200/206-Branch erweitert, der `ABORT_INFECTED` / `ABORT_CLEAN` zurückgibt — das ist genau die Stelle, an der der Enum seine Existenzberechtigung beweist.
+`DefaultPreviewStrategy::handlePreviewResponse()` bildet die Antwort auf ein Preview auf diese drei Fälle ab.
 
 ## Match statt Switch — Statuscode-Auswertung
 
 ```php
-// In IcapClient::interpretResponse()
+// In DefaultPreviewStrategy::handlePreviewResponse()
 return match (true) {
-    $code === 204                    => new ScanResult(false, null, $response),
-    $code === 200 || $code === 206   => $this->scanResultFromMaybeInfected($response, $config),
-    $code === 100                    => throw new IcapProtocolException(
-        'ICAP 100 Continue is only valid during a preview exchange.',
-        $code,
-    ),
-    $code >= 400 && $code < 500      => throw new IcapClientException(
-        sprintf('ICAP client error (%d).', $code),
-        $code,
-    ),
-    $code >= 500 && $code < 600      => throw new IcapServerException(
-        sprintf('ICAP server error (%d).', $code),
-        $code,
-    ),
-    default                          => throw new IcapResponseException(
-        'Unexpected ICAP status: ' . $code,
+    $code === 100 => PreviewDecision::CONTINUE_SENDING,
+    $code === 204 => PreviewDecision::ABORT_CLEAN,
+    $code === 200,
+    $code === 206 => $this->classifyBodyResponse($previewResponse),
+    default => throw IcapStatus::failure($code) ?? new IcapProtocolException(
+        'Unexpected preview status code: ' . $code,
         $code,
     ),
 };
 ```
-
-Die heutige Implementierung in `IcapClient.php:540ff` nutzt noch `if`-Ketten. Refactor auf `match (true)` ist v2.2-würdig, kein BC-Break — aber bitte mit identischen Tests in `tests/IcapClientTest.php` und `tests/Security/FailSecureAndValidationTest.php` flankieren.
 
 ## `#[\Override]` — überall Pflicht
 
@@ -127,9 +115,9 @@ final class DefaultPreviewStrategy implements PreviewStrategyInterface
 }
 ```
 
-## Named Arguments — Pflicht bei Konstruktoren mit ≥3 Parametern
+## Named Arguments — bei Konstruktoren mit ≥3 Parametern
 
-`Config`, `IcapRequest`, `HttpResponse`, `ScanResult` haben alle ≥3 Parameter. Tests und Cookbook-Beispiele rufen sie ausschließlich mit Named Arguments auf — das macht Diffs lesbar und überlebt Parameter-Reorder.
+`Config`, `IcapRequest`, `HttpResponse`, `ScanResult` haben ≥3 Parameter. Neuer Code ruft sie mit Named Arguments auf — das macht Diffs lesbar und überlebt Parameter-Reorder.
 
 ```php
 $envelope = new HttpResponse(
@@ -144,13 +132,10 @@ $envelope = new HttpResponse(
 
 ## First-Class Callables
 
-Für `array_map`, `array_filter`, Decorator-Wrapping und Pool-Factories.
+Für Callbacks, Decorator-Wrapping und Connector-Defaults, z. B. in `AmpConnectionPool`:
 
 ```php
-$models = array_map(
-    ModelInfo::fromHeader(...),
-    $response->headers['Methods'] ?? [],
-);
+$this->connector = $connector ?? SocketOpener::open(...);
 ```
 
 ## `never` für Throw-Helfer
@@ -164,44 +149,9 @@ private function rejectInjection(string $service): never
 }
 ```
 
-## Property Hooks (PHP 8.4)
+## Property Hooks, Asymmetric Visibility (PHP 8.4)
 
-Können sinnvoll sein, wenn `IcapResponse`-Header in normalisierter Form bereitgestellt werden müssen. Heute löst `ResponseParser` das eager beim Bauen. Wenn ein neuer DTO mit lazy-normalisiertem View-State entsteht, nutze Property Hooks statt einer Getter-Methode.
-
-```php
-final class HeaderBag
-{
-    /** @var array<string, list<string>> */
-    private array $raw = [];
-
-    /** @var array<string, list<string>> */
-    public array $normalized {
-        get => array_change_key_case($this->raw, CASE_LOWER);
-    }
-}
-```
-
-## Asymmetric Visibility (PHP 8.4)
-
-Ideal für interne Counter / Idle-Timestamps in `AmpConnectionPool`, die von außen lesbar, aber nur von innen schreibbar sein sollen — ist im v2.2-Idle-Eviction-Item (`maxIdleAge`) ein guter Kandidat:
-
-```php
-final class PooledSocket
-{
-    public private(set) int $checkoutCount = 0;
-    public private(set) float $lastReleasedAt;
-
-    public function markCheckedOut(): void
-    {
-        ++$this->checkoutCount;
-    }
-
-    public function markReleased(float $now): void
-    {
-        $this->lastReleasedAt = $now;
-    }
-}
-```
+In `src/` derzeit nicht verwendet. Header werden nicht über eine normalisierte Map gelesen, sondern über `HeaderFields::values()` in jeder Schreibweise: ein `array_change_key_case()` verlöre Werte, die der Server in zwei Schreibweisen sendet.
 
 ## DNF-Types & Intersection-Types
 
@@ -214,35 +164,23 @@ $formatter = m::mock(RequestFormatterInterface::class);
 
 DNF-Types (`(A&B)|null`) sind verfügbar, kommen aber bisher nicht in `src/` vor. Wenn nötig, in PHPDoc und nativem Type-Hint identisch halten.
 
-## Attribute (Custom)
+## Attribute
 
-Für Cookbook-Beispiele rund um v2.2-OPTIONS-Auto-Tuning und v2.3-Bundle nützlich, in `src/` selten. Beispiel aus dem geplanten Bundle-Repo:
-
-```php
-#[\Attribute(\Attribute::TARGET_METHOD)]
-final readonly class IcapClean
-{
-    public function __construct(
-        public string $service = '/avscan',
-        public int $previewSize = 1024,
-    ) {
-    }
-}
-```
+In `src/` nur `#[\Override]`.
 
 ## Quick-Reference
 
 | Feature | PHP | Wo in icap-flow |
 |---|---|---|
-| `final readonly class` | 8.2+ | Alle DTOs, `Config` |
-| Backed Enums + Methoden | 8.1+ | `PreviewDecision` |
+| `final readonly class` | 8.2+ | Alle DTOs, `Config`, `CicapVerdict` |
+| Backed Enums | 8.1+ | `PreviewDecision` |
 | `#[\Override]` | 8.3+ | Pflicht auf jeder Interface-Impl |
 | Named Arguments | 8.0+ | Konstruktoren mit ≥3 Params |
-| `match` (Statement + Expression) | 8.0+ | `DefaultPreviewStrategy`, geplanter `interpretResponse`-Refactor |
-| First-Class Callables | 8.1+ | Header-Map-Builder, Pool-Factories |
-| `never` | 8.1+ | Throw-Helfer in Validatoren |
-| Property Hooks | 8.4 | Kandidat für Lazy-Normalisierungs-Bags |
-| Asymmetric Visibility | 8.4 | Pool-Stats, v2.2-Idle-Eviction |
+| `match` (Statement + Expression) | 8.0+ | `DefaultPreviewStrategy` |
+| First-Class Callables | 8.1+ | Connector-Defaults (`SocketOpener::open(...)`) |
+| `never` | 8.1+ | Verfügbar für Throw-Helfer, in `src/` derzeit ungenutzt |
+| Property Hooks | 8.4 | nicht verwendet |
+| Asymmetric Visibility | 8.4 | nicht verwendet |
 | Intersection-Types | 8.1+ | Mockery-Test-Hints |
 | DNF-Types | 8.2+ | Verfügbar, in `src/` derzeit ungenutzt |
-| `\Throwable` als param | überall | `try/catch/finally` mit `\Throwable` (siehe `IcapClient::request()`) |
+| `\Throwable` als param | überall | `try/catch/finally` mit `\Throwable` (siehe `IcapClient::requestWith()`) |
