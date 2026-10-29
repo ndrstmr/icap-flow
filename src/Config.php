@@ -210,9 +210,8 @@ final readonly class Config
     /**
      * Ordered list of ICAP headers inspected for infection signals.
      * The first header that is present in the server's response wins.
-     * Different vendors use different headers — Trend Micro reports via
-     * `X-Violations-Found`, ISS Proventia via `X-Infection-Found`, Symantec
-     * via `X-Virus-ID`. The list says what an infection looks like, not
+     * Which headers a product sends is not verified for the standard rules:
+     * the list is configuration. It says what an infection looks like, not
      * whether a file was scanned: for c-icap `virus_scan` (which reports via
      * `X-Infection-Found` and `X-Violations-Found`) use the verified mode,
      * {@see \Ndrstmr\Icap\CicapVerdict}, which does not use this list.

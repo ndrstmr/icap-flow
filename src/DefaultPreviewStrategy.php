@@ -26,13 +26,14 @@ use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 
 /**
- * Default strategy for interpreting preview responses.
+ * Default strategy for the answer to a preview (RFC 3507 §4.5).
  *
- * Handles RFC 3507 §4.3.3 / §6: servers may respond 200 or 206 during a
- * preview exchange when malware is detected in the first chunk — without
- * waiting for the full body.  Earlier versions of this class threw on
- * 200/206, making the ABORT_INFECTED branch in {@see IcapClient}
- * unreachable.  Fixed in v2.1.1 (finding B, 3/4 reviewers).
+ * A server answers a preview with 100 Continue (send the rest of the body),
+ * 204 No Content (no change) or a final response, which may come before the
+ * rest of the body was sent. This class applies the standard rules, which
+ * are verified against no ICAP product: 204 counts as clean, and a 200/206
+ * is infected when it carries one of the configured virus headers. The
+ * verified mode ({@see CicapVerdict}) does not ask this class.
  */
 final class DefaultPreviewStrategy implements PreviewStrategyInterface
 {
@@ -56,11 +57,11 @@ final class DefaultPreviewStrategy implements PreviewStrategyInterface
      *
      * Status semantics:
      * - 100 Continue   → server wants the rest of the body.
-     * - 204 No Content → server is done; file is clean.
-     * - 200 / 206      → server finished early; inspect virus headers to
+     * - 204 No Content → server changes nothing; clean under the standard rules.
+     * - 200 / 206      → final response; inspect virus headers to
      *                    determine whether the file is infected or clean.
      * - 4xx            → {@see IcapClientException}, 5xx → {@see IcapServerException}:
-     *                    the same types as for the answer to any other request (N03).
+     *                    the same types as for the answer to any other request.
      * - anything else  → protocol error.
      *
      * @throws IcapClientException   When the status is in the 4xx range

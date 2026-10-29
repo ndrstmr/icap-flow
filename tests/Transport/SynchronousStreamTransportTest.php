@@ -389,6 +389,36 @@ function syncDrain($peer, int $limit = 65536): array
 }
 
 /**
+ * Writes the parts to the client until it has them all or has closed its end. A client that refuses a response or
+ * has given up closes while the rest is on its way, and the write fails with a reset or a broken pipe: PHP reports
+ * that as a notice, which PHPUnit records even under @. Here it only ends the writing; any other error goes on to the
+ * handler that was there.
+ *
+ * @param resource         $peer
+ * @param iterable<string> $parts
+ */
+function syncSend($peer, iterable $parts): void
+{
+    $previous = null;
+    $previous = set_error_handler(static function (int $type, string $message, string $file, int $line) use (&$previous): bool {
+        if (preg_match('/^fwrite\(\): Send of \d+ bytes failed with errno=\d+ (Broken pipe|Connection reset by peer)$/', $message) === 1) {
+            return true;
+        }
+
+        return is_callable($previous) && (bool) $previous($type, $message, $file, $line);
+    });
+    try {
+        foreach ($parts as $part) {
+            if (fwrite($peer, $part) === false) {
+                return;
+            }
+        }
+    } finally {
+        restore_error_handler();
+    }
+}
+
+/**
  * What a client that was never accepted wrote, and whether it closed.
  *
  * @param resource $server
@@ -1153,7 +1183,7 @@ it('bounds a wait for the answer by what is left of the operation, not by the st
         [$peer] = syncServe($server, strlen(SYNC_REQUEST));
         // The answer comes within the stream timeout (5 s), after the operation is over.
         usleep(700_000);
-        @fwrite($peer, SYNC_FRAME);
+        syncSend($peer, [SYNC_FRAME]);
         $outcome = $child->outcome();
 
         expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
@@ -1235,7 +1265,7 @@ it('ends an answer that does not begin within the response start timeout, shorte
     try {
         [$peer] = syncServe($server, strlen(SYNC_REQUEST));
         usleep(900_000);
-        @fwrite($peer, SYNC_FRAME);
+        syncSend($peer, [SYNC_FRAME]);
         $outcome = $child->outcome();
 
         expect($outcome['error'] ?? null)->toBe(IcapTimeoutException::class);
@@ -1312,7 +1342,7 @@ it('ends an OPTIONS call of the client at its operation timeout, over the synchr
         try {
             $peer = syncAcceptHead($server);
             usleep((int) ($pause * 1_000_000));
-            @fwrite($peer, $options);
+            syncSend($peer, [$options]);
             $outcome = $child->outcome();
 
             expect($outcome['error'] ?? $outcome['response'] ?? null)->toBe($expected, $case);
@@ -1631,11 +1661,7 @@ it('receives a response of more than the response limit without keeping it, and 
         $peer = null;
         try {
             [$peer] = syncServe($server, strlen(SYNC_REQUEST));
-            foreach (\Ndrstmr\Icap\Tests\IcapTestServer::echo($size) as $part) {
-                if (@fwrite($peer, $part) === false) {
-                    break;
-                }
-            }
+            syncSend($peer, \Ndrstmr\Icap\Tests\IcapTestServer::echo($size));
             $outcome = $child->outcome(30.0);
 
             if ($budget === null) {
@@ -1678,11 +1704,7 @@ it('refuses a response that is cut, illegal at its end or over its budget, over 
         $peer = null;
         try {
             [$peer] = syncServe($server, strlen(SYNC_REQUEST));
-            foreach ($write as $part) {
-                if (@fwrite($peer, $part) === false) {
-                    break;
-                }
-            }
+            syncSend($peer, $write);
             if ($hangUp) {
                 fclose($peer);
                 $peer = null;

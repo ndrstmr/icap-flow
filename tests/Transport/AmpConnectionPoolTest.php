@@ -1850,6 +1850,7 @@ basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 [client]
+subjectAltName=DNS:client.icap-flow.test
 basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=clientAuth
@@ -1914,7 +1915,8 @@ it('shares no socket between client certificates and keeps none across a rotatio
                 ->withDefaultCertificate(new Certificate($fixture['serverCert'], $fixture['serverKey']))
                 ->withCaFile($fixture['ca'])
                 ->withPeerVerification()
-                ->withoutPeerNameVerification() // the client names no host: its certificate is checked against the CA only
+                // Both client certificates carry this name; the common name tells the clients apart.
+                ->withPeerName('client.icap-flow.test')
                 ->withPeerCapturing(),
         ));
         $address = $server->getAddress();
@@ -1925,8 +1927,11 @@ it('shares no socket between client certificates and keeps none across a rotatio
             while (($client = $server->accept()) !== null) {
                 try {
                     $client->setupTls(new TimeoutCancellation(5));
-                    $certificates = $client->getTlsInfo()?->getPeerCertificates() ?? [];
-                    $parsed = $certificates === [] ? false : openssl_x509_parse($certificates[0]->toPem());
+                    // The certificate PHP captured: TlsInfo::getPeerCertificates() needs kelunik/certificate 1.1.3,
+                    // amphp/socket 2.3 allows older versions.
+                    $resource = $client->getResource();
+                    $certificate = is_resource($resource) ? stream_context_get_options($resource)['ssl']['peer_certificate'] ?? null : null;
+                    $parsed = $certificate instanceof OpenSSLCertificate ? openssl_x509_parse($certificate) : false;
                     $subject = is_array($parsed) && is_array($parsed['subject'] ?? null) ? $parsed['subject'] : [];
                     $seen[] = is_string($subject['CN'] ?? null) ? $subject['CN'] : '(none)';
                     $peers[] = $client;

@@ -23,6 +23,7 @@ namespace Ndrstmr\Icap\Tests\Cache;
 use Amp\Socket\Certificate;
 use Amp\Socket\ClientTlsContext;
 use Ndrstmr\Icap\Cache\OptionsCacheKey;
+use PHPUnit\Framework\Assert;
 
 /*
  * M12: the key of an OPTIONS entry is a hash of structured parts. Parts that
@@ -66,7 +67,6 @@ it('tells security profiles apart by the settings of the TLS context', function 
         'a context'           => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()),
         'other peer name'     => OptionsCacheKey::forService('icap.example', 1344, '/avscan', new ClientTlsContext('other.example')),
         'no peer check'       => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withoutPeerVerification()),
-        'no peer name check'  => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withoutPeerNameVerification()),
         'other CA file'       => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withCaFile('/etc/ssl/ca-a.pem')),
         'another CA file'     => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withCaFile('/etc/ssl/ca-b.pem')),
         'a CA path'           => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withCaPath('/etc/ssl/certs')),
@@ -80,6 +80,13 @@ it('tells security profiles apart by the settings of the TLS context', function 
         'a pinned peer'       => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withPeerFingerprint(str_repeat('a', 64))),
         'another pinned peer' => OptionsCacheKey::forService('icap.example', 1344, '/avscan', $context()->withPeerFingerprint(str_repeat('b', 64))),
     ];
+    // amphp/socket turns off the check of the peer name alone from 2.4.0 on; 2.3 has no such context.
+    $tls = new \ReflectionClass(ClientTlsContext::class);
+    if ($tls->hasMethod('withoutPeerNameVerification')) {
+        $noNameCheck = $tls->getMethod('withoutPeerNameVerification')->invoke($context());
+        Assert::assertInstanceOf(ClientTlsContext::class, $noNameCheck);
+        $keys['no peer name check'] = OptionsCacheKey::forService('icap.example', 1344, '/avscan', $noNameCheck);
+    }
 
     expect(count(array_unique($keys)))->toBe(count($keys));
 });
