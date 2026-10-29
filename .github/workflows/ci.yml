@@ -10,35 +10,56 @@ on:
       - main
       - 'release/**'
   schedule:
-    # Nightly at 03:15 UTC — runs integration tests against the latest
-    # ClamAV signatures so wire-format regressions don't hide until the
-    # next push-to-main.
+    # Nightly at 03:15 UTC: the integration runs against the latest ClamAV signatures.
     - cron: '15 3 * * *'
+  # Every check, mutation testing included, on a branch or tag chosen by hand, e.g. a release candidate.
+  workflow_dispatch:
+
+# deploy-coverage is the only job that writes (contents: write, push to main only).
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  # Unit tests + static analysis + coverage, run against every
-  # supported PHP version.
   quality-and-tests:
     name: PHP ${{ matrix.php-version }} Quality Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       matrix:
         php-version: ['8.4', '8.5']
       fail-fast: false
+    env:
+      # The gigabyte tests in tests/ResponseStreamingTest.php run at full size.
+      ICAP_STREAM_MIB: '1024'
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: sockets
+          extensions: sockets, posix, openssl
           coverage: pcov
 
+      - name: Record the tested state
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "### Quality checks, PHP $(php -r 'echo PHP_VERSION;') on $ImageOS $ImageVersion"
+            echo "- Commit \`$(git rev-parse HEAD)\`${PR_HEAD:+ (merge of pull request head \`$PR_HEAD\`)}; gigabyte tests at $ICAP_STREAM_MIB MiB"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: composer install --prefer-dist --no-progress --no-interaction
 
       - name: Audit Composer dependencies
         run: composer audit
@@ -50,138 +71,196 @@ jobs:
         run: composer stan
 
       - name: Run unit tests with coverage
-        run: composer test -- --coverage
+        # A test of the synchronous transport holds more than 1100 descriptors in a child process. --ci: a test left
+        # marked ->only() does not narrow the run to itself.
+        run: |
+          ulimit -n 4096
+          mkdir -p build
+          composer test -- --ci --coverage --fail-on-skipped --fail-on-incomplete --fail-on-empty-test-suite \
+            --log-events-text build/events.txt
+
+      - name: Check the verdict of PHPUnit
+        if: always()
+        run: bash .github/phpunit-verdict.sh build/events.txt 'Unit suite'
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-report-php-${{ matrix.php-version }}
           path: build/coverage-html/
 
-  # Integration tests against a real c-icap + ClamAV stack spun up via
-  # docker-compose. Runs only on PHP 8.4 (the integration contract is
-  # version-agnostic) to keep CI cost bounded.
-  #
-  # Runs on push-to-main and nightly schedule only — NOT on PRs. The
-  # ClamAV image needs 30–120 s for signature download on cold start,
-  # which is flaky on shared runners. Wire-format regressions surface
-  # on the next push-to-main or the nightly run; PRs are gated by
-  # unit tests + mutation testing instead.
+  # Against the reference service of docker-compose.yml (c-icap virus_scan + ClamAV, tests/Integration/README.md). Its
+  # signatures are downloaded when the container starts; a service that does not become healthy fails the job.
   integration:
-    name: Integration tests (c-icap + ClamAV)
-    runs-on: ubuntu-latest
+    name: PHP ${{ matrix.php-version }} Integration (c-icap + ClamAV)
+    runs-on: ubuntu-24.04
     needs: quality-and-tests
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        php-version: ['8.4', '8.5']
+      fail-fast: false
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP 8.4
-        uses: shivammathur/setup-php@v2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          php-version: '8.4'
-          extensions: sockets
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: sockets, posix, openssl
+          coverage: none
+
+      - name: Record the tested state
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "### Integration, PHP $(php -r 'echo PHP_VERSION;') on $ImageOS $ImageVersion"
+            echo "- Commit \`$(git rev-parse HEAD)\`${PR_HEAD:+ (merge of pull request head \`$PR_HEAD\`)}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: composer install --prefer-dist --no-progress --no-interaction
 
-      - name: Start ICAP services
-        run: docker compose up -d
+      - name: Pull the reference service
+        timeout-minutes: 10
+        run: docker compose pull --quiet
 
-      - name: Wait for icap-clamav readiness
-        # A plain `nc -z` is not enough: the mnemoshare image opens
-        # the TCP port early (freshclam bootstrap) but the actual
-        # c-icap daemon only answers ICAP once the ClamAV signature
-        # database has finished downloading — which takes 30–120 s
-        # on a fresh image. Poll with a real OPTIONS probe and
-        # require `ICAP/1.0` to appear in the response.
+      - name: Start the reference service
+        # Ready means healthy: /avscan finds EICAR (tests/Integration/reference/healthcheck.sh), not that a port is open.
+        timeout-minutes: 12
         run: |
-          for i in $(seq 1 60); do
-            response=$(printf 'OPTIONS icap://127.0.0.1/avscan ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
-              | timeout 3 nc 127.0.0.1 1344 2>/dev/null | head -1)
-            if echo "$response" | grep -q 'ICAP/1'; then
-              echo "icap-clamav ready after ${i} attempts — $response"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "icap-clamav did not answer ICAP within ~5 min" >&2
-          docker compose logs icap-clamav | tail -100
-          exit 1
+          docker compose up --wait --wait-timeout 600
+          test "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' icap-flow-clamav)" = healthy
+          {
+            echo "- Service: $(docker inspect --format '{{.Config.Image}}' icap-flow-clamav)"
+            echo "- $(docker exec icap-flow-clamav /opt/c-icap/bin/c-icap -VV 2>&1 | head -n 1); $(docker exec icap-flow-clamav clamdscan --version)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Run integration tests (ClamAV)
+      - name: Run integration tests
+        timeout-minutes: 15
         env:
           ICAP_HOST: 127.0.0.1
           ICAP_PORT: 1344
           ICAP_ECHO_SERVICE: /avscan
           ICAP_CLAMAV_SERVICE: /avscan
           ICAP_TYPED_SERVICE: /avscan_typed
-        # --display-all-issues + --display-skipped print the full
-        # assertion diffs that Pest normally hides behind a summary
-        # line; --debug replaces the progress bar with event output.
-        run: composer test:integration -- --display-all-issues --display-skipped --debug
+        # A test whose service is not configured skips; here that is a failure, as is an empty suite.
+        run: |
+          mkdir -p build
+          composer test:integration -- --ci --no-coverage --fail-on-skipped --fail-on-incomplete --fail-on-empty-test-suite \
+            --display-all-issues --display-skipped --log-events-text build/events.txt
+
+      - name: Check the verdict of PHPUnit
+        if: always()
+        run: bash .github/phpunit-verdict.sh build/events.txt 'Integration suite'
 
       - name: Dump service logs on failure
         if: failure()
         run: |
-          echo "::group::icap-clamav service logs"
-          docker compose logs icap-clamav | tail -200
-          echo "::endgroup::"
-          echo "::group::ICAP OPTIONS probe"
-          printf 'OPTIONS icap://127.0.0.1/avscan ICAP/1.0\r\nHost: 127.0.0.1\r\nEncapsulated: null-body=0\r\n\r\n' \
-            | timeout 5 nc -v 127.0.0.1 1344 | head -50 || true
-          echo "::endgroup::"
+          docker compose logs --no-color --tail 200 icap-clamav || true
+          docker inspect --format '{{json .State.Health}}' icap-flow-clamav || true
 
       - name: Shut services down
         if: always()
-        run: docker compose down -v
+        run: docker compose down --volumes
 
-  # Mutation testing via Pest --mutate. Runs after quality checks pass
-  # to avoid wasting CI minutes on code that doesn't compile or pass
-  # unit tests. Uses --min=65 as the MSI floor.
+  # The general mutation check of the unit suite. Its floor of 65 is no evidence for a particular security path.
   mutation-testing:
     name: Mutation Testing (MSI ≥ 65%)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: quality-and-tests
-    # Only run on PRs — push-to-main already passed via the PR gate.
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.4'
-          extensions: sockets
+          extensions: sockets, posix, openssl
           coverage: pcov
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: composer install --prefer-dist --no-progress --no-interaction
 
       - name: Run mutation tests
-        run: composer mutation
+        run: |
+          ulimit -n 4096
+          mkdir -p build
+          composer mutation -- --ci | tee build/mutation.txt
+
+      - name: Summary
+        if: always()
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "### Mutation testing, PHP $(php -r 'echo PHP_VERSION;')"
+            echo "- Commit \`$(git rev-parse HEAD)\`${PR_HEAD:+ (merge of pull request head \`$PR_HEAD\`)}"
+            # phpunit.xml.dist asks for colours, also in a pipe.
+            sed 's/\x1b\[[0-9;]*m//g' build/mutation.txt | grep -E '^ *(Mutations|Score):' | sed 's/^ */- /' || echo "- No result"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy-coverage:
     name: Deploy Coverage Report
     needs: quality-and-tests
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
-      contents: write
+      contents: write # pushes the report to the gh-pages branch
 
     steps:
       - name: Download coverage artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-report-php-8.5
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./
           publish_branch: gh-pages
           force_orphan: true
+
+  # The one check to require for a merge. A job skipped by its condition counts as passed for a required check; here
+  # every check this event runs has to succeed.
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [quality-and-tests, integration, mutation-testing]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every check of this event
+        env:
+          EVENT: ${{ github.event_name }}
+          QUALITY: ${{ needs.quality-and-tests.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          MUTATION: ${{ needs.mutation-testing.result }}
+        run: |
+          required="quality=$QUALITY integration=$INTEGRATION"
+          case "$EVENT" in
+            pull_request | workflow_dispatch) required="$required mutation=$MUTATION" ;;
+          esac
+          failed=0
+          for check in $required; do
+            echo "- ${check%%=*}: ${check#*=}" >> "$GITHUB_STEP_SUMMARY"
+            if [ "${check#*=}" != success ]; then
+              echo "::error::${check%%=*}: ${check#*=}"
+              failed=1
+            fi
+          done
+          exit "$failed"

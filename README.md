@@ -225,7 +225,7 @@ The `examples/` directory has runnable demos and a cookbook:
 
 ## Integration tests
 
-`docker compose up -d` brings up the reference service ([`mnemoshare/clamav-icap`](https://hub.docker.com/r/mnemoshare/clamav-icap), pinned by digest) on port 1344. The tests in `tests/Integration/` skip when `ICAP_HOST` is unset, so contributors without Docker get a green `composer test:integration`; a skipped test verifies nothing. CI runs them on pushes to `main` and `release/**` and nightly, not on pull requests. Variables and the service: [`tests/Integration/README.md`](tests/Integration/README.md).
+`docker compose up -d` brings up the reference service ([`mnemoshare/clamav-icap`](https://hub.docker.com/r/mnemoshare/clamav-icap), pinned by digest) on port 1344. The tests in `tests/Integration/` skip when `ICAP_HOST` is unset, so contributors without Docker get a green `composer test:integration`; a skipped test verifies nothing. CI runs them on PHP 8.4 and 8.5 for pull requests and pushes to `main` and `release/**`, nightly and on demand; there a skipped test fails the run. Variables and the service: [`tests/Integration/README.md`](tests/Integration/README.md).
 
 ## Provenance & due diligence
 

@@ -391,43 +391,56 @@ final class PoolCheckpointCancellation implements Cancellation
 
 it('never has more connections to an endpoint than maxConnectionsPerHost, those in the making included', function () {
     /** @var AsyncTestCase $this */
-    $state = poolGateState();
     $config = new Config('icap.example');
-    $pool = new AmpConnectionPool(maxConnectionsPerHost: 2, connector: poolGatedConnector($this, $state));
+    // An endpoint is host and port: the same host on another port is another endpoint.
+    $other = new Config('icap.example', 1345);
 
-    $this->runAsyncTest(function () use ($pool, $config, &$state) {
-        // Six calls at once: the connector holds two of them at its gate, the others find no room.
-        $calls = [];
-        for ($i = 0; $i < 6; $i++) {
-            $calls[] = $this->acquireLater($pool, $config);
-        }
-        delay(0);
-        expect($state['calls'])->toBe(2);
+    // The pool as a whole has room for more than the endpoint: only the cap of the endpoint refuses.
+    foreach ([1, 2] as $cap) {
+        $state = poolGateState();
+        $pool = new AmpConnectionPool(maxConnectionsPerHost: $cap, maxConnections: 4, connector: poolGatedConnector($this, $state));
 
-        poolOpenGates($state);
-        $sockets = [];
-        $refused = 0;
-        foreach ($calls as $call) {
-            try {
-                $sockets[] = $call->await();
-            } catch (IcapConnectionException) {
-                $refused++;
+        $this->runAsyncTest(function () use ($pool, $config, $other, $cap, &$state) {
+            // Four calls at once: the connector holds $cap of them at its gate, the others find no room.
+            $calls = [];
+            for ($i = 0; $i < 4; $i++) {
+                $calls[] = $this->acquireLater($pool, $config);
             }
-        }
-        expect(count($sockets))->toBe(2)
-            ->and($refused)->toBe(4)
-            ->and($state['peak'])->toBe(2);
+            delay(0);
+            expect($state['calls'])->toBe($cap, "cap {$cap}");
 
-        // Sockets that are out count, and so do idle ones.
-        expect(fn () => $pool->acquire($config))->toThrow(IcapConnectionException::class);
-        foreach ($sockets as $socket) {
-            $pool->release($config, $socket);
-        }
-        $again = $pool->acquire($config);
-        expect($state['calls'])->toBe(2)
-            ->and($state['peak'])->toBe(2);
-        $pool->release($config, $again);
-    });
+            // While those are in the making, another endpoint has room.
+            $elsewhere = $this->acquireLater($pool, $other);
+            delay(0);
+            expect($state['calls'])->toBe($cap + 1, "cap {$cap}");
+
+            poolOpenGates($state);
+            $sockets = [];
+            $refused = 0;
+            foreach ($calls as $call) {
+                try {
+                    $sockets[] = $call->await();
+                } catch (IcapConnectionException) {
+                    $refused++;
+                }
+            }
+            $otherSocket = $elsewhere->await();
+            expect(count($sockets))->toBe($cap, "cap {$cap}")
+                ->and($refused)->toBe(4 - $cap, "cap {$cap}")
+                ->and($state['peak'])->toBe($cap + 1, "cap {$cap}");
+
+            // Sockets that are out count, and so do idle ones.
+            expect(fn () => $pool->acquire($config))->toThrow(IcapConnectionException::class);
+            foreach ($sockets as $socket) {
+                $pool->release($config, $socket);
+            }
+            $again = $pool->acquire($config);
+            expect($state['calls'])->toBe($cap + 1, "cap {$cap}")
+                ->and($state['peak'])->toBe($cap + 1, "cap {$cap}");
+            $pool->release($config, $again);
+            $pool->release($other, $otherSocket);
+        });
+    }
 });
 
 it('counts the connections of every TLS context against the cap of the endpoint', function () {

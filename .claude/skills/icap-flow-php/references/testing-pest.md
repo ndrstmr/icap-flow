@@ -159,7 +159,14 @@ composer mutation
 # = pest --mutate --testsuite=Unit --parallel --everything --covered-only --min=65
 ```
 
-`--covered-only` hält die Laufzeit handhabbar: nur Lines, die ohnehin Coverage haben, werden mutiert. Die Schwelle 65 % prüft das CI auf jedem Pull Request (`mutation-testing`).
+`--covered-only` hält die Laufzeit handhabbar: nur Lines, die ohnehin Coverage haben, werden mutiert. Die Schwelle 65 % prüft das CI auf jedem Pull Request und per `workflow_dispatch` (`mutation-testing`); sie belegt keinen einzelnen Sicherheitspfad.
+
+Gezielt für einzelne Klassen: `pest --mutate --testsuite=Unit --parallel --class='Ndrstmr\Icap\HeaderFields'` (ohne `--everything`, das hebt `--class` auf). Grenzen von pest-plugin-mutate 3.0.5, bevor ein Überlebender als Testlücke gilt:
+
+- Es wählt die Tests eines Mutanten per `--filter` über alle Tests, die die Zeile abdecken; bei Hunderten (z. B. `HeaderFields::isToken()`) kompiliert der Ausdruck nicht, es läuft kein Test, und der Mutant gilt als UNTESTED. Solche Zeilen mit einem kleineren Testpfad prüfen (`pest tests/CustomRequestHeadersTest.php --mutate --class=…`; mehrere Pfade nur ohne `--parallel`).
+- Code, den ein Test in einem Kindprozess ausführt (`SyncChild`, Streaming- und Preview-Kinder), läuft dort unmutiert: UNTESTED besagt hier nichts. Die Gegenprobe ist eine vorübergehende Änderung mit dem passenden Test.
+- Konstanten sowie Property- und Parameter-Defaults sind für pcov keine ausführbaren Zeilen und erscheinen als UNCOVERED, auch wenn Tests ihren Wert prüfen.
+- Ein Mutant gilt als UNTESTED, wenn Pest mit 0 endet; das tut es auch, wenn der Mutant nur riskante Tests verursacht (z. B. Ausgabe).
 
 Wer einen Mutation-Drop bemerkt, fragt sich:
 - Ist der existierende Test zu schwach (z. B. asserts nur `toBeTruthy()`, statt `toBe(true)` mit Wert)?
