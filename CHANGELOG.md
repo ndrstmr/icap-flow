@@ -443,6 +443,12 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   the README, the migration guide and the docblock say so, and the example
   in `AmpConnectionPool::tuneFromOptions()` uses the `IcapResponse` that
   `options()` returns. *(N06)*
+- CI: the integration against the reference service (c-icap + ClamAV) also runs on pull requests, on PHP 8.4 and 8.5,
+  once its EICAR healthcheck passes. Skipped, incomplete and risky tests and an empty suite fail the unit and
+  integration jobs (Pest 3 exits with 0 for them; `.github/phpunit-verdict.sh` checks the verdict of PHPUnit, and a
+  missing event log is a failure). The `CI gate` job fails when a check of the event failed or did not run, and
+  `workflow_dispatch` runs every check on a release candidate. Actions are pinned to commit SHAs, the token only
+  reads outside the coverage deploy, and every job has a time limit. *(N08, M17)*
 
 ## [3.0.0] - 2026-05-01
 

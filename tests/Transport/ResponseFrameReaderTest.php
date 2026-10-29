@@ -445,7 +445,7 @@ it('applies the line length and header count limits to the whole response', func
     $cases = [
         'control: header section within the limits'  => [$section($head, "3\r\nabc\r\n0\r\n\r\n"), true],
         'control: chunk extension within the limits' => [rfIcap('200 OK', 'res-body=0', "3;a=b\r\nabc\r\n0\r\n\r\n"), true],
-        'control: trailer within the limits'         => [rfIcap('200 OK', 'res-body=0', "3\r\nabc\r\n0\r\nX-A: 1\r\n\r\n"), true],
+        'control: trailer at the limits'             => [rfIcap('200 OK', 'res-body=0', "3\r\nabc\r\n0\r\nX-A: 1\r\nX-B: 2\r\nX-C: 3\r\n\r\n"), true],
         'ICAP header line too long'                  => [rfIcap('200 OK', 'null-body=0', '', "X-A: {$long}\r\n"), false],
         'too many ICAP header lines'                 => [rfIcap('200 OK', 'null-body=0', '', "X-A: 1\r\nX-B: 2\r\nX-C: 3\r\n"), false],
         'line of the header section too long'        => [$section($headLong, "3\r\nabc\r\n0\r\n\r\n"), false],

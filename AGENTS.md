@@ -41,7 +41,7 @@ Follow PSR-12 with `declare(strict_types=1);`, 4-space indentation, typed proper
 
 ## Testing Guidelines
 
-The project uses Pest on PHPUnit 11. PHPUnit fails on risky tests, warnings, and unexpected output, so avoid debug output and add explicit assertions. Add focused tests for parser, transport, retry, cancellation, and security-sensitive behavior when touching those areas. Keep external-service checks in `tests/Integration/`.
+The project uses Pest on PHPUnit 11. PHPUnit fails on risky tests, warnings, and unexpected output, so avoid debug output and add explicit assertions. Pest 3 still exits with 0 for risky and skipped tests; CI checks PHPUnit's own verdict (`.github/phpunit-verdict.sh`). Add focused tests for parser, transport, retry, cancellation, and security-sensitive behavior when touching those areas. Keep external-service checks in `tests/Integration/`.
 
 ## Commit & Pull Request Guidelines
 

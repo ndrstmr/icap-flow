@@ -60,4 +60,6 @@ the verified mode replay them; `.gitattributes` keeps their CRLF). All requests 
 Each test declares which server capability it needs via an env var check at the top of the closure and uses
 `test()->markTestSkipped()` when that capability is not configured. This way the suite stays green on contributor
 machines that don't have Docker running while still giving the CI container real end-to-end coverage. A skipped test
-is no result: the verified mode counts as tested only where `CicapVirusScanTest` ran.
+is no result: the verified mode counts as tested only where `CicapVirusScanTest` ran. CI runs the suite with
+`--fail-on-skipped` and `--fail-on-empty-test-suite` and checks the verdict of PHPUnit (`.github/phpunit-verdict.sh`),
+so there a test without its service fails the run.

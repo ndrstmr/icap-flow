@@ -1468,6 +1468,41 @@ it('opens no more sessions than the pool allows, request() included, and has the
     }
 });
 
+it('gives a socket back once: a session released again leaves it with the session that holds it now', function () {
+    $pairs = [];
+    $opened = 0;
+    $pool = new AmpConnectionPool(
+        maxConnectionsPerHost: 1,
+        connector: function () use (&$pairs, &$opened): Socket\Socket {
+            $opened++;
+            $pairs[] = $pair = Socket\createSocketPair();
+
+            return $pair[1];
+        },
+    );
+    $transport = new AsyncAmpTransport($pool);
+    $config = new Config('icap.example', streamTimeout: 1.0);
+
+    try {
+        $first = $transport->openSession($config);
+        $first->release();
+        $second = $transport->openSession($config);
+        expect($opened)->toBe(1);
+
+        // The pool cannot tell this release from one of the second session: back in the pool, the socket would be
+        // handed out to a third session while the second one still uses it.
+        $first->release();
+        expect(thrownBy(fn () => $transport->openSession($config)))->toBeInstanceOf(IcapConnectionException::class);
+        $second->close();
+    } finally {
+        foreach ($pairs as [$peer, $client]) {
+            $client->close();
+            $peer->close();
+        }
+        $pool->close();
+    }
+});
+
 it('keeps a wait for room inside the stream timeout of the transport and the cancellation of the caller', function () {
     $pairs = [];
     $pool = new AmpConnectionPool(

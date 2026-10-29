@@ -55,7 +55,7 @@ ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
   composer test:integration
 ```
 
-Beim ersten Start lädt das ClamAV-Image die Signaturdatenbank (~200 MB, mehrere Minuten). Der Healthcheck im Compose-File meldet deshalb erst gesund, wenn `/avscan` EICAR findet, und der CI-Job in `.github/workflows/ci.yml` wartet auf eine echte `ICAP/1.0`-Antwort, nicht nur auf einen offenen Port — dieses Muster bitte übernehmen, wenn du Integration-Skripte schreibst. Referenzdienst und Variablen: `tests/Integration/README.md`.
+Beim ersten Start lädt das ClamAV-Image die Signaturdatenbank (~200 MB, mehrere Minuten). Der Healthcheck im Compose-File meldet deshalb erst gesund, wenn `/avscan` EICAR findet, und der CI-Job in `.github/workflows/ci.yml` wartet mit `docker compose up --wait` auf diesen Healthcheck, nicht auf einen offenen Port — dieses Muster bitte übernehmen, wenn du Integration-Skripte schreibst. Referenzdienst und Variablen: `tests/Integration/README.md`.
 
 ## Architektur
 
@@ -154,7 +154,7 @@ Für die **v3-Linie und alles danach** ist die AI-Attribution explizit erwünsch
 
 - **PR-Titel** ist eine Conventional-Commit-Subject-Zeile (≤ 70 Zeichen). Kein `[WIP]`-Präfix; Drafts sind GitHub-nativ.
 - **PR-Body** nach `.github/PULL_REQUEST_TEMPLATE.md` (Context, API, Behaviour, Refactoring, Tests, Verification, Closes, Status; Unpassendes weglassen).
-- **CI muss grün sein** vor Merge. Auf dem PR laufen `audit`, `cs-check`, `stan` und `test` (PHP 8.4 + 8.5) sowie `composer mutation`. Die Integration gegen c-icap + ClamAV läuft erst nach dem Push auf `main` oder `release/**` und nachts, nicht auf dem PR: Änderungen am Wire-Format vorher lokal gegen `docker compose` prüfen.
+- **CI muss grün sein** vor Merge; zusammengefasst im Job `CI gate`. Auf dem PR laufen `audit`, `cs-check`, `stan`, `test` und die Integration gegen c-icap + ClamAV (je PHP 8.4 + 8.5) sowie `composer mutation`. Übersprungene, unvollständige und riskante Tests und eine leere Suite sind dort Fehler: Pest 3 beendet sich bei ihnen mit 0, `.github/phpunit-verdict.sh` prüft das Urteil von PHPUnit (ohne Eventlog kein Bestehen). `workflow_dispatch` prüft einen Releasekandidaten erneut mit allen Kontrollen.
 
 ### CHANGELOG-Eintrag
 
