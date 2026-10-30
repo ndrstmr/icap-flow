@@ -25,6 +25,11 @@ below before opening an issue or submitting a pull request.
    ```
 3. Open a pull request against the `main` branch and reference any related issues.
 
+CI runs the unit and reference-service integration suites on PHP 8.4 and 8.5,
+plus mutation testing. It checks PHPUnit's verdict separately: Pest 3 can exit
+successfully even when tests are skipped, risky, incomplete or missing. See
+[`tests/Integration/README.md`](tests/Integration/README.md) for the service setup.
+
 ## Commit Convention
 
 This repository follows [Conventional Commits 1.0](https://www.conventionalcommits.org/en/v1.0.0/).
@@ -75,6 +80,6 @@ causing spurious CancelledException on slow but legitimate scans.
 ## Coding Standards
 
 - [PSR-12](https://www.php-fig.org/psr/psr-12/) enforced via `composer cs-fix` (php-cs-fixer).
-- PHP 8.4 minimum. `final class` on all classes in `src/`. `#[\Override]` on every interface implementation.
-- PHPStan Level 9 + bleedingEdge — no baseline, no `@phpstan-ignore`.
+- PHP 8.4 minimum. Prefer `final` classes unless inheritance is needed. Use `#[\Override]` on interface implementations.
+- PHPStan Level 9 + bleedingEdge — no baseline. Keep exceptions narrowly scoped and justified.
 - EUPL-1.2 license header required in every PHP file (applied automatically by cs-fix).

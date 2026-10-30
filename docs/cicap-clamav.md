@@ -34,7 +34,7 @@ unless it is the start of a longer one: a `Preview` field and no `ieof` (`IcapRe
 | `204` to the preview of a file that is not all sent | `IcapProtocolException`; the rest of the file is not sent |
 | `200` or `206` without infection headers (the message sent back, a block or error page) | `IcapProtocolException`; for a page, its HTTP status (`IcapResponse::$encapsulatedStatus`) is in the message |
 | infection headers that contradict each other or a `204`, or that are malformed; also on a `100 Continue` | `IcapProtocolException`; the rest of the file is not sent |
-| `100` outside a preview, `4xx`, `5xx` (e.g. `500` while clamd is down) | as in every mode |
+| `100` outside a preview, `4xx`, `5xx` (e.g. `500` while clamd is down) | `IcapProtocolException`, `IcapClientException` or `IcapServerException`, respectively |
 
 ## What the service has to do
 

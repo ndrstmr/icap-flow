@@ -4,7 +4,7 @@
 
 ## Source contract
 
-- The application provides a file that does not change until the call has returned, and relates the result to that version. Quarantine, snapshots and release stay with the application.
+- The application provides an unchanged file, keeps its path stable from before the type check through the scan, and releases only that same unchanged object. Quarantine, snapshots and release stay with the application.
 - The client checks the type of the path, opens the file once and reads that open file: its size, its position and its end. After the open the path is not looked at again, so a path that is replaced during the scan does not change what is scanned.
 - A file that shrinks or grows during the scan fails the call with an `IcapStorageException` before the final chunk. New content of the same size is not detected.
 - Supported are regular files of the local file system (a link counts as its target). A device, a FIFO, a directory and a path that does not exist are refused with an `IcapStorageException` before anything is opened. A path is no stream-wrapper URL. A relative path is taken from the working directory of the call. Network file systems and FUSE are not qualified.
@@ -33,7 +33,7 @@ $result->getOriginalResponse()->discardedBodyBytes;       // 1073741824; the bod
 ## Driver
 
 - The client reads through worker processes (`amphp/parallel`, at most 8 for the files and one more for the lookup of the type of a path, started on first use; `proc_open` has to be available), whatever driver the application set with `Amp\File\filesystem()`. No other driver is used (a blocking one would hold the event loop; `ext-uv` and `ext-eio` are not qualified).
-- The first scan of a PHP process starts two workers (about 0.2 s), and every read crosses a process boundary (about 500 MB/s).
+- The first scan of a PHP process starts workers, and every read crosses a process boundary; startup cost and throughput depend on the deployment.
 - A scan holds one block of 64 KiB; the preview (at most 1 MiB) is the only larger buffer.
 
 ## Deadline and cancellation
