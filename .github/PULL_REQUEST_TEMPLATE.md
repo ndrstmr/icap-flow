@@ -8,8 +8,6 @@ Sprache: Englisch (öffentliche Library-Doku). Conventional-Commit-Subject im PR
 
 <!--
 Was wird gelöst und warum? Hintergrund, Motivation, Bezug zu vorigen PRs.
-Bei Items aus docs/review/review_v2-1/consolidated_v2.1_task-list.md die Item-Nummer + Reviewer-Quelle nennen
-(z. B. "v2.1.1 #2, 4/4 reviewers — cross-tenant TLS leakage in AmpConnectionPool").
 -->
 
 ## API
@@ -45,7 +43,7 @@ welche Edge-Cases sie absichern, ob Mutation-Score betroffen ist.
 - [ ] `composer cs-check`
 - [ ] `composer stan` — PHPStan Level 9 + bleedingEdge clean
 - [ ] `composer test` — Pest Unit-Suite grün
-- [ ] `composer test:integration` — gegen `docker compose up -d` (falls relevant)
+- [ ] `composer test:integration` — gegen den gesunden Referenzdienst (falls relevant)
 - [ ] CI-Matrix (PHP 8.4 + 8.5)
 
 ## Closes

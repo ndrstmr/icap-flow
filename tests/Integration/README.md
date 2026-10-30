@@ -6,7 +6,7 @@ These tests talk to a real ICAP server over TCP. They are **not** run by
 ## Running locally
 
 ```bash
-docker compose up -d   # the reference service; healthy when /avscan finds EICAR (first start: signature download)
+docker compose up --wait --wait-timeout 600   # healthy when /avscan finds EICAR; first start downloads signatures
 ICAP_HOST=127.0.0.1 ICAP_PORT=1344 \
 ICAP_ECHO_SERVICE=/avscan ICAP_CLAMAV_SERVICE=/avscan ICAP_TYPED_SERVICE=/avscan_typed \
     composer test:integration

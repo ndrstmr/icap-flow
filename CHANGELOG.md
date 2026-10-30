@@ -82,7 +82,7 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   a preview that carries only the start of the body is exempt, since its
   `Content-Length` still describes the whole body, and a body without such a
   field is sent as before. A change that keeps the size is not detected: the
-  application keeps the file unchanged until the call returns (see B09).
+  application keeps the file unchanged and releases only that same object (see B09).
   *(M07, first stage)*
 - `scanFile()` and `scanFileWithPreview()` close the file they opened when the
   operation ends (one that a hanging file call holds when that call returns,
@@ -169,8 +169,8 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   entry. An entry is now one versioned item with its key, start and end, valid for the `Options-TTL` of the server (a
   decimal, never cast) but at most an hour (`OptionsCacheInterface::MAX_TTL_SECONDS`) from the arrival of the answer;
   an answer without a usable `Options-TTL` is not kept, which is the client's decision and no statement of the server.
-  Whatever the `OptionsCacheInterface`, a value that is not a whole entry for this key and time, an entry stored for
-  longer than its own `Options-TTL`, and an answer with a status other than 200, more than 64 KiB (fields and body) or
+  The built-in caches check the entry's key and lifetime; a custom cache is responsible for both. Whatever the
+  `OptionsCacheInterface`, an answer with a status other than 200, more than 64 KiB (fields and body) or
   100 field values, a field without a value, malformed fields, a `Preview` that is not one decimal, `Options-TTL` and
   `ISTag` fields that contradict each other, or an `Encapsulated` layout with a header section (`req-hdr`, `res-hdr`),
   is a miss; so is an answer that the limits of the reading client (`maxResponseSize`, `maxHeaderCount`,
@@ -342,8 +342,8 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   client can end earlier, never later; separate and parallel calls have budgets
   of their own. The end is looked at, not only waited for: a producer, a cache
   or a transport that holds the event loop cannot turn a late result into a
-  success (an OPTIONS answer from the cache included), and nothing is cached or
-  given back to the pool from an exchange that was over time. The end of the
+  success (an OPTIONS answer from the cache included), and an exchange that
+  was over time is not returned to the pool. The end of the
   operation is an `IcapTimeoutException`; the caller's cancellation, also a
   `TimeoutCancellation`, stays a `CancelledException` and wins. An expired call
   closes its socket and its file handle (one that a hanging file call holds
@@ -351,9 +351,10 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   synchronous transport bounds every native wait by the time that is left. A
   producer that does not return cannot be interrupted from outside, and an
   inner client that ignores its cancellation is waited for; the end is looked
-  at when control comes back. **Behaviour change:** every operation now ends
-  after `operationTimeout`, also an upload that used to run as long as the peer
-  kept reading: raise it for larger files or slower scanners.
+  at when control comes back. A cache write started before the deadline cannot
+  be undone if it finishes after it. **Behaviour change:** the operation has an
+  `operationTimeout` budget, including uploads that used to run as long as the
+  peer kept reading: raise it for larger files or slower scanners.
   *(M10, second stage)*
 - The phases of a connection and of an answer have limits of their own.
   `tlsHandshakeTimeout` bounds the TLS handshake, which `Socket\connectTls()`
@@ -381,8 +382,9 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   cancellation and the end of the operation, and even a pause of 0 hands the
   event loop over. The delays are computed without overflow, and `NAN` and
   `INF` are refused as parameters. A 4xx or 5xx answer to a preview is an
-  `IcapClientException` or `IcapServerException` as for any other answer; it was
-  an `IcapProtocolException`, which also kept a preview 503 out of the retry.
+  `IcapClientException` or `IcapServerException` with the built-in strategy or
+  verified mode; a custom strategy decides on partial-preview responses itself.
+  Previously a preview error was an `IcapProtocolException` in the built-in strategy.
   *(N03)*
 - **Verified mode for c-icap + ClamAV** (`verdict: new CicapVerdict('/avscan')` on `IcapClient`, also `forServer()`;
   [`docs/cicap-clamav.md`](docs/cicap-clamav.md)). The default rules reported an infected file of this service as clean
@@ -413,7 +415,7 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
 - **Behaviour change:** the file is opened once, and its size is that of the open file, not of a lookup of the path.
   The path names a regular file of the local file system (a device, FIFO or directory is refused with
   `IcapStorageException`; no stream-wrapper URL; a relative path is taken from the working directory of the call), and
-  the application keeps the file unchanged until the call returns
+  the application keeps the file and path stable during the scan and releases only the same unchanged object
   ([`docs/file-sources.md`](docs/file-sources.md)). *(B09, M07 second stage)*
 - **Behaviour change:** a custom `RequestFormatterInterface` receives the file of the scan helpers as a `LocalFile` body
   and passes it to `ChunkedBodyEncoder`; a scan whose request did not read the file to its end fails with

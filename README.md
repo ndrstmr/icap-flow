@@ -14,7 +14,7 @@
 An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, focused on RFC 3507 correctness, fail-secure semantics and a small surface area that is comfortable to drop into a Symfony / Laravel / framework-less code base.
 
 > [!WARNING]
-> **AI-assisted origin & production-use disclaimer.** Large parts of this library — code, tests, docs and CI plumbing — were authored with substantial AI assistance and reviewed in independent audits ([`docs/review/`](docs/review/)). A piece of code that scans uploads for malware sits in the security-critical path of any application that uses it. **Do not deploy this in production without a deep, independent review and an integration-test bake-out against the ICAP server you actually use.** A non-exhaustive checklist:
+> **AI-assisted origin & production-use disclaimer.** Large parts of this library — code, tests, docs and CI plumbing — were authored with substantial AI assistance and reviewed in independent audits ([`docs/review/`](docs/review/)). This client sends uploads to an ICAP service and interprets its response; it sits in the security-critical path of any application that uses it. **Do not deploy this in production without a deep, independent review and an integration-test bake-out against the ICAP server you actually use.** A non-exhaustive checklist:
 >
 > - End-to-end test against the ICAP service you use. Only c-icap `virus_scan` with ClamAV is verified ([verified mode](docs/cicap-clamav.md)); any other service is read by the default rules, which have not been verified against a product.
 > - Fail-secure verification: confirm an unreachable / 5xx / malformed-response server makes your application **block the upload**, not silently pass it through.
@@ -28,7 +28,7 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 
 `v3.0.0`, the current release, is a small breaking release of the v2 API: `executeRaw()` is `protected` (nothing outside the `final` `IcapClient` reaches it), `options()` returns `Future<IcapResponse>`, `IcapResponseException` is gone ([migration](docs/migration-v2-to-v3.md)). `v2.0.0` made the wire format RFC 3507 compliant; v1 is deprecated ([migration](docs/migration-v1-to-v2.md)).
 
-This README, its examples included, describes `main`, the next major release 4.0.0, which is not released yet: the changes since 3.0.0 are listed under *Unreleased* in the [`CHANGELOG.md`](CHANGELOG.md), several of them behaviour changes, the verified mode among them.
+This README, its examples included, describes `main`, the next major release 4.0.0, which is not released yet. See the [v3-to-v4 migration guide](docs/migration-v3-to-v4.md) and the *Unreleased* section of the [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Installation
 
@@ -90,7 +90,7 @@ echo $result->isInfected()
 
 ## Scanning files
 
-`scanFile()` and `scanFileWithPreview()` read the file through amphp/file in worker processes (`proc_open` is needed), so the event loop keeps running. The file has to stay unchanged until the call returns. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
+`scanFile()` and `scanFileWithPreview()` read the file through amphp/file in worker processes (`proc_open` is needed), so the event loop keeps running. Keep the file and path stable during the scan and release only the same unchanged object. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
 
 Without a verdict the client applies the default rules: a `204`, and a `200` or `206` without a header of `Config::getVirusFoundHeaders()` (default `X-Virus-Name`), are clean. They are verified against no product, and with c-icap they are wrong: they report an infected file as clean, and with c-icap's infection headers in the list they still take the `204` or the unchanged message it sends for a file it did not scan for a clean one. Use the verified mode there.
 
@@ -174,15 +174,14 @@ $transport = new AsyncAmpTransport($pool);
 // the Preview of the answer options() stored (0 to 1 MiB; larger values are
 // clamped, an entry that is no usable OPTIONS answer is ignored), else 1024.
 $cache = new InMemoryOptionsCache();
-// For cross-process caching (Redis, APCu) use Psr16OptionsCache
-// or Psr6OptionsCache instead.
+// For a shared cache backend use Psr16OptionsCache or Psr6OptionsCache.
 
 $client = new IcapClient($config, $transport, new RequestFormatter(), new ResponseParser(), optionsCache: $cache);
 ```
 
 ### OPTIONS cache
 
-An entry is one OPTIONS answer (status 200, at most 64 KiB of fields and body in at most 100 field values) of one endpoint, service and security profile (plain, or the TLS settings of the client), valid for the `Options-TTL` of the server, never longer than an hour, counted from when the answer came in. An answer without a usable `Options-TTL` is not kept. Nothing invalidates an entry earlier, the ISTag included: a change of the service shows when the entry ends. What a cache returns is checked before it is used, also with a cache of your own, and must fit the limits of the client (`maxResponseSize`, `maxHeaderCount`, `maxHeaderLineLength`) as it would from the server; an entry that fails is a miss. `InMemoryOptionsCache` holds 64 entries by default (`maxEntries`). The PSR adapters store one self-contained item per entry; the number of items in a shared backend is that backend's to bound. The key knows endpoint, service and TLS settings, not a tenant: give each security domain its own cache, or its own `prefix`.
+An entry is one OPTIONS answer (status 200, at most 64 KiB of fields and body in at most 100 field values) of one endpoint, service and security profile (plain, or the TLS settings of the client), valid for the `Options-TTL` of the server, never longer than an hour, counted from when the answer came in. An answer without a usable `Options-TTL` is not kept. Nothing invalidates an entry earlier, the ISTag included: a change of the service shows when the entry ends. What a cache returns is checked before it is used, also with a cache of your own. The client checks its response limits (`maxResponseSize`, `maxHeaderCount`, `maxHeaderLineLength`) against a normalized representation, which may differ from the server's original wire encoding; an entry that fails is a miss. A custom cache is responsible for the key and expiry. `InMemoryOptionsCache` holds 64 entries by default (`maxEntries`). The PSR adapters store one self-contained item per entry; the number of items in a shared backend is that backend's to bound. The key knows endpoint, service and TLS settings, not a tenant: give each security domain its own cache, or its own `prefix`.
 
 ## Custom request headers
 
@@ -208,6 +207,8 @@ The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInter
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |
 | `IcapServerException` | ICAP 5xx response — server failed, code is the real status |
 | `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable or changed size, or the OPTIONS cache backend fails |
+
+In the default mode a custom preview strategy decides how to handle a partial-preview response, including an error status. It must reject error responses itself; the built-in strategy and `CicapVerdict` do so.
 
 ## Examples
 
