@@ -577,22 +577,7 @@ it('survives a huge cached Preview value in a memory-limited child process', fun
     $script = <<<'PHP'
 require getenv('ICAP_AUTOLOAD');
 
-$transport = new class implements Ndrstmr\Icap\Transport\TransportInterface {
-    public string $preview = 'none';
-
-    public function request(Ndrstmr\Icap\Config $config, iterable $rawRequest, ?Amp\Cancellation $cancellation = null): Amp\Future
-    {
-        $wire = '';
-        foreach ($rawRequest as $chunk) {
-            $wire .= $chunk;
-        }
-        if (preg_match('/Preview: (\d+)/', $wire, $m) === 1) {
-            $this->preview = $m[1];
-        }
-
-        return Amp\Future::complete("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
-    }
-};
+$transport = new Ndrstmr\Icap\Tests\ScriptedTransport();
 
 $cache = new Ndrstmr\Icap\Cache\InMemoryOptionsCache();
 $cache->set(Ndrstmr\Icap\Cache\OptionsCacheKey::forService('icap.example', 1344, '/svc'), new Ndrstmr\Icap\DTO\IcapResponse(200, ['Preview' => [getenv('ICAP_PREVIEW')]]), 3600);
@@ -605,7 +590,7 @@ $client = new Ndrstmr\Icap\IcapClient(
     optionsCache: $cache,
 );
 $client->scanFileWithPreview('/svc', getenv('ICAP_FILE'))->await();
-echo $transport->preview;
+echo preg_match('/Preview: (\d+)/', $transport->requests[0], $m) === 1 ? $m[1] : 'none';
 PHP;
 
     $environment = array_merge(getenv(), [

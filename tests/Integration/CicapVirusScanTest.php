@@ -28,8 +28,9 @@ use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Tests\FileWorkers;
-use Ndrstmr\Icap\Tests\OneRequestTransport;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
+use Ndrstmr\Icap\Transport\TransportInterface;
 
 /*
  * AP-16 (M01): the verified mode against the reference service (docker-compose.yml, tests/Integration/README.md):
@@ -68,11 +69,11 @@ function cicapLiveService(string $variable = 'ICAP_CLAMAV_SERVICE'): array
     return ['host' => $host, 'port' => (int) (cicapLiveEnv('ICAP_PORT') ?? '1344'), 'service' => $service];
 }
 
-function cicapLiveClient(string $host, int $port, string $service, bool $sessions = true): IcapClient
+function cicapLiveClient(string $host, int $port, string $service, ?TransportInterface $transport = null): IcapClient
 {
     return new IcapClient(
         new Config($host, $port, streamTimeout: 60.0, operationTimeout: 120.0),
-        $sessions ? new AsyncAmpTransport() : new OneRequestTransport(),
+        $transport ?? new AsyncAmpTransport(),
         new RequestFormatter(),
         new ResponseParser(),
         verdict: new CicapVerdict($service),
@@ -152,7 +153,7 @@ it('finds EICAR with the default Config and the default factory, which the defau
     expect($default->scanFile($service, $eicar)->await()->isInfected())->toBeFalse();
 });
 
-it('gives the same verdict through every helper and both preview flows, with the infection in and beyond the preview', function () {
+it('gives the same verdict through every helper and both transports, with the infection in and beyond the preview', function () {
     ['host' => $host, 'port' => $port, 'service' => $service] = cicapLiveService();
     $filler = str_repeat('0123456789abcdef', 192);
     // [content, the verdict: a name (matched as a pattern) or null for clean]
@@ -165,8 +166,8 @@ it('gives the same verdict through every helper and both preview flows, with the
         'EICAR beyond the preview of an archive' => [cicapZip(['filler.txt' => $filler, 'eicar.com' => cicapEicar()]), '/^Eicar-(Test-)?Signature$/'],
     ];
 
-    foreach (['one socket for preview and rest' => true, 'one request per message' => false] as $flow => $sessions) {
-        $client = cicapLiveClient($host, $port, $service, $sessions);
+    foreach (['async transport' => new AsyncAmpTransport(), 'synchronous transport' => new SynchronousStreamTransport()] as $flow => $transport) {
+        $client = cicapLiveClient($host, $port, $service, $transport);
         foreach ($samples as $label => [$content, $threat]) {
             $path = FileWorkers::file($content);
             foreach (cicapLiveHelpers() as $helper => $scan) {
@@ -194,8 +195,8 @@ it('decides at the edges of the preview as it does elsewhere', function () {
         return cicapZip(['eicar.com' => cicapEicar(), 'filler.bin' => str_repeat('0', $size - $empty)]);
     };
 
-    foreach (['one socket for preview and rest' => true, 'one request per message' => false] as $flow => $sessions) {
-        $client = cicapLiveClient($host, $port, $service, $sessions);
+    foreach (['async transport' => new AsyncAmpTransport(), 'synchronous transport' => new SynchronousStreamTransport()] as $flow => $transport) {
+        $client = cicapLiveClient($host, $port, $service, $transport);
         // [size of the file, preview]: the preview is one byte short of the file, holds it exactly, is larger, or is empty.
         foreach ([[1025, 1024], [1024, 1024], [1023, 1024], [1025, 0], [400, 0]] as [$size, $preview]) {
             foreach (['harmless' => [str_repeat('a', $size), null], 'EICAR' => [$archive($size), $threat]] as $kind => [$content, $expected]) {

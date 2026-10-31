@@ -28,7 +28,6 @@ use Amp\Socket\Socket as SocketInterface;
 use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
-use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
 use Revolt\EventLoop;
 
@@ -62,16 +61,15 @@ use Revolt\EventLoop;
  * The producer of a request is part of the call. The event loop cannot fire
  * the timer of the window while a producer holds it, so the window also has an
  * end on the monotonic clock, and {@see write()} looks at the caller, the
- * window and that end wherever the producer hands control back: with every
- * chunk (an empty one too), after every write and before it returns. A
- * producer that never hands control back cannot be interrupted from outside.
+ * window and that end before it asks the producer for anything and wherever
+ * the producer hands control back: with every chunk (an empty one too), after
+ * every write and before it returns. A producer that never hands control back
+ * cannot be interrupted from outside.
  *
- * The session owns the bytes it has read. A read may bring more than one response
- * needs; what lies behind the end of a response stays in the session's reader and is
- * never dropped and never taken for something else. Only another {@see readResponse()}
- * uses it. A request cannot be written on top of it, and a socket that holds it is
- * not given back to the pool: no request is waiting for those bytes, so they are not
- * an answer to the next one.
+ * A read that brings in bytes behind the end of a response fails, and the session
+ * is closed: a connection carries one outstanding request at a time (RFC 3507 §4.1),
+ * so those bytes answer nothing, and the next user of the socket must not read them
+ * as its answer ({@see ResponseFrameReader}).
  */
 final class AmpTransportSession implements DiscardingTransportSession
 {
@@ -99,12 +97,11 @@ final class AmpTransportSession implements DiscardingTransportSession
     public function write(iterable $chunks): void
     {
         $this->assertActive();
-        if ($this->reader->hasPendingBytes()) {
-            $this->close();
-            throw new IcapMalformedResponseException('The server sent bytes that no request was waiting for.');
-        }
 
         $this->inWindow('Writing the request', 'stream timeout', $this->streamTimeout, function (Cancellation $window, \Closure $checkpoint) use ($chunks): void {
+            // Cancelled or out of time before it began: the producer is not asked for anything.
+            $checkpoint();
+
             // Socket::write() takes no cancellation: against a peer that does not read it
             // suspends this fiber until the peer does. Closing the socket is what fails the
             // pending write, so the end of the window, by deadline or by the caller, closes it.
@@ -163,13 +160,12 @@ final class AmpTransportSession implements DiscardingTransportSession
         $reader = $this->reader;
         $socket = $this->socket;
         $streamTimeout = $this->streamTimeout;
-        // Bytes of the answer that are in already: it has begun, and only its transfer has a limit left.
-        $begun = $reader->hasPendingBytes();
+        $begun = false;
 
         return $this->inWindow(
-            $begun ? 'Reading the response' : 'Waiting for the response to begin',
-            $begun ? 'stream timeout' : 'response start timeout',
-            $begun ? $streamTimeout : $this->config->getResponseStartTimeout(),
+            'Waiting for the response to begin',
+            'response start timeout',
+            $this->config->getResponseStartTimeout(),
             static function (Cancellation $window, \Closure $checkpoint, \Closure $next) use ($consume, $reader, $socket, $streamTimeout, &$begun): mixed {
                 $response = $consume($reader, static function () use ($socket, $window, $checkpoint, $next, $streamTimeout, &$begun): ?string {
                     // No read is begun for a caller who has cancelled, nor once the stretch has run out.
@@ -318,10 +314,9 @@ final class AmpTransportSession implements DiscardingTransportSession
         }
         $this->disposed = true;
 
-        // Bytes nobody asked for are on this socket: the next user would read them as its answer. And an operation
-        // that was cancelled, or has run out of time, hands nothing to the pool, whatever the exchange looked like
-        // while it lasted (M10).
-        if ($this->pool !== null && !$this->reader->hasPendingBytes() && !($this->userCancellation?->isRequested() ?? false)) {
+        // An operation that was cancelled, or has run out of time, hands nothing to the pool, whatever the exchange
+        // looked like while it lasted (M10).
+        if ($this->pool !== null && !($this->userCancellation?->isRequested() ?? false)) {
             $this->pool->release($this->config, $this->socket);
             return;
         }

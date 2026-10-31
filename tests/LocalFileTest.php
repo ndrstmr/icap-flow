@@ -95,15 +95,11 @@ it('reads a file in bounded blocks to its confirmed end, on the size the open fi
     }
     expect($read)->toBe($content)
         ->and($largest)->toBe(LocalFile::BLOCK_SIZE)
-        // The end stays the end, and a rewind starts the file again.
+        // The end stays the end.
         ->and($file->read(1))->toBeNull();
 
-    // A request has read the file once its end is confirmed, and no longer after the file went back to its start.
+    // A request has read the file once its end is confirmed.
     $file->assertRead();
-    $file->rewind();
-    expect(localFileThrown(static fn () => $file->assertRead()))->toBeInstanceOf(IcapStorageException::class)
-        ->and($file->read(5))->toBe(substr($content, 0, 5))
-        ->and(localFileThrown(static fn () => $file->assertRead()))->toBeInstanceOf(IcapStorageException::class);
 
     $file->close();
     $file->close();

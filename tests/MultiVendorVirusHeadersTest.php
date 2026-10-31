@@ -28,6 +28,7 @@ use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
@@ -155,15 +156,9 @@ function rawResponseWithVirusHeader(string $spelling): string
  */
 function buildClientForRawResponse(string $raw, array $virusHeaders): IcapClient
 {
-    /** @var TransportInterface&\Mockery\MockInterface $transport */
-    $transport = m::mock(TransportInterface::class);
-    /** @var \Mockery\Expectation $t */
-    $t = $transport->shouldReceive('request');
-    $t->andReturn(\Amp\Future::complete($raw));
-
     return new IcapClient(
         (new Config('icap.example'))->withVirusFoundHeaders($virusHeaders),
-        $transport,
+        new ScriptedTransport([$raw]),
         new RequestFormatter(),
         new ResponseParser(),
     );

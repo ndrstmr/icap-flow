@@ -66,8 +66,9 @@ use function Amp\async;
  *
  * **Sessions (v2.1+).** Implements {@see SessionAwareTransport} so
  * callers that need to send + receive multiple times on the same
- * connection (strict RFC 3507 §4.5 preview-continue, ICAP request
- * pipelining, …) can call {@see openSession()}.
+ * connection (the RFC 3507 §4.5 preview and its continuation) can call
+ * {@see openSession()}. A connection carries one outstanding request at
+ * a time (RFC 3507 §4.1).
  */
 final class AsyncAmpTransport implements SessionAwareTransport, DiscardingTransport
 {
@@ -117,10 +118,9 @@ final class AsyncAmpTransport implements SessionAwareTransport, DiscardingTransp
                 return $read($session);
             } finally {
                 // The caller gets a response no one has validated yet: a
-                // 100 Continue, an error status or a response with bytes
-                // behind it are indistinguishable from a clean answer
-                // here. Reuse needs a validated exchange, which only a
-                // session offers.
+                // 100 Continue or an error status are indistinguishable
+                // from a clean answer here. Reuse needs a validated
+                // exchange, which only a session offers.
                 $session->close();
             }
         });

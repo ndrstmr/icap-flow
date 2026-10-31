@@ -37,16 +37,14 @@ use Ndrstmr\Icap\ResponseDecoder;
  * rules, and the parser reads a complete response with the same ones, so both
  * accept or refuse the same bytes.
  *
- * The reader stops at the end of a message. Bytes it has already taken from the
- * producer past that end are not dropped: they stay with the reader (the session
- * that owns it) as the start of the next message, and {@see hasPendingBytes()}
- * says whether there are any. A caller that expects no further message treats
- * them as an error.
+ * The reader stops at the end of a message and asks the producer for nothing
+ * more. Bytes it has already taken past that end belong to no request: a
+ * connection carries one outstanding request at a time (RFC 3507 §4.1). Both
+ * reads refuse them, whether the response is kept or not; bytes that arrive
+ * later are not waited for.
  */
 final class ResponseFrameReader
 {
-    private string $pending = '';
-
     public function __construct(
         private readonly int $maxResponseSize,
         private readonly int $maxHeaderLineLength,
@@ -62,13 +60,12 @@ final class ResponseFrameReader
      *
      * The producer is a callable that returns the next chunk of bytes
      * (or null on EOF). It is invoked only when the reader needs more
-     * bytes to complete the framing; bytes left over from the previous call
-     * are used first.
+     * bytes to complete the framing.
      *
      * @param Closure(): ?string $produce
      *
-     * @throws IcapMalformedResponseException When the bytes cannot be a legal response, or the
-     *         stream ends before the response does
+     * @throws IcapMalformedResponseException When the bytes cannot be a legal response, the stream
+     *         ends before the response does, or bytes came in behind it
      */
     public function readFrom(Closure $produce): string
     {
@@ -78,7 +75,7 @@ final class ResponseFrameReader
             maxHeaderLineLength: $this->maxHeaderLineLength,
             collectBody: false,
         );
-        $this->pending = $this->readInto($decoder, $produce);
+        $this->readInto($decoder, $produce);
 
         return $decoder->frame();
     }
@@ -90,9 +87,6 @@ final class ResponseFrameReader
      * ({@see IcapResponse::$discardedBodyBytes}). `$maxResponseBytes` is the budget for the bytes of
      * the whole message, in place of the maximum size of the reader; the limits for header lines and
      * their number are the reader's.
-     *
-     * A caller of this method has one request outstanding, so bytes the reader took in behind the
-     * response belong to no request: they are refused, and not kept for a next read.
      *
      * @param Closure(): ?string $produce
      *
@@ -109,32 +103,20 @@ final class ResponseFrameReader
             collectBody: false,
             discard: true,
         );
-        if ($this->readInto($decoder, $produce) !== '') {
-            throw new IcapMalformedResponseException('The server sent bytes that no request was waiting for.');
-        }
+        $this->readInto($decoder, $produce);
 
         return $decoder->response();
     }
 
     /**
-     * Feeds the decoder until the response is complete.
+     * Feeds the decoder until the response is complete, and refuses what came in behind it.
      *
      * @param Closure(): ?string $produce
-     *
-     * @return string The bytes that came in behind the response
      */
-    private function readInto(ResponseDecoder $decoder, Closure $produce): string
+    private function readInto(ResponseDecoder $decoder, Closure $produce): void
     {
-        $bytes = $this->pending;
-        $this->pending = '';
-        $received = strlen($bytes);
-
-        while (true) {
-            $decoder->feed($bytes);
-            if ($decoder->isComplete()) {
-                break;
-            }
-
+        $received = 0;
+        while (!$decoder->isComplete()) {
             $bytes = $produce();
             if ($bytes === null) {
                 throw new IcapMalformedResponseException(
@@ -142,16 +124,11 @@ final class ResponseFrameReader
                 );
             }
             $received += strlen($bytes);
+            $decoder->feed($bytes);
         }
 
-        return $decoder->remainder();
-    }
-
-    /**
-     * Whether bytes behind the last response are waiting for the next read.
-     */
-    public function hasPendingBytes(): bool
-    {
-        return $this->pending !== '';
+        if ($decoder->remainder() !== '') {
+            throw new IcapMalformedResponseException('The server sent bytes that no request was waiting for.');
+        }
     }
 }

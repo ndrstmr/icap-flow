@@ -133,6 +133,7 @@ final class SynchronousIcapClient
     /**
      * @param array<string, string|string[]> $extraHeaders
      * @throws \Ndrstmr\Icap\Exception\IcapStorageException When the file cannot be opened, sized or read to its end
+     * @throws \LogicException When the transport of the wrapped client cannot continue a preview on its connection
      */
     public function scanFileWithPreview(
         string $service,

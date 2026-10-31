@@ -28,8 +28,8 @@ use Ndrstmr\Icap\Exception\IcapStorageException;
 
 /**
  * A local file that the client opened once for one operation and reads through {@see FileCalls}, so that the event
- * loop keeps running while the file is read. The size is the end of the open file, and reads, rewinds and the close
- * go to that same file; the path is not looked at again. Only a regular file is opened, and its size is what the
+ * loop keeps running while the file is read. The size is the end of the open file, and reads and the close go to that
+ * same file; the path is not looked at again. Only a regular file is opened, and its size is what the
  * announced length of the body is checked against.
  *
  * The cancellation (the end of the operation) ends every wait for the driver. A scan ends with {@see close()} when it
@@ -42,7 +42,7 @@ final class LocalFile
     /** The most one read asks of the driver, and so the buffer a file needs per operation. */
     public const int BLOCK_SIZE = 65536;
 
-    /** Whether a read has confirmed the end of the file since it was last positioned. */
+    /** Whether the last read confirmed the end of the file. */
     private bool $atEnd = false;
 
     private function __construct(
@@ -112,18 +112,6 @@ final class LocalFile
         $this->atEnd = $bytes === null;
 
         return $bytes;
-    }
-
-    /**
-     * @throws IcapStorageException When the file cannot be positioned at its start
-     * @throws CancelledException   When the cancellation ends the wait for the driver
-     */
-    public function rewind(): void
-    {
-        $file = $this->file ?? throw new \LogicException('The file has been closed.');
-
-        $this->calls->run($this->cancellation, static fn (): int => $file->seek(0), 'Unable to rewind the file for the full request.');
-        $this->atEnd = false;
     }
 
     /**

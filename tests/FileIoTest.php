@@ -45,7 +45,9 @@ use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Ndrstmr\Icap\Transport\TransportSession;
 use PHPUnit\Framework\Assert;
 use Revolt\EventLoop;
 
@@ -374,14 +376,56 @@ it('fails a scan whose request did not take the whole file', function () {
             return (new RequestFormatter())->format($request);
         }
     };
+    // A transport whose session takes the preview and answers 100 Continue, but takes nothing of the rest of the file.
+    $lazy = new class () implements SessionAwareTransport {
+        #[\Override]
+        public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
+        {
+            throw new \LogicException('A preview is sent through a session.');
+        }
+
+        #[\Override]
+        public function openSession(Config $config, ?Cancellation $cancellation = null): TransportSession
+        {
+            return new class () implements TransportSession {
+                private int $writes = 0;
+
+                #[\Override]
+                public function write(iterable $chunks): void
+                {
+                    if ($this->writes++ === 0) {
+                        foreach ($chunks as $_) {
+                            // the preview goes out
+                        }
+                    }
+                }
+
+                #[\Override]
+                public function readResponse(): string
+                {
+                    return $this->writes === 1 ? FILE_IO_CONTINUE : FILE_IO_CLEAN;
+                }
+
+                #[\Override]
+                public function release(): void
+                {
+                }
+
+                #[\Override]
+                public function close(): void
+                {
+                }
+            };
+        }
+    };
     $path = FileWorkers::file('payload to scan');
     $cases = [
-        'scanFile'                    => [static fn (IcapClient $client) => $client->scanFile('/svc', $path), []],
-        'full request after a preview' => [static fn (IcapClient $client) => $client->scanFileWithPreview('/svc', $path, 4), [FILE_IO_CONTINUE, FILE_IO_CLEAN]],
+        'scanFile'             => [static fn (IcapClient $client) => $client->scanFile('/svc', $path), new ScriptedTransport()],
+        'rest after a preview' => [static fn (IcapClient $client) => $client->scanFileWithPreview('/svc', $path, 4), $lazy],
     ];
 
-    foreach ($cases as $case => [$scan, $replies]) {
-        $client = new IcapClient(new Config('icap.example'), new ScriptedTransport($replies), $formatter, new ResponseParser());
+    foreach ($cases as $case => [$scan, $transport]) {
+        $client = new IcapClient(new Config('icap.example'), $transport, $formatter, new ResponseParser());
 
         // The server answers "clean" to the empty body it got; that is no verdict on the file.
         $thrown = fileIoThrown(fn () => $scan($client)->await());
@@ -547,14 +591,17 @@ it('fails before the final chunk when the file changes its size during the trans
     ];
 
     foreach ($cases as $case => [$change, $message]) {
-        foreach (['scanFile', 'full request after a preview'] as $scan) {
+        foreach (['scanFile', 'rest after a preview'] as $scan) {
             $path = FileWorkers::file(str_repeat('A', 20000));
             $replies = $scan === 'scanFile' ? [] : [FILE_IO_CONTINUE, FILE_IO_CLEAN];
-            // The request that carries the whole file is the only one for scanFile(), the second after a preview.
+            // The write that carries the body is the only one for scanFile(), the second after a preview.
             $request = $scan === 'scanFile' ? 0 : 1;
-            $heads = 0;
-            $transport = new ScriptedTransport($replies, static function (int $index) use ($change, $path, $request, &$heads): void {
-                if ($index === 0 && $heads++ === $request) {
+            $changed = false;
+            // The file changes with the head of a scanFile() request, before its body is read, and after a preview
+            // once the preview has gone out, before the rest of the file is read.
+            $transport = new ScriptedTransport($replies, static function (int $index, string $chunk) use ($change, $path, $scan, &$changed): void {
+                if (!$changed && ($scan === 'scanFile' ? $index === 0 : $chunk === "0\r\n\r\n")) {
+                    $changed = true;
                     $change($path);
                 }
             });

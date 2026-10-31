@@ -385,7 +385,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                     // The full request goes out without a preview handshake, so a
                     // caller Preview would announce one that never happens; it stays
                     // out in any spelling. Allow, e.g. 204, is valid here.
-                    headers: $this->wholeFileHeaders($extraHeaders, ['Preview']),
+                    headers: $this->wholeFileHeaders($extraHeaders),
                     encapsulatedResponse: $httpResponse,
                 );
 
@@ -406,15 +406,17 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * {@see $previewSize} bytes are sent along with the Preview /
      * Allow: 204 headers; if the file fits entirely within the preview
      * the request is terminated with `0; ieof\r\n\r\n` (RFC 3507 §4.5)
-     * and no continuation round-trip is necessary.
+     * and no continuation round-trip is necessary. If the server answers
+     * `100 Continue`, the rest of the file follows on the same connection as
+     * part of the same request, which takes a transport with sessions
+     * ({@see SessionAwareTransport}).
      *
      * The preview size is 0 to 1 MiB (1048576 bytes); `0` sends the
      * headers alone. A size outside that range is refused with an
      * \InvalidArgumentException before the file or a socket is touched.
      * `ieof` is sent only after the end of the file was observed and its
      * length matches the size of the open file, and the rest of
-     * the file, in the strict flow and in the full request of the two-request
-     * flow, goes out with exactly that length as well. Like
+     * the file goes out with exactly that length as well. Like
      * {@see scanFile()}, the file is opened once inside the returned Future
      * and closed when the operation ends.
      *
@@ -423,6 +425,8 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * had when it was opened.
      *
      * @throws \InvalidArgumentException When $previewSize is outside 0..1 MiB
+     * @throws \LogicException           When the transport has no sessions, so that it cannot continue a preview
+     *                                   on the connection it began on
      */
     #[\Override]
     public function scanFileWithPreview(
@@ -444,8 +448,9 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * @return Future<ScanResult>
      *
      * @throws \InvalidArgumentException When the budget is below 1, or $previewSize is outside 0..1 MiB
-     * @throws \LogicException           When the transport or the parser cannot discard, or the client has a
-     *                                   preview strategy other than {@see DefaultPreviewStrategy}
+     * @throws \LogicException           When the transport or the parser cannot discard, the transport has no
+     *                                   sessions, or the client has a preview strategy other than
+     *                                   {@see DefaultPreviewStrategy}
      */
     #[\Override]
     public function scanFileWithPreviewDiscardingBody(
@@ -479,6 +484,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?int $discardBudget,
     ): Future {
         $this->assertVerifiedService($service);
+        $transport = $this->sessionTransport();
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
         if ($previewSize !== null && ($previewSize < 0 || $previewSize > self::MAX_PREVIEW_SIZE)) {
@@ -490,7 +496,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         }
         $this->validateIcapHeaders($extraHeaders);
 
-        return $this->run($deadline, function (OperationDeadline $deadline) use ($service, $filePath, $previewSize, $extraHeaders, $discardBudget): ScanResult {
+        return $this->run($deadline, function (OperationDeadline $deadline) use ($transport, $service, $filePath, $previewSize, $extraHeaders, $discardBudget): ScanResult {
             $previewSize = $this->resolvePreviewSize($service, $previewSize, $deadline);
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
@@ -498,13 +504,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             $file = LocalFile::open($filePath, $deadline);
 
             try {
-                $result = $this->transport instanceof SessionAwareTransport
-                    // Strict RFC 3507 §4.5 path — preview + continuation
-                    // on the same socket, one logical ICAP request.
-                    ? $this->scanFileWithPreviewStrict($service, $file, $previewSize, $extraHeaders, $deadline, $discardBudget)
-                    // Legacy two-request approximation for non-session
-                    // transports (synchronous, custom impls).
-                    : $this->scanFileWithPreviewLegacy($service, $file, $previewSize, $extraHeaders, $deadline, $discardBudget);
+                $result = $this->scanFileWithPreviewStrict($transport, $service, $file, $previewSize, $extraHeaders, $deadline, $discardBudget);
                 $file->close();
 
                 return $result;
@@ -515,13 +515,13 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     }
 
     /**
-     * Strict RFC 3507 §4.5 preview-continue: the preview and the
-     * continuation travel on the same socket as one logical ICAP
-     * request. Requires a {@see SessionAwareTransport}.
+     * RFC 3507 §4.5 preview-continue: the preview and the continuation
+     * travel on the same socket as one logical ICAP request.
      *
      * @param array<string, string|string[]> $extraHeaders
      */
     private function scanFileWithPreviewStrict(
+        SessionAwareTransport $transport,
         string $service,
         LocalFile $file,
         int $previewSize,
@@ -529,8 +529,6 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         OperationDeadline $deadline,
         ?int $discardBudget,
     ): ScanResult {
-        \assert($this->transport instanceof SessionAwareTransport);
-
         $fileSize = $file->size;
         [$previewBytes, $previewIsComplete] = $this->readPreview($file, $previewSize);
 
@@ -554,7 +552,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             previewIsComplete: $previewIsComplete,
         );
 
-        $session = $this->transport->openSession($this->config, $deadline);
+        $session = $transport->openSession($this->config, $deadline);
         // The socket is closed unless the exchange ended in a verdict that
         // passed every check below and no response asked for a close. An
         // exception, a status the flow does not allow or a 100 after `ieof`
@@ -594,6 +592,8 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                 $file,
                 $fileSize - strlen($previewBytes),
             ));
+            // A session that took less than the rest leaves the verdict to a body that is not the file.
+            $file->assertRead();
 
             $finalIcapResponse = $readResponse();
             $deadline->checkpoint();
@@ -608,84 +608,6 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                 $session->close();
             }
         }
-    }
-
-    /**
-     * Two-request approximation of RFC 3507 §4.5 used when the
-     * transport doesn't expose a {@see SessionAwareTransport} surface
-     * (synchronous transport, custom implementations). Works against
-     * permissive servers but spends a second TCP/TLS handshake.
-     *
-     * @param array<string, string|string[]> $extraHeaders
-     */
-    private function scanFileWithPreviewLegacy(
-        string $service,
-        LocalFile $file,
-        int $previewSize,
-        array $extraHeaders,
-        OperationDeadline $deadline,
-        ?int $discardBudget,
-    ): ScanResult {
-        $fileSize = $file->size;
-        [$previewBytes, $previewIsComplete] = $this->readPreview($file, $previewSize);
-
-        $previewEnvelope = new HttpResponse(
-            statusCode: 200,
-            headers: [
-                'Content-Type'   => ['application/octet-stream'],
-                'Content-Length' => [(string) $fileSize],
-            ],
-            body: $previewBytes,
-        );
-        $headers = $this->mergeHeaders($extraHeaders, [
-            'Preview' => [(string) $previewSize],
-            'Allow'   => ['204'],
-        ]);
-        $previewRequest = new IcapRequest(
-            method: 'RESPMOD',
-            uri: $this->buildServiceUri($service),
-            headers: $headers,
-            encapsulatedResponse: $previewEnvelope,
-            previewIsComplete: $previewIsComplete,
-        );
-
-        $previewIcapResponse = $this->executeRaw($previewRequest, $deadline, $discardBudget)->await();
-        $deadline->checkpoint();
-
-        if ($previewIsComplete) {
-            return $this->interpretResponse($previewIcapResponse, $this->config);
-        }
-
-        $result = $this->previewResult($previewIcapResponse, $deadline);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // The preview left the file behind its first bytes; the full
-        // request needs it from its start. A file that cannot go back
-        // would send the rest of it as if it were the whole.
-        $file->rewind();
-        $fullResponse = new HttpResponse(
-            statusCode: 200,
-            headers: [
-                'Content-Type'   => ['application/octet-stream'],
-                'Content-Length' => [(string) $fileSize],
-            ],
-            body: $file,
-        );
-        $fullRequest = new IcapRequest(
-            method: 'RESPMOD',
-            uri: $this->buildServiceUri($service),
-            // The full request is no preview: caller values for the preview
-            // headers stay out of it as well, in any spelling.
-            headers: $this->wholeFileHeaders($extraHeaders, ['Preview', 'Allow']),
-            encapsulatedResponse: $fullResponse,
-        );
-        $result = $this->requestWith($fullRequest, $deadline, $discardBudget)->await();
-        // As in scanFile(): the verdict counts only if the request took the whole file.
-        $file->assertRead();
-
-        return $result;
     }
 
     /**
@@ -751,18 +673,17 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     }
 
     /**
-     * The headers of a request that carries the whole file. The ones named in `$managed` are not the caller's. In the
+     * The headers of a request that carries the whole file without a preview, so `Preview` is not the caller's. In the
      * verified mode the request offers 204: only a 204 shows that the service scanned the file, a clean file would
      * otherwise come back as a message that looks like one it did not scan.
      *
      * @param array<string, string|string[]> $extraHeaders
-     * @param list<string>                   $managed
      *
      * @return array<string, string|string[]>
      */
-    private function wholeFileHeaders(array $extraHeaders, array $managed): array
+    private function wholeFileHeaders(array $extraHeaders): array
     {
-        $headers = HeaderFields::without($extraHeaders, $managed);
+        $headers = HeaderFields::without($extraHeaders, ['Preview']);
 
         return $this->verdict === null ? $headers : $this->mergeHeaders($headers, ['Allow' => ['204']]);
     }
@@ -803,6 +724,20 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         if (!$this->parser instanceof ResponseParser) {
             throw new \LogicException('The discarding mode reads the response with the ResponseParser of this library; ' . $this->parser::class . ' would be passed by.');
         }
+    }
+
+    /**
+     * A preview that the server answers with `100 Continue` is continued on the connection it began on, which takes a
+     * session. A transport without one is refused at the call, before a file is opened or a connection made: sending
+     * the file again in a request of its own would not be the request the server began with.
+     *
+     * @throws \LogicException When the transport has no sessions
+     */
+    private function sessionTransport(): SessionAwareTransport
+    {
+        return $this->transport instanceof SessionAwareTransport
+            ? $this->transport
+            : throw new \LogicException($this->transport::class . ' cannot continue a preview on the connection it began on (RFC 3507 §4.5); use a transport that implements ' . SessionAwareTransport::class . '.');
     }
 
     private function discardingTransport(): DiscardingTransport

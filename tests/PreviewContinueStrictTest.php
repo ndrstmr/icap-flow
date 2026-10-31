@@ -31,7 +31,12 @@ use Ndrstmr\Icap\PreviewDecision;
 use Ndrstmr\Icap\PreviewStrategyInterface;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
+use Ndrstmr\Icap\RetryingIcapClient;
+use Ndrstmr\Icap\SynchronousIcapClient;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\FileWorkers;
+use Ndrstmr\Icap\Tests\IcapTestServer;
+use Ndrstmr\Icap\Tests\OneRequestTransport;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
@@ -43,6 +48,10 @@ foreach ([
     [499, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
     [500, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
     [599, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [400, IcapClientException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [499, IcapClientException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [500, IcapServerException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [599, IcapServerException::class, PreviewDecision::CONTINUE_SENDING, 0],
     [101, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
     [302, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
     [600, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
@@ -107,6 +116,35 @@ foreach ([
         }
     });
 }
+
+/*
+ * A preview that the server answers with 100 Continue goes on over the connection it began on. A transport without
+ * sessions cannot do that, and the client does not send the file again in a request of its own: it refuses the
+ * preview at the call, before a file is opened or a connection is made. Whatever needs no preview works with it.
+ */
+it('refuses a preview on a transport without sessions before a file is opened or a connection is made', function () {
+    $server = IcapTestServer::start(static fn (array $request) => [IcapTestServer::CLEAN]);
+    try {
+        // The file does not exist: had the client got as far as opening it, the error would be an IcapStorageException.
+        $missing = sys_get_temp_dir() . '/icap-preview-missing-' . bin2hex(random_bytes(6));
+        $client = new IcapClient(new Config('127.0.0.1', $server->port), new OneRequestTransport(), new RequestFormatter(), new ResponseParser());
+
+        expect(fn () => $client->scanFileWithPreview('/avscan', $missing, 1024))->toThrow(\LogicException::class, 'SessionAwareTransport')
+            ->and(fn () => $client->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024))->toThrow(\LogicException::class, 'SessionAwareTransport')
+            // The decorators pass it on: the retrying one fails its Future, the synchronous one throws.
+            ->and(fn () => (new RetryingIcapClient($client))->scanFileWithPreview('/avscan', $missing, 1024)->await())->toThrow(\LogicException::class, 'SessionAwareTransport')
+            ->and(fn () => (new SynchronousIcapClient($client))->scanFileWithPreview('/avscan', $missing, 1024))->toThrow(\LogicException::class, 'SessionAwareTransport');
+        expect($server->connections)->toBe(0);
+
+        // A scan without a preview needs no session.
+        $path = FileWorkers::file(str_repeat('a', 5000));
+        expect($client->scanFile('/avscan', $path)->await()->isInfected())->toBeFalse()
+            ->and($server->connections)->toBe(1);
+    } finally {
+        FileWorkers::removeFiles();
+        $server->stop();
+    }
+});
 
 /**
  * Strict RFC 3507 §4.5 preview-continue: when the server answers
@@ -621,7 +659,7 @@ it('answers the second scan with its own response, not with bytes from the paylo
     }
 });
 
-it('does not reuse a socket on which the server sent more than the response', function () {
+it('gives no verdict on a socket on which the server sent more than the response, and does not reuse it', function () {
     $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
     $blocked = "HTTP/1.1 403 Blocked\r\nContent-Length: 0\r\n\r\n";
     $infected = "ICAP/1.0 200 OK\r\nX-Virus-Name: EICAR\r\nEncapsulated: res-hdr=0, res-body=" . strlen($blocked) . "\r\n\r\n" . $blocked . "0\r\n\r\n";
@@ -661,16 +699,17 @@ it('does not reuse a socket on which the server sent more than the response', fu
             $first = $answer($serverOne, $clean . $clean);
             $second = $answer($serverTwo, $infected);
 
-            $one = $client->scanFileWithPreview('/svc', $tmp, 4)->await();
+            // A clean answer with a second one behind it is no verdict.
+            expect(fn () => $client->scanFileWithPreview('/svc', $tmp, 4)->await())
+                ->toThrow(IcapMalformedResponseException::class);
             $two = $client->scanFileWithPreview('/svc', $tmp, 4)->await();
             $first->await();
             $second->await();
 
-            expect($one->isInfected())->toBeFalse();
             expect($two->isInfected())->toBeTrue();
         });
 
-        // The surplus bytes closed the first socket instead of going back to the pool.
+        // The surplus bytes closed the first socket instead of letting it go back to the pool.
         expect($clientOne->isClosed())->toBeTrue();
         expect($connections)->toBe(2);
     } finally {

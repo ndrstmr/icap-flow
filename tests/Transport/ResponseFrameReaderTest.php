@@ -77,7 +77,7 @@ it('handles fragmented arrivals — header split across two reads', function () 
     expect($response)->toBe($bytes);
 });
 
-it('does not consume bytes past the response — the next request can use the same socket', function () {
+it('stops at the end of the response and asks for no bytes behind it', function () {
     $http = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
     $first = "ICAP/1.0 200 OK\r\n"
         . 'Encapsulated: res-hdr=0, res-body=' . strlen($http) . "\r\n"
@@ -87,13 +87,14 @@ it('does not consume bytes past the response — the next request can use the sa
     $second = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
 
     $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
-    // The producer is given the two responses concatenated as a single
-    // chunk — the reader must stop consuming after the first one.
-    $producer = makeChunkProducer([$first . $second]);
+    $asked = 0;
+    $producer = static function () use (&$asked, $first, $second): ?string {
+        return [$first, $second][$asked++] ?? null;
+    };
 
-    $response = $reader->readFrom($producer);
-
-    expect($response)->toBe($first);
+    expect($reader->readFrom($producer))->toBe($first);
+    // The response ended with the first read: the reader does not wait for what may come behind it.
+    expect($asked)->toBe(1);
 });
 
 it('aborts when the response exceeds maxResponseSize', function () {
@@ -313,61 +314,28 @@ it('takes the end of the stream inside a legal response for malformed, at every 
     }
 });
 
-it('leaves what follows a response for the next one, however the two arrive', function () {
-    $labels = array_keys(rfLegalResponses());
-    $legal = array_column(rfLegalResponses(), 0);
-
-    foreach ($labels as $i => $label) {
-        $next = $labels[($i + 1) % count($labels)];
-        $first = $legal[$i];
-        $second = $legal[($i + 1) % count($labels)];
-
-        foreach (rfFragmentations($first . $second, "{$label}+{$next}") as $how => $chunks) {
-            $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
-            $producer = makeChunkProducer($chunks);
-
-            expect($reader->readFrom($producer))->toBe($first, "{$label} then {$next}, {$how}");
-            expect($reader->readFrom($producer))->toBe($second, "{$label} then {$next}, {$how}");
-        }
-    }
-});
-
-it('refuses a response that is received and dropped when bytes of another one came in behind it', function () {
+/*
+ * A connection carries one outstanding request at a time (RFC 3507 §4.1): bytes that came in behind a response answer
+ * nothing, whether the response is kept or not, and a clean answer with bytes behind it is no verdict.
+ */
+it('refuses a response, kept or dropped, when bytes of another one came in behind it', function () {
     $labels = array_keys(rfLegalResponses());
     $legal = array_column(rfLegalResponses(), 0);
 
     foreach ($labels as $i => $label) {
         $first = $legal[$i];
-        $second = $legal[($i + 1) % count($labels)];
+        $wire = $first . $legal[($i + 1) % count($labels)];
 
         // However much of the second response came in with the end of the first.
-        for ($cut = strlen($first) + 1; $cut <= strlen($first . $second); $cut++) {
-            $wire = $first . $second;
-            $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
+        for ($cut = strlen($first) + 1; $cut <= strlen($wire); $cut++) {
+            $chunks = [substr($wire, 0, $cut), substr($wire, $cut)];
 
-            expect(fn () => $reader->readDiscardingBody(makeChunkProducer([substr($wire, 0, $cut), substr($wire, $cut)]), 1 << 20))
+            expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))->readFrom(makeChunkProducer($chunks)))
                 ->toThrow(IcapMalformedResponseException::class, 'bytes', "{$label}, cut after {$cut} bytes");
+            expect(fn () => (new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192))->readDiscardingBody(makeChunkProducer($chunks), 1 << 20))
+                ->toThrow(IcapMalformedResponseException::class, 'bytes', "{$label}, cut after {$cut} bytes, discarding");
         }
     }
-});
-
-it('says whether bytes are left over after a response, and keeps them for the next read', function () {
-    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
-    $reader = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
-
-    // A response, a whole second one and the start of a third arrive in one read.
-    $producer = makeChunkProducer([$clean . $clean . 'ICAP/1.0 2']);
-    expect($reader->readFrom($producer))->toBe($clean);
-    expect($reader->hasPendingBytes())->toBeTrue();
-    expect($reader->readFrom($producer))->toBe($clean);
-    expect($reader->hasPendingBytes())->toBeTrue();
-
-    // The third one is not complete, and the stream ends.
-    expect(fn () => $reader->readFrom($producer))->toThrow(IcapMalformedResponseException::class);
-
-    $exact = new ResponseFrameReader(maxResponseSize: 1 << 20, maxHeaderLineLength: 8192);
-    $exact->readFrom(makeChunkProducer([$clean]));
-    expect($exact->hasPendingBytes())->toBeFalse();
 });
 
 it('does not take a terminator or a forged response inside a chunk payload for the end of the message', function () {

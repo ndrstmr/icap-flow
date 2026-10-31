@@ -52,9 +52,9 @@ protected function executeRaw(IcapRequest $request, ?Cancellation $cancellation 
 
 In `AsyncAmpTransport::openSession()` (Erwerb: Pool, Connect, TLS) und in `AmpTransportSession::inWindow()` (für `write()` und `readResponse()`) fließen Library-Timeout und User-Abbruch zu einem Fenster zusammen; dort steht das Muster: vorab gecancelt → Pool und Connector bleiben unberührt, Fensterende als `IcapTimeoutException`, der Cancel des Aufrufers bleibt, ein nach Abbruch gelieferter Socket wird geschlossen. Timer und Subscription werden in `finally` ausdrücklich entfernt: `TimeoutCancellation` und `CompositeCancellation` räumen erst im Destruktor auf, und eine gehaltene Exception hält die Argumente ihrer Frames, damit beide, am Leben.
 
-**Per-IO, nicht Session-Lifetime:** Jeder `write()`- und `readResponse()`-Aufruf bekommt ein neues Fenster; bei `write()` gilt es für alle Chunks des Aufrufs und wird dort, wo der Producer die Kontrolle zurückgibt (jeder Chunk, auch ein leerer; nach jedem Write; vor der Rückgabe), zusätzlich an einer monotonen Endzeit geprüft, weil der Timer nicht feuert, solange ein Producer den Event-Loop hält. `Socket::write()` hat keinen Cancellation-Parameter: ein unter Backpressure festhängender Write endet nur, indem die Session (der Socket) geschlossen wird. Ein Aufruf, der nicht fertig wird, schließt die Session dauerhaft; `release()` danach poolt nichts.
+**Per-IO, nicht Session-Lifetime:** Jeder `write()`- und `readResponse()`-Aufruf bekommt ein neues Fenster; bei `write()` gilt es für alle Chunks des Aufrufs und wird vor dem ersten Chunk und dort, wo der Producer die Kontrolle zurückgibt (jeder Chunk, auch ein leerer; nach jedem Write; vor der Rückgabe), zusätzlich an einer monotonen Endzeit geprüft, weil der Timer nicht feuert, solange ein Producer den Event-Loop hält. `Socket::write()` hat keinen Cancellation-Parameter: ein unter Backpressure festhängender Write endet nur, indem die Session (der Socket) geschlossen wird. Ein Aufruf, der nicht fertig wird, schließt die Session dauerhaft; `release()` danach poolt nichts.
 
-## Sessions — Strict-§4.5-Preview-Continue
+## Sessions — Preview-Continue nach §4.5
 
 `SessionAwareTransport` ist die Voraussetzung dafür, dass Preview und Continuation auf demselben Socket leben. Ablauf in `IcapClient::scanFileWithPreviewStrict()`: `openSession()`, Preview schreiben, Antwort lesen; ist das Preview die ganze Datei, entscheidet `interpretResponse()`, sonst `previewResult()` (Strategie oder Verdikt); bei `100 Continue` geht nur der Rest des Chunked-Bodys hinaus (`ChunkedBodyEncoder::encodeRemainderFromStream()`, kein neuer ICAP-Head), dann entscheidet `interpretResponse()` die finale Antwort.
 
@@ -95,7 +95,7 @@ Opt-in über `new AsyncAmpTransport($pool)`; ohne Pool öffnet jeder Request ein
 
 ## Synchroner Pfad
 
-`SynchronousStreamTransport` nutzt `stream_socket_client` und blockt direkt. Jeder Chunk geht ganz hinaus oder der Aufruf wirft; ein abgelaufenes Stream-Timeout ist `IcapTimeoutException`, nie ein EOF. Der Request geht über einen nicht blockierenden Socket hinaus (`stream_select()` mit Frist je Stillstand), das Lesen blockierend mit Stream-Timeout; ein laufender Wait ist durch den Cancel des Aufrufers nicht unterbrechbar (siehe CLAUDE.md). `SynchronousIcapClient` ist nur ein `await()`-Wrapper:
+`SynchronousStreamTransport` nutzt `stream_socket_client` und blockt direkt. Jeder Chunk geht ganz hinaus oder der Aufruf wirft; ein abgelaufenes Stream-Timeout ist `IcapTimeoutException`, nie ein EOF. Der Request geht über einen nicht blockierenden Socket hinaus (`stream_select()`; bei `request()` mit Frist je Stillstand), das Lesen blockierend mit Stream-Timeout; ein laufender Wait ist durch den Cancel des Aufrufers nicht unterbrechbar (siehe CLAUDE.md). `SynchronousIcapClient` ist nur ein `await()`-Wrapper:
 
 ```php
 public function scanFile(
@@ -108,7 +108,7 @@ public function scanFile(
 }
 ```
 
-Der synchrone Pfad ist **nicht** `SessionAwareTransport`, also fällt `scanFileWithPreview()` dort auf `scanFileWithPreviewLegacy` zurück (zwei TCP-Handshakes, weniger effizient — aber RFC-konform für permissive Server).
+Der synchrone Transport ist ebenfalls `SessionAwareTransport` (`SynchronousStreamSession`, blockierend): `scanFileWithPreview()` setzt die Preview auf der Verbindung der Preview fort. Sein `write()` hat wie `AmpTransportSession` ein `streamTimeout`-Fenster für alle Chunks, die Zeit des Producers eingeschlossen; nur der eigene Request von `request()` behält die Stillstandsfrist (jedes genommene Byte startet sie neu).
 
 ## Quick-Reference
 
@@ -119,7 +119,7 @@ Der synchrone Pfad ist **nicht** `SessionAwareTransport`, also fällt `scanFileW
 | `Cancellation` Param | Externes Abbrechen | Pflicht-Last-Param public-API |
 | `OperationDeadline` | Eine Endzeit je öffentlichem Aufruf | `IcapClient`, `RetryingIcapClient` |
 | `DeferredCancellation` + `EventLoop::delay()` | User-Abbruch + Lib-Fenster je IO-Phase | `AsyncAmpTransport::openSession()`, `AmpTransportSession::inWindow()` |
-| `SessionAwareTransport` | Multi-IO auf einem Socket | Strict-§4.5-Pfad |
+| `SessionAwareTransport` | Multi-IO auf einem Socket | Preview-Continue (§4.5) |
 | `SocketOpener::open()` | TCP, dann `setupTls()` | Transport, Pool, `NullConnectionPool` |
 | `\Amp\delay()` | Cancellation-aware Sleep | `RetryingIcapClient`-Backoff |
 | Symfony HttpClient | — | **nicht verwendet** in icap-flow |

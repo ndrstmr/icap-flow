@@ -27,8 +27,8 @@ use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\DiscardingTransport;
 
 /**
- * Not one transport: the session of the async transport carries the preview and the rest of the file on one socket
- * (RFC 3507 §4.5), a transport without sessions sends the file again in a request of its own.
+ * A transport without sessions: a request goes through the async transport, one socket for one request. The client
+ * refuses a preview with it, which needs the connection it began on (RFC 3507 §4.5).
  */
 final class OneRequestTransport implements DiscardingTransport
 {

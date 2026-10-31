@@ -131,7 +131,9 @@ interface IcapClientInterface
      * {@see \Ndrstmr\Icap\Exception\IcapMalformedResponseException}. The
      * file is handled as in {@see scanFile()}, `ieof` is sent only
      * after the end of the file was observed, and the rest of the file goes
-     * out with the length its envelope announced.
+     * out with the length its envelope announced, on the connection of the
+     * preview (RFC 3507 §4.5): a client whose transport cannot do that throws
+     * a \LogicException at the call, before it opens the file.
      *
      * @param array<string, string|string[]> $extraHeaders See {@see scanFile()}.
      *        `Preview` and `Allow` are library-managed and cannot be

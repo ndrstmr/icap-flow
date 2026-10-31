@@ -187,35 +187,29 @@ it('scans with a preview, and takes only a finding as an answer to the preview o
         $partial . ': a failing scanner at once' => [false, 'error-500', null, IcapServerException::class, false],
     ];
 
-    foreach (['one socket for preview and rest' => true, 'one request per message' => false] as $transport => $sessions) {
-        foreach ([false, true] as $discarding) {
-            foreach ($cases as $label => [$inside, $previewAnswer, $restAnswer, $outcome, $sent]) {
-                $server = IcapTestServer::start(static fn (array $r) => [cicapAnswerBytes($r['stage'] === 'preview' ? $previewAnswer : ($restAnswer ?? 'clean-204'))]);
-                try {
-                    $path = FileWorkers::file(str_repeat('a', $inside ? 500 : 5000));
-                    $scan = cicapScan(true, $discarding);
-                    $how = "{$transport}, " . ($discarding ? 'discarding' : 'buffering') . ": {$label}";
+    foreach ([false, true] as $discarding) {
+        foreach ($cases as $label => [$inside, $previewAnswer, $restAnswer, $outcome, $sent]) {
+            $server = IcapTestServer::start(static fn (array $r) => [cicapAnswerBytes($r['stage'] === 'preview' ? $previewAnswer : ($restAnswer ?? 'clean-204'))]);
+            try {
+                $path = FileWorkers::file(str_repeat('a', $inside ? 500 : 5000));
+                $scan = cicapScan(true, $discarding);
+                $how = ($discarding ? 'discarding' : 'buffering') . ": {$label}";
 
-                    if ($outcome === 'clean' || $outcome === 'infected') {
-                        $result = $scan(cicapClient($server, $sessions), $path);
-                        expect($result->isInfected())->toBe($outcome === 'infected', $how)
-                            ->and($result->getVirusName())->toBe($outcome === 'infected' ? cicapThreatOf($restAnswer ?? $previewAnswer) : null, $how);
-                    } else {
-                        expect(fn () => $scan(cicapClient($server, $sessions), $path))->toThrow($outcome, '', $how);
-                    }
-
-                    // After an answer that ends the exchange nothing of the rest of the file is sent, on this socket or in a request of its own.
-                    $rest = $sessions ? 'rest' : 'single';
-                    expect(array_column($server->requests, 'stage'))->toBe($sent ? ['preview', $rest] : ['preview'], $how)
-                        ->and($server->requests[0]['headers']['allow'])->toBe('204', $how);
-                    if ($sent && !$sessions) {
-                        // The second request is a plain one: it offers 204 as well, or the service could only send the file back.
-                        expect($server->requests[1]['headers']['allow'] ?? null)->toBe('204', $how)
-                            ->and($server->requests[1]['headers'])->not->toHaveKey('preview', $how);
-                    }
-                } finally {
-                    $server->stop();
+                if ($outcome === 'clean' || $outcome === 'infected') {
+                    $result = $scan(cicapClient($server, true), $path);
+                    expect($result->isInfected())->toBe($outcome === 'infected', $how)
+                        ->and($result->getVirusName())->toBe($outcome === 'infected' ? cicapThreatOf($restAnswer ?? $previewAnswer) : null, $how);
+                } else {
+                    expect(fn () => $scan(cicapClient($server, true), $path))->toThrow($outcome, '', $how);
                 }
+
+                // After an answer that ends the exchange nothing of the rest of the file is sent, and the rest never
+                // travels in a request of its own.
+                expect(array_column($server->requests, 'stage'))->toBe($sent ? ['preview', 'rest'] : ['preview'], $how)
+                    ->and($server->requests[0]['headers']['allow'])->toBe('204', $how)
+                    ->and($server->connections)->toBe(1, $how);
+            } finally {
+                $server->stop();
             }
         }
     }
@@ -388,27 +382,25 @@ it('does not send the rest of the file when the 100 Continue reports an infectio
         'a 100 that reports no violations' => "X-Violations-Found: 0\r\n",
     ];
 
-    foreach (['one socket for preview and rest' => true, 'one request per message' => false] as $transport => $sessions) {
-        foreach ([false, true] as $discarding) {
-            foreach (['refused' => $refused, 'allowed' => $allowed] as $kind => $set) {
-                foreach ($set as $label => $fields) {
-                    $server = IcapTestServer::start(static fn (array $r) => [$r['stage'] === 'preview' ? cicapContinue($fields) : cicapAnswerBytes('clean-204')]);
-                    try {
-                        $path = FileWorkers::file(str_repeat('a', 5000));
-                        $scan = cicapScan(true, $discarding);
-                        $how = "{$transport}, " . ($discarding ? 'discarding' : 'buffering') . ": {$label}";
+    foreach ([false, true] as $discarding) {
+        foreach (['refused' => $refused, 'allowed' => $allowed] as $kind => $set) {
+            foreach ($set as $label => $fields) {
+                $server = IcapTestServer::start(static fn (array $r) => [$r['stage'] === 'preview' ? cicapContinue($fields) : cicapAnswerBytes('clean-204')]);
+                try {
+                    $path = FileWorkers::file(str_repeat('a', 5000));
+                    $scan = cicapScan(true, $discarding);
+                    $how = ($discarding ? 'discarding' : 'buffering') . ": {$label}";
 
-                        if ($kind === 'allowed') {
-                            expect($scan(cicapClient($server, $sessions), $path)->isInfected())->toBeFalse($how)
-                                ->and(array_column($server->requests, 'stage'))->toBe(['preview', $sessions ? 'rest' : 'single'], $how);
-                        } else {
-                            // Neither the rest of the file on this socket nor a request of its own with it.
-                            expect(fn () => $scan(cicapClient($server, $sessions), $path))->toThrow(IcapProtocolException::class, '', $how)
-                                ->and(array_column($server->requests, 'stage'))->toBe(['preview'], $how);
-                        }
-                    } finally {
-                        $server->stop();
+                    if ($kind === 'allowed') {
+                        expect($scan(cicapClient($server, true), $path)->isInfected())->toBeFalse($how)
+                            ->and(array_column($server->requests, 'stage'))->toBe(['preview', 'rest'], $how);
+                    } else {
+                        // The rest of the file is not sent on this socket, and no request of its own carries it.
+                        expect(fn () => $scan(cicapClient($server, true), $path))->toThrow(IcapProtocolException::class, '', $how)
+                            ->and(array_column($server->requests, 'stage'))->toBe(['preview'], $how);
                     }
+                } finally {
+                    $server->stop();
                 }
             }
         }

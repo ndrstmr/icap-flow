@@ -175,12 +175,12 @@ it('scans a gigabyte over the synchronous transport with a memory that does not 
     }
 });
 
-it('scans with a preview over the synchronous transport, which sends the file again in a request of its own', function () {
+it('scans with a preview over the synchronous transport, which sends the rest of the file on the connection of the preview', function () {
     $size = 12 * 1024 * 1024;
     $echo = static fn (array $request) => IcapTestServer::echo($size);
     $continue = static fn (array $request): array => [IcapTestServer::CONTINUE];
 
-    // label => answer to the preview, answer to the file that is sent again
+    // label => answer to the preview, answer to the rest of the file
     $scenarios = [
         'a 200 at once'           => [$echo, null],
         '100 Continue, then 200'  => [$continue, $echo],
@@ -196,7 +196,8 @@ it('scans with a preview over the synchronous transport, which sends the file ag
 
             expect($run['error'] ?? null)->toBeNull($label)
                 ->and($run['discarded'] ?? null)->toBe([$size], $label)
-                ->and(array_column($server->requests, 'stage'))->toBe($fileAnswer === null ? ['preview'] : ['preview', 'single'], $label);
+                ->and(array_column($server->requests, 'stage'))->toBe($fileAnswer === null ? ['preview'] : ['preview', 'rest'], $label)
+                ->and($server->connections)->toBe(1, $label);
         } finally {
             $server->stop();
         }
