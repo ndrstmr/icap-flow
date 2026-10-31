@@ -24,6 +24,9 @@ use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
+use Ndrstmr\Icap\Exception\IcapClientException;
+use Ndrstmr\Icap\Exception\IcapProtocolException;
+use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\PreviewDecision;
@@ -38,6 +41,83 @@ use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
+
+foreach ([
+    [400, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [499, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [500, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [599, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [400, IcapClientException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [499, IcapClientException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [500, IcapServerException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [599, IcapServerException::class, PreviewDecision::CONTINUE_SENDING, 0],
+    [101, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [302, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [600, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [100, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 1],
+    [100, IcapProtocolException::class, PreviewDecision::ABORT_INFECTED, 1],
+    [200, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
+    [204, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
+    [206, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
+] as [$status, $exception, $decision, $calls]) {
+    it('rejects preview ' . $status . ' with ' . $decision->value . ' in the legacy path', function () use ($status, $exception, $decision, $calls) {
+        $transport = new ScriptedTransport(["ICAP/1.0 {$status} Response\r\nEncapsulated: null-body=0\r\n\r\n"]);
+        $strategy = new class ($decision) implements PreviewStrategyInterface {
+            public int $calls = 0;
+
+            public function __construct(private readonly PreviewDecision $decision)
+            {
+            }
+
+            public function handlePreviewResponse(IcapResponse $previewResponse): PreviewDecision
+            {
+                $this->calls++;
+                return $this->decision;
+            }
+        };
+        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), $strategy);
+        $tmp = tempnam(sys_get_temp_dir(), 'icap');
+        file_put_contents($tmp, 'abcdefgh');
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp, $exception, $strategy, $transport, $calls): void {
+                expect(fn () => $client->scanFileWithPreview('/svc', $tmp, 4)->await())->toThrow($exception);
+                expect($strategy->calls)->toBe($calls);
+                expect($transport->requests)->toHaveCount(1);
+            });
+        } finally {
+            @unlink($tmp);
+        }
+    });
+}
+
+it('still lets a custom strategy decide a successful preview response', function () {
+    $transport = new ScriptedTransport(["ICAP/1.0 204 No Content\r\n\r\n"]);
+    $strategy = new class () implements PreviewStrategyInterface {
+        public int $calls = 0;
+
+        public function handlePreviewResponse(IcapResponse $previewResponse): PreviewDecision
+        {
+            $this->calls++;
+            return PreviewDecision::ABORT_CLEAN;
+        }
+    };
+    $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), $strategy);
+    $tmp = tempnam(sys_get_temp_dir(), 'icap');
+    file_put_contents($tmp, 'abcdefgh');
+
+    try {
+        /** @var AsyncTestCase $this */
+        $this->runAsyncTest(function () use ($client, $tmp, $strategy, $transport): void {
+            expect($client->scanFileWithPreview('/svc', $tmp, 4)->await()->isInfected())->toBeFalse();
+            expect($strategy->calls)->toBe(1);
+            expect($transport->requests)->toHaveCount(1);
+        });
+    } finally {
+        @unlink($tmp);
+    }
+});
 
 /**
  * @return array{Config, RequestFormatterInterface&\Mockery\MockInterface, TransportInterface&\Mockery\MockInterface, ResponseParserInterface&\Mockery\MockInterface, PreviewStrategyInterface&\Mockery\MockInterface, IcapClient}
@@ -244,7 +324,7 @@ it('scanFileWithPreview stops on ABORT_INFECTED without sending the remainder', 
     $trans = $transport->shouldReceive('request');
     $trans->once();
     $trans->andReturn(\Amp\Future::complete('RESP1'));
-    $previewResp = new IcapResponse(100);
+    $previewResp = new IcapResponse(200);
     /** @var \Mockery\Expectation $pp */
     $pp = $parser->shouldReceive('parse');
     $pp->andReturn($previewResp);

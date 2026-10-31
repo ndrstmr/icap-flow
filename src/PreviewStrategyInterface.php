@@ -23,7 +23,9 @@ namespace Ndrstmr\Icap;
 use Ndrstmr\Icap\DTO\IcapResponse;
 
 /**
- * Strategy interface for handling preview responses.
+ * Decide how to handle a partial-preview response. The client rejects error and unexpected statuses before calling the
+ * strategy. For 100 the strategy must return CONTINUE_SENDING; for final 200, 204 or 206 it must return an abort
+ * decision. An inconsistent decision raises IcapProtocolException.
  */
 interface PreviewStrategyInterface
 {

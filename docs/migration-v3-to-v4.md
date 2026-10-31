@@ -9,10 +9,11 @@ This guide describes the unreleased 4.0 changes on `main`. See the
   c-icap `virus_scan` with ClamAV, configure the service and opt in to
   [`CicapVerdict`](cicap-clamav.md). The client cannot tell whether a service
   silently skipped a file; test the actual service and its configuration.
-- Treat exceptions and cancellations as no verdict, and block release. If you
-  use a custom preview strategy in the default mode, it must reject error
-  responses itself: it can otherwise return a clean result for a partial
-  preview even on a 4xx or 5xx response.
+- Treat exceptions and cancellations as no verdict, and block release. Custom
+  preview strategies no longer receive error or unexpected statuses. They must
+  continue on `100` and stop on final `200`, `204` or `206`; inconsistent
+  decisions raise `IcapProtocolException`. Validate the interpretation of
+  final responses against the service: a `204` alone does not prove a scan.
 - Keep the source and its path stable during the scan and release only the
   same unchanged object. The application owns quarantine and release. See
   [file sources](file-sources.md).

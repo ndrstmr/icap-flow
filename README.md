@@ -208,7 +208,7 @@ The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInter
 | `IcapServerException` | ICAP 5xx response — server failed, code is the real status |
 | `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable or changed size, or the OPTIONS cache backend fails |
 
-In the default mode a custom preview strategy decides how to handle a partial-preview response, including an error status. It must reject error responses itself; the built-in strategy and `CicapVerdict` do so.
+For a partial preview, the client rejects ICAP 4xx and 5xx responses as `IcapClientException` and `IcapServerException`, and unexpected statuses as `IcapProtocolException`, before calling a custom strategy. A strategy must continue on `100` and stop on final `200`, `204` or `206`; a conflicting decision is a protocol error. The strategy remains responsible for interpreting allowed final responses for the actual service: a `204` alone does not prove that a file was scanned.
 
 ## Examples
 

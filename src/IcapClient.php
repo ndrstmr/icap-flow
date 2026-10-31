@@ -696,6 +696,14 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      */
     private function previewResult(IcapResponse $answer, OperationDeadline $deadline): ?ScanResult
     {
+        $failure = IcapStatus::failure($answer->statusCode);
+        if ($failure !== null) {
+            throw $failure;
+        }
+        if (!in_array($answer->statusCode, [100, 200, 204, 206], true)) {
+            throw new IcapProtocolException('Unexpected preview status code: ' . $answer->statusCode, $answer->statusCode);
+        }
+
         if ($this->verdict !== null) {
             // Only a 100 asks for the rest, and only one that reports no infection does. A 204 now is a service that does
             // not scan this file. Either way the exception ends the exchange: no continuation, no reuse of the socket.
@@ -712,6 +720,10 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         // The strategy is foreign code. A verdict that came in after the end of the operation, or after the caller
         // cancelled, is none: nothing is continued, and the socket is not given back (M10).
         $deadline->checkpoint();
+
+        if (($answer->statusCode === 100) !== ($decision === PreviewDecision::CONTINUE_SENDING)) {
+            throw new IcapProtocolException('Preview decision does not match ICAP status: ' . $answer->statusCode, $answer->statusCode);
+        }
 
         return $decision === PreviewDecision::CONTINUE_SENDING ? null : new ScanResult(
             isInfected: $decision === PreviewDecision::ABORT_INFECTED,
