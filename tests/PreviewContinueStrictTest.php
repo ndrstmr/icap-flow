@@ -20,12 +20,15 @@ declare(strict_types=1);
 
 use Amp\Socket;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapClientException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
+use Ndrstmr\Icap\PreviewDecision;
+use Ndrstmr\Icap\PreviewStrategyInterface;
 use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
@@ -34,6 +37,76 @@ use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 
 uses(AsyncTestCase::class);
+
+foreach ([
+    [400, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [499, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [500, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [599, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [101, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [302, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [600, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
+    [100, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 1],
+    [100, IcapProtocolException::class, PreviewDecision::ABORT_INFECTED, 1],
+    [200, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
+    [204, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
+    [206, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
+] as [$status, $exception, $decision, $calls]) {
+    it('rejects preview ' . $status . ' with ' . $decision->value . ' and closes the session', function () use ($status, $exception, $decision, $calls) {
+        [$serverEnd, $clientEnd] = Socket\createSocketPair();
+        $pool = new AmpConnectionPool(connector: fn () => $clientEnd);
+        $strategy = new class ($decision) implements PreviewStrategyInterface {
+            public int $calls = 0;
+
+            public function __construct(private readonly PreviewDecision $decision)
+            {
+            }
+
+            public function handlePreviewResponse(IcapResponse $previewResponse): PreviewDecision
+            {
+                $this->calls++;
+                return $this->decision;
+            }
+        };
+        $client = new IcapClient(new Config('icap.example', streamTimeout: 1.0), new AsyncAmpTransport($pool), new RequestFormatter(), new ResponseParser(), $strategy);
+        $tmp = tempnam(sys_get_temp_dir(), 'icap');
+        file_put_contents($tmp, 'abcdefgh');
+
+        try {
+            /** @var AsyncTestCase $this */
+            $this->runAsyncTest(function () use ($client, $tmp, $serverEnd, $status, $exception, $strategy, $calls): void {
+                $server = \Amp\async(static function () use ($serverEnd, $status): string {
+                    $timeout = new \Amp\TimeoutCancellation(2.0);
+                    $preview = '';
+                    while (!str_ends_with($preview, "0\r\n\r\n")) {
+                        $chunk = $serverEnd->read($timeout);
+                        if ($chunk === null) {
+                            throw new RuntimeException('Connection closed before the preview.');
+                        }
+                        $preview .= $chunk;
+                    }
+                    $serverEnd->write("ICAP/1.0 {$status} Response\r\nEncapsulated: null-body=0\r\n\r\n");
+                    $after = '';
+                    while (($chunk = $serverEnd->read($timeout)) !== null) {
+                        $after .= $chunk;
+                    }
+                    return $after;
+                });
+                $server->ignore();
+
+                expect(fn () => $client->scanFileWithPreview('/svc', $tmp, 4)->await())->toThrow($exception);
+                expect($strategy->calls)->toBe($calls);
+                expect($server->await())->toBe('');
+            });
+            expect($clientEnd->isClosed())->toBeTrue();
+        } finally {
+            @unlink($tmp);
+            $clientEnd->close();
+            $serverEnd->close();
+            $pool->close();
+        }
+    });
+}
 
 /**
  * Strict RFC 3507 §4.5 preview-continue: when the server answers

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Changes since 3.0.0, for the next major release, 4.0.0 (not released).
 
 ### Security
+- **Behaviour change:** Custom preview strategies no longer receive error or unexpected statuses; decisions
+  inconsistent with the response status now raise `IcapProtocolException` instead of ending or continuing the exchange.
 - Virus headers and the other response headers the client evaluates
   (`Encapsulated`, `Preview`, `ISTag`, `Options-TTL`, `Max-Connections`) are
   now matched case-insensitively, for live and cached responses alike.
@@ -382,8 +384,8 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   cancellation and the end of the operation, and even a pause of 0 hands the
   event loop over. The delays are computed without overflow, and `NAN` and
   `INF` are refused as parameters. A 4xx or 5xx answer to a preview is an
-  `IcapClientException` or `IcapServerException` with the built-in strategy or
-  verified mode; a custom strategy decides on partial-preview responses itself.
+  `IcapClientException` or `IcapServerException`, before any custom preview
+  strategy is called.
   Previously a preview error was an `IcapProtocolException` in the built-in strategy.
   *(N03)*
 - **Verified mode for c-icap + ClamAV** (`verdict: new CicapVerdict('/avscan')` on `IcapClient`, also `forServer()`;
