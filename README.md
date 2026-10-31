@@ -141,11 +141,13 @@ Every limit is finite; `0` is never "without limit". One operation (a public met
 | `operationTimeout` | the whole operation: cache, pool wait, connect, TLS, upload, preview, continuation, answers (and in `RetryingIcapClient` all attempts and pauses) | 60 s |
 | `socketTimeout` | the TCP connection | 10 s |
 | `tlsHandshakeTimeout` | the TLS handshake | `streamTimeout` |
-| `streamTimeout` | an answer from its first byte on (a maximum, not an idle timer); a write: one window for the whole call with the async transport, but with the synchronous one the time the peer may go without taking a byte, which every byte it takes starts again (`operationTimeout` bounds the total) | 10 s |
+| `streamTimeout` | an answer from its first byte on (a maximum, not an idle timer); a write: one window for the whole call, for the preview and for the rest of the file each, but a request of the synchronous transport outside a preview (`scanFile()`, `request()`, `options()`) has the time the peer may go without taking a byte, which every byte it takes starts again (`operationTimeout` bounds the total) | 10 s |
 | `responseStartTimeout` | the server's time to begin its answer once the request is sent (the scan) | `streamTimeout` |
 
 ```php
-$config = $config->withTimeouts(operationTimeout: 300.0, responseStartTimeout: 120.0); // large files, slow scanner
+// Large files, slow scanner: the rest of a previewed file has to go out within streamTimeout as well.
+$config = (new Config(host: 'icap.example.com', port: 1344, streamTimeout: 120.0))
+    ->withTimeouts(operationTimeout: 300.0, responseStartTimeout: 120.0);
 ```
 
 The end of the operation is an `IcapTimeoutException`; your own cancellation stays an `Amp\CancelledException`. An expired call closes its socket and its file handle; a file call that hangs in the operating system keeps its worker, and the handle is closed when that call returns ([`docs/file-sources.md`](docs/file-sources.md#deadline-and-cancellation)). A request-body producer or a cache that holds the event loop and does not return cannot be interrupted, only noticed afterwards; the synchronous transport bounds its native waits only.
@@ -196,7 +198,7 @@ Header names and values are validated against CR / LF / NUL / control characters
 
 ## Exception taxonomy
 
-The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInterface`, so you can catch them in one block. Arguments that cannot work (a header, a service, a preview size, a `Config` value) are an `\InvalidArgumentException` before anything is sent, a discarding scan with a transport or parser that cannot discard is a `\LogicException`, and your own cancellation stays an `Amp\CancelledException`.
+The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInterface`, so you can catch them in one block. Arguments that cannot work (a header, a service, a preview size, a `Config` value) are an `\InvalidArgumentException` before anything is sent, a discarding scan with a transport or parser that cannot discard, or a preview with a transport that has no sessions, is a `\LogicException`, and your own cancellation stays an `Amp\CancelledException`.
 
 | Exception | Trigger |
 |---|---|

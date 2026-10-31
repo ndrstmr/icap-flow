@@ -24,9 +24,6 @@ use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
-use Ndrstmr\Icap\Exception\IcapClientException;
-use Ndrstmr\Icap\Exception\IcapProtocolException;
-use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\IcapClient;
 use Ndrstmr\Icap\PreviewDecision;
@@ -38,59 +35,11 @@ use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
+use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Ndrstmr\Icap\Transport\TransportSession;
 
 uses(AsyncTestCase::class);
-
-foreach ([
-    [400, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [499, IcapClientException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [500, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [599, IcapServerException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [400, IcapClientException::class, PreviewDecision::CONTINUE_SENDING, 0],
-    [499, IcapClientException::class, PreviewDecision::CONTINUE_SENDING, 0],
-    [500, IcapServerException::class, PreviewDecision::CONTINUE_SENDING, 0],
-    [599, IcapServerException::class, PreviewDecision::CONTINUE_SENDING, 0],
-    [101, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [302, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [600, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 0],
-    [100, IcapProtocolException::class, PreviewDecision::ABORT_CLEAN, 1],
-    [100, IcapProtocolException::class, PreviewDecision::ABORT_INFECTED, 1],
-    [200, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
-    [204, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
-    [206, IcapProtocolException::class, PreviewDecision::CONTINUE_SENDING, 1],
-] as [$status, $exception, $decision, $calls]) {
-    it('rejects preview ' . $status . ' with ' . $decision->value . ' in the legacy path', function () use ($status, $exception, $decision, $calls) {
-        $transport = new ScriptedTransport(["ICAP/1.0 {$status} Response\r\nEncapsulated: null-body=0\r\n\r\n"]);
-        $strategy = new class ($decision) implements PreviewStrategyInterface {
-            public int $calls = 0;
-
-            public function __construct(private readonly PreviewDecision $decision)
-            {
-            }
-
-            public function handlePreviewResponse(IcapResponse $previewResponse): PreviewDecision
-            {
-                $this->calls++;
-                return $this->decision;
-            }
-        };
-        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser(), $strategy);
-        $tmp = tempnam(sys_get_temp_dir(), 'icap');
-        file_put_contents($tmp, 'abcdefgh');
-
-        try {
-            /** @var AsyncTestCase $this */
-            $this->runAsyncTest(function () use ($client, $tmp, $exception, $strategy, $transport, $calls): void {
-                expect(fn () => $client->scanFileWithPreview('/svc', $tmp, 4)->await())->toThrow($exception);
-                expect($strategy->calls)->toBe($calls);
-                expect($transport->requests)->toHaveCount(1);
-            });
-        } finally {
-            @unlink($tmp);
-        }
-    });
-}
 
 it('still lets a custom strategy decide a successful preview response', function () {
     $transport = new ScriptedTransport(["ICAP/1.0 204 No Content\r\n\r\n"]);
@@ -213,8 +162,35 @@ it('scanFile wraps the file as an encapsulated HttpResponse with Content-Length'
     m::close();
 });
 
-it('scanFileWithPreview marks the preview complete (ieof) when file size <= preview size — no continuation request', function () {
-    [, $formatter, $transport, $parser, $strategy, $client] = makeClient();
+/**
+ * A client over a transport with sessions, all mocks: the preview and the rest of the file go out through the session.
+ *
+ * @return array{RequestFormatterInterface&\Mockery\MockInterface, TransportSession&\Mockery\MockInterface, ResponseParserInterface&\Mockery\MockInterface, PreviewStrategyInterface&\Mockery\MockInterface, IcapClient}
+ */
+function makeSessionClient(): array
+{
+    /** @var RequestFormatterInterface&\Mockery\MockInterface $formatter */
+    $formatter = m::mock(RequestFormatterInterface::class);
+    /** @var SessionAwareTransport&\Mockery\MockInterface $transport */
+    $transport = m::mock(SessionAwareTransport::class);
+    /** @var TransportSession&\Mockery\MockInterface $session */
+    $session = m::mock(TransportSession::class);
+    /** @var ResponseParserInterface&\Mockery\MockInterface $parser */
+    $parser = m::mock(ResponseParserInterface::class);
+    /** @var PreviewStrategyInterface&\Mockery\MockInterface $strategy */
+    $strategy = m::mock(PreviewStrategyInterface::class);
+
+    /** @var \Mockery\Expectation $opens */
+    $opens = $transport->shouldReceive('openSession');
+    $opens->once();
+    $opens->andReturn($session);
+    $transport->shouldNotReceive('request');
+
+    return [$formatter, $session, $parser, $strategy, new IcapClient(new Config('icap.example'), $transport, $formatter, $parser, $strategy)];
+}
+
+it('scanFileWithPreview marks the preview complete (ieof) when file size <= preview size — no continuation', function () {
+    [$formatter, $session, $parser, $strategy, $client] = makeSessionClient();
 
     $tmp = tempnam(sys_get_temp_dir(), 'icap');
     file_put_contents($tmp, 'abc');
@@ -229,10 +205,17 @@ it('scanFileWithPreview marks the preview complete (ieof) when file size <= prev
     });
     $fmt->andReturn(['HEAD']);
 
-    /** @var \Mockery\Expectation $trans */
-    $trans = $transport->shouldReceive('request');
-    $trans->once();
-    $trans->andReturn(\Amp\Future::complete('RESP'));
+    /** @var \Mockery\Expectation $sw */
+    $sw = $session->shouldReceive('write');
+    $sw->once();
+    /** @var \Mockery\Expectation $sr */
+    $sr = $session->shouldReceive('readResponse');
+    $sr->once();
+    $sr->andReturn('RESP');
+    /** @var \Mockery\Expectation $srel */
+    $srel = $session->shouldReceive('release');
+    $srel->once();
+    $session->shouldNotReceive('close');
     /** @var \Mockery\Expectation $pp */
     $pp = $parser->shouldReceive('parse');
     $pp->andReturn(new IcapResponse(204));
@@ -252,8 +235,8 @@ it('scanFileWithPreview marks the preview complete (ieof) when file size <= prev
     m::close();
 });
 
-it('scanFileWithPreview consults strategy and sends remainder on CONTINUE_SENDING', function () {
-    [, $formatter, $transport, $parser, $strategy, $client] = makeClient();
+it('scanFileWithPreview consults strategy and sends the remainder on the session on CONTINUE_SENDING', function () {
+    [$formatter, $session, $parser, $strategy, $client] = makeSessionClient();
 
     $tmp = tempnam(sys_get_temp_dir(), 'icap');
     file_put_contents($tmp, 'abcdef');
@@ -262,21 +245,31 @@ it('scanFileWithPreview consults strategy and sends remainder on CONTINUE_SENDIN
     $calls = [];
     /** @var \Mockery\Expectation $fmt */
     $fmt = $formatter->shouldReceive('format');
-    $fmt->twice();
+    // The preview is formatted; the rest of the file is no request of its own and does not pass the formatter.
+    $fmt->once();
     $fmt->withArgs(function (IcapRequest $req) use (&$calls) {
         $calls[] = $req;
         return true;
     });
-    // A formatter that reads the file to its end, as a scan requires of one.
     $fmt->andReturnUsing(static fn (IcapRequest $request): array => iterator_to_array((new RequestFormatter())->format($request), false));
 
-    /** @var \Mockery\Expectation $trans */
-    $trans = $transport->shouldReceive('request');
-    $trans->twice();
-    $trans->andReturn(
-        \Amp\Future::complete('RESP1'),
-        \Amp\Future::complete('RESP2'),
-    );
+    // A session takes what it is given to its end, as a scan requires of one.
+    $wire = [];
+    /** @var \Mockery\Expectation $sw */
+    $sw = $session->shouldReceive('write');
+    $sw->twice();
+    $sw->andReturnUsing(static function (iterable $chunks) use (&$wire): void {
+        $wire[] = implode('', is_array($chunks) ? $chunks : iterator_to_array($chunks, false));
+    });
+    /** @var \Mockery\Expectation $sr */
+    $sr = $session->shouldReceive('readResponse');
+    $sr->twice();
+    $sr->andReturn('RESP1', 'RESP2');
+    /** @var \Mockery\Expectation $srel */
+    $srel = $session->shouldReceive('release');
+    $srel->once();
+    $session->shouldNotReceive('close');
+
     $previewResp = new IcapResponse(100);
     $finalResp = new IcapResponse(200);
     /** @var \Mockery\Expectation $pr1 */
@@ -297,13 +290,14 @@ it('scanFileWithPreview consults strategy and sends remainder on CONTINUE_SENDIN
     $s->andReturn(PreviewDecision::CONTINUE_SENDING);
 
     /** @var AsyncTestCase $this */
-    $this->runAsyncTest(function () use ($client, $tmp, $finalResp, &$calls) {
+    $this->runAsyncTest(function () use ($client, $tmp, $finalResp, &$calls, &$wire) {
         $res = $client->scanFileWithPreview('/service', $tmp, 3)->await();
         expect($res->getOriginalResponse())->toBe($finalResp)
             ->and($calls[0]->previewIsComplete)->toBeFalse()
             ->and($calls[0]->headers['Preview'])->toBe(['3'])
             ->and($calls[0]->headers['Allow'])->toBe(['204'])
-            ->and(isset($calls[1]->headers['Preview']))->toBeFalse();
+            // Only the chunks of the rest of the body, with their terminator: no second head.
+            ->and($wire[1])->toBe("3\r\ndef\r\n0\r\n\r\n");
     });
 
     unlink($tmp);
@@ -311,7 +305,7 @@ it('scanFileWithPreview consults strategy and sends remainder on CONTINUE_SENDIN
 });
 
 it('scanFileWithPreview stops on ABORT_INFECTED without sending the remainder', function () {
-    [, $formatter, $transport, $parser, $strategy, $client] = makeClient();
+    [$formatter, $session, $parser, $strategy, $client] = makeSessionClient();
 
     $tmp = tempnam(sys_get_temp_dir(), 'icap');
     file_put_contents($tmp, 'abcdef');
@@ -320,10 +314,16 @@ it('scanFileWithPreview stops on ABORT_INFECTED without sending the remainder', 
     $fmt = $formatter->shouldReceive('format');
     $fmt->once();
     $fmt->andReturn(['HEAD']);
-    /** @var \Mockery\Expectation $trans */
-    $trans = $transport->shouldReceive('request');
-    $trans->once();
-    $trans->andReturn(\Amp\Future::complete('RESP1'));
+    /** @var \Mockery\Expectation $sw */
+    $sw = $session->shouldReceive('write');
+    $sw->once();
+    /** @var \Mockery\Expectation $sr */
+    $sr = $session->shouldReceive('readResponse');
+    $sr->once();
+    $sr->andReturn('RESP1');
+    /** @var \Mockery\Expectation $srel */
+    $srel = $session->shouldReceive('release');
+    $srel->once();
     $previewResp = new IcapResponse(200);
     /** @var \Mockery\Expectation $pp */
     $pp = $parser->shouldReceive('parse');
@@ -485,42 +485,28 @@ it('fails the Future with an IcapStorageException for a file that cannot be open
 });
 
 /**
- * B08, M07 — a preview announces a complete body (`ieof`) or goes on with the
- * rest only from a source whose end was actually observed. A source that
- * fails, stands still or has another size than its handle reported is an
- * error before anything is sent, and a stream that cannot go back for the
- * full body must not send the rest of it as if it were the whole. This is the
- * two-request flow; the strict flow has its wire test in
- * PreviewContinueStrictTest.
+ * A preview announces a complete body (`ieof`) or goes on with the rest only from
+ * a source whose end was actually observed. A source that fails, stands still or
+ * has another size than its handle reported is an error before anything is sent.
+ * The wire of the continuation has its test in PreviewContinueStrictTest.
  */
 it('sends a preview only from a source that delivers what its handle announced', function () {
     $cont = "ICAP/1.0 100 Continue\r\n\r\n";
     $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
 
-    // A formatter of its own that never reads the body: it must not be what
-    // rewinds the stream, the client has to.
-    $blind = new class () implements RequestFormatterInterface {
-        #[\Override]
-        public function format(IcapRequest $request): iterable
-        {
-            return ['request'];
-        }
-    };
-
     $cases = [
-        // label => [source, preview size, error expected, replies, requests that went out, formatter]
-        'control: preview, continue, full body'       => [fn () => ScriptedSource::add('p', 'abcdefgh'), 4, false, [$cont, $clean], 2, null],
-        'read error inside the preview'               => [fn () => ScriptedSource::add('p', 'abcdefgh', failAfter: 2), 4, true, [$cont, $clean], 0, null],
-        'no progress inside the preview'              => [fn () => ScriptedSource::add('p', 'abcdefgh', stallAfter: 2), 4, true, [$cont, $clean], 0, null],
-        'no progress at the end it claims'            => [fn () => ScriptedSource::add('p', 'abcd', stallAfter: 4), 4, true, [$clean], 0, null],
-        'more bytes than the handle reported'         => [fn () => ScriptedSource::add('p', 'abcdefgh', size: 4), 4, true, [$clean], 0, null],
-        'fewer bytes than the handle reported'        => [fn () => ScriptedSource::add('p', 'abc', size: 8), 4, true, [$cont, $clean], 0, null],
-        'stream that cannot rewind for the full body' => [fn () => ScriptedSource::add('p', 'abcdefgh', seekable: false), 4, true, [$cont, $clean], 1, $blind],
+        // label => [source, preview size, error expected, replies, writes that went out]
+        'control: preview, continue, rest of the body' => [fn () => ScriptedSource::add('p', 'abcdefgh'), 4, false, [$cont, $clean], 2],
+        'read error inside the preview'                => [fn () => ScriptedSource::add('p', 'abcdefgh', failAfter: 2), 4, true, [$cont, $clean], 0],
+        'no progress inside the preview'               => [fn () => ScriptedSource::add('p', 'abcdefgh', stallAfter: 2), 4, true, [$cont, $clean], 0],
+        'no progress at the end it claims'             => [fn () => ScriptedSource::add('p', 'abcd', stallAfter: 4), 4, true, [$clean], 0],
+        'more bytes than the handle reported'          => [fn () => ScriptedSource::add('p', 'abcdefgh', size: 4), 4, true, [$clean], 0],
+        'fewer bytes than the handle reported'         => [fn () => ScriptedSource::add('p', 'abc', size: 8), 4, true, [$cont, $clean], 0],
     ];
 
-    foreach ($cases as $case => [$source, $previewSize, $fails, $replies, $requests, $formatter]) {
+    foreach ($cases as $case => [$source, $previewSize, $fails, $replies, $writes]) {
         $transport = new ScriptedTransport($replies);
-        $client = new IcapClient(new Config('icap.example'), $transport, $formatter ?? new RequestFormatter(), new ResponseParser());
+        $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
 
         try {
             $path = $source();
@@ -535,9 +521,10 @@ it('sends a preview only from a source that delivers what its handle announced',
                 }
             });
 
-            expect(count($transport->requests))->toBe($requests, $case);
+            expect(count($transport->requests))->toBe($writes, $case);
             if (!$fails) {
-                expect($transport->requests[1])->toEndWith("8\r\nabcdefgh\r\n0\r\n\r\n");
+                // The rest of the body, after the 4 bytes of the preview: no second head.
+                expect($transport->requests[1])->toBe("4\r\nefgh\r\n0\r\n\r\n");
             }
             // The client's own handle is given back in every case.
             expect(ScriptedSource::$closed)->toBe(ScriptedSource::$opened, $case);
@@ -548,8 +535,7 @@ it('sends a preview only from a source that delivers what its handle announced',
 });
 
 /**
- * M07 — the whole body of scanFile(), and of the full request after a preview
- * on a transport without sessions, goes out with the length its envelope
+ * The whole body of scanFile(), and the rest of the body after a preview, goes out with the length its envelope
  * announced. A file that has grown or shrunk since its handle was measured
  * fails before the final chunk, sends nothing past the announced length and
  * never ends in a result. (A file of the same size with other content stays
@@ -558,19 +544,18 @@ it('sends a preview only from a source that delivers what its handle announced',
 it('sends the whole file only with the length it announced', function () {
     $cont = "ICAP/1.0 100 Continue\r\n\r\n";
     $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
-    $whole = "8\r\nabcdefgh\r\n0\r\n\r\n";
 
     $cases = [
-        // label => [scan, file content, replies, last request ends with; null: the scan succeeds]
-        'scanFile, as announced'                    => ['scanFile', 'abcdefgh', [$clean], null],
-        'scanFile, shorter'                         => ['scanFile', 'abc', [$clean], "3\r\nabc\r\n"],
-        'scanFile, longer'                          => ['scanFile', 'abcdefghijk', [$clean], "8\r\nabcdefgh\r\n"],
-        'full request after a preview, as announced' => ['preview', 'abcdefgh', [$cont, $clean], null],
-        'full request after a preview, shorter'      => ['preview', 'abcdef', [$cont, $clean], "6\r\nabcdef\r\n"],
-        'full request after a preview, longer'       => ['preview', 'abcdefghijk', [$cont, $clean], "8\r\nabcdefgh\r\n"],
+        // label => [scan, file content, replies, the last write ends with; null: the scan succeeds, what it ends with then]
+        'scanFile, as announced'                => ['scanFile', 'abcdefgh', [$clean], null, "8\r\nabcdefgh\r\n0\r\n\r\n"],
+        'scanFile, shorter'                     => ['scanFile', 'abc', [$clean], "3\r\nabc\r\n", ''],
+        'scanFile, longer'                      => ['scanFile', 'abcdefghijk', [$clean], "8\r\nabcdefgh\r\n", ''],
+        'rest after a preview, as announced'    => ['preview', 'abcdefgh', [$cont, $clean], null, "4\r\nefgh\r\n0\r\n\r\n"],
+        'rest after a preview, shorter'         => ['preview', 'abcdef', [$cont, $clean], "2\r\nef\r\n", ''],
+        'rest after a preview, longer'          => ['preview', 'abcdefghijk', [$cont, $clean], "4\r\nefgh\r\n", ''],
     ];
 
-    foreach ($cases as $case => [$scan, $content, $replies, $tail]) {
+    foreach ($cases as $case => [$scan, $content, $replies, $tail, $whole]) {
         $transport = new ScriptedTransport($replies);
         $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
 

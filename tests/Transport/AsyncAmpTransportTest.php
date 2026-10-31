@@ -346,6 +346,42 @@ it('pulls nothing from the producer, sends nothing and closes the session for a 
     }
 });
 
+it('pulls nothing from the producer, sends nothing and closes the session for a write whose window is over before it began', function () {
+    // A stream timeout of 0 ends the window at once. The session is made here: acquiring a socket has the same
+    // window, and openSession() would refuse it.
+    [$peer, $client] = Socket\createSocketPair();
+    $session = new AmpTransportSession(
+        config: new Config('icap.example', streamTimeout: 0.0),
+        socket: $client,
+        streamTimeout: 0.0,
+        userCancellation: null,
+        maxResponseSize: 1 << 20,
+        maxHeaderLineLength: 8192,
+        pool: null,
+    );
+    $pulled = 0;
+    $body = (function () use (&$pulled): \Generator {
+        $pulled++;
+        yield "OPTIONS icap://icap.example/scan ICAP/1.0\r\n\r\n";
+    })();
+
+    try {
+        $thrown = thrownBy(fn () => $session->write($body));
+        $clientClosed = $client->isClosed();
+        [$received, $peerEof] = drain($peer);
+
+        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
+        expect($pulled)->toBe(0);
+        expect($clientClosed)->toBeTrue();
+        expect($received)->toBe('');
+        expect($peerEof)->toBeTrue();
+        expect(thrownBy(fn () => $session->write(['more'])))->toBeInstanceOf(\LogicException::class);
+    } finally {
+        $client->close();
+        $peer->close();
+    }
+});
+
 it('ends a write that is stalled under backpressure when the caller cancels, and closes the session', function () {
     $deferred = new DeferredCancellation();
 
@@ -1171,9 +1207,9 @@ it('closes a socket that the connector hands back after the caller gave up or th
 });
 
 /*
- * B02 / B03 — the session owns the bytes it has read. A response ends where its layout says,
- * not where a socket read happens to end, and what lies behind it is the session's to keep or
- * to refuse: it is never dropped, and never the answer of the next request.
+ * B02 / B03 — a response ends where its layout says, not where a socket read happens to end, and
+ * what a read brings in behind it is refused: a connection carries one outstanding request at a
+ * time (RFC 3507 §4.1), so those bytes are no answer, neither to this request nor to the next.
  */
 
 it('frames a response whose payload holds a terminator and a forged response, whatever the reads', function () {
@@ -1207,76 +1243,45 @@ it('frames a response whose payload holds a terminator and a forged response, wh
     }
 });
 
-it('keeps the bytes that came in with a response and hands them to the next read', function () {
-    $first = "ICAP/1.0 100 Continue\r\n\r\n";
-    $second = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
-    $fx = pairedSession(0.5);
+it('refuses the bytes that follow a response, kept or not, and closes the socket instead of pooling it', function () {
+    $reply = "ICAP/1.0 200 OK\r\nEncapsulated: res-body=0\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+    $clean = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
 
-    try {
-        // One write holds a response, a whole second one and the start of a third.
-        $fx['peer']->write($first . $second . 'ICAP/1.');
+    // label => a response and what comes in behind it, in the same read
+    $cases = [
+        'a second response behind a 200'  => $reply . $clean,
+        'a surplus behind a 204'          => $clean . 'surplus',
+        'an answer behind a 100 Continue' => "ICAP/1.0 100 Continue\r\n\r\n" . $clean,
+    ];
 
-        expect($fx['session']->readResponse())->toBe($first);
-        expect($fx['session']->readResponse())->toBe($second);
+    foreach (['kept' => false, 'not kept' => true] as $how => $discard) {
+        foreach ($cases as $case => $wire) {
+            $label = "{$how}, {$case}";
+            $fx = pairedSession(2.0);
+            try {
+                $fx['peer']->write($wire);
 
-        // The third is not complete and the peer says nothing more: that is a timeout, not a response.
-        expect(thrownBy(fn () => $fx['session']->readResponse()))->toBeInstanceOf(IcapTimeoutException::class);
-        expect($fx['client']->isClosed())->toBeTrue();
-    } finally {
-        $fx['client']->close();
-        $fx['peer']->close();
-        $fx['pool']->close();
-    }
-});
+                $thrown = thrownBy(fn () => $discard ? $fx['session']->readResponseDiscardingBody(1 << 20) : $fx['session']->readResponse());
+                expect($thrown)->toBeInstanceOf(IcapMalformedResponseException::class, $label);
+                expect($fx['client']->isClosed())->toBeTrue($label);
 
-it('refuses to write on and closes the session when bytes no request waits for are buffered', function () {
-    $reply = "ICAP/1.0 100 Continue\r\n\r\n";
-    $fx = pairedSession(2.0);
-
-    try {
-        $fx['peer']->write($reply . "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
-        expect($fx['session']->readResponse())->toBe($reply);
-
-        // The server has answered ahead of the request it would answer; the continuation is not sent.
-        $thrown = thrownBy(fn () => $fx['session']->write(["5\r\nhello\r\n0\r\n\r\n"]));
-        $clientClosed = $fx['client']->isClosed();
-        [$bytes] = drain($fx['peer']);
-
-        expect($thrown)->toBeInstanceOf(IcapMalformedResponseException::class);
-        expect($clientClosed)->toBeTrue();
-        expect($bytes)->toBe('');
-    } finally {
-        $fx['client']->close();
-        $fx['peer']->close();
-        $fx['pool']->close();
-    }
-});
-
-it('does not give a socket back to the pool while it holds bytes that were not read as a response', function () {
-    $reply = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
-    $fx = pairedSession(2.0);
-
-    try {
-        $fx['peer']->write($reply . "surplus");
-        expect($fx['session']->readResponse())->toBe($reply);
-
-        $fx['session']->release();
-        $closed = $fx['client']->isClosed();
-        $fx['pool']->acquire(new Config('icap.example'))->close();
-
-        // Closed, not just missing from the pool; the pool has to connect anew.
-        expect($closed)->toBeTrue();
-        expect($fx['opened']())->toBe(2);
-    } finally {
-        $fx['client']->close();
-        $fx['peer']->close();
-        $fx['pool']->close();
+                // The session is over: nothing more goes out on it, and the pool has to connect anew.
+                expect(thrownBy(fn () => $fx['session']->write(["5\r\nhello\r\n0\r\n\r\n"])))->toBeInstanceOf(\LogicException::class, $label);
+                $fx['session']->release();
+                $fx['pool']->acquire(new Config('icap.example'))->close();
+                expect($fx['opened']())->toBe(2, $label);
+            } finally {
+                $fx['client']->close();
+                $fx['peer']->close();
+                $fx['pool']->close();
+            }
+        }
     }
 });
 
 /*
  * AP-15 (M02) — a response that is received and not kept: read to its last byte as it arrives, the size of its body
- * counted, the bytes behind it left to the session, and the socket given back only after a legal end.
+ * counted, and the socket given back only after a legal end.
  */
 
 it('receives a response over the size limit without keeping it, and gives the socket back after a legal end', function () {
@@ -1310,25 +1315,6 @@ it('receives a response over the size limit without keeping it, and gives the so
                 $fx['peer']->close();
                 $writer->ignore();
             }
-        } finally {
-            $fx['client']->close();
-            $fx['peer']->close();
-            $fx['pool']->close();
-        }
-    }
-});
-
-it('refuses the bytes that follow a response it did not keep, and closes the session', function () {
-    $first = "ICAP/1.0 200 OK\r\nEncapsulated: res-body=0\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
-
-    // label => what comes in behind the response, in the same read
-    foreach (['a second response' => "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n", 'a surplus' => 'surplus'] as $case => $behind) {
-        $fx = pairedSession(2.0);
-        try {
-            $fx['peer']->write($first . $behind);
-
-            expect(thrownBy(fn () => $fx['session']->readResponseDiscardingBody(1 << 20)))->toBeInstanceOf(IcapMalformedResponseException::class, $case);
-            expect($fx['client']->isClosed())->toBeTrue($case);
         } finally {
             $fx['client']->close();
             $fx['peer']->close();
@@ -1693,32 +1679,6 @@ it('lets an answer arrive in parts as long as it arrives within the stream timeo
     } finally {
         EventLoop::cancel($watchdog);
         $fx['session']->close();
-        $fx['peer']->close();
-        $fx['pool']->close();
-    }
-});
-
-it('does not wait for the start of an answer that has begun: bytes behind the last response count as begun', function () {
-    $fx = pairedSession(0.4, null, 30.0);
-    $hung = false;
-    $watchdog = armWatchdog($fx['client'], $fx['peer'], $hung);
-
-    try {
-        // Two responses in one read, the second cut off: the first call returns the first frame, and the second
-        // finds the start of its answer in the session already, so only the stream timeout is left for the rest.
-        $fx['peer']->write(PHASE_FRAME . substr(PHASE_FRAME, 0, 12));
-        expect($fx['session']->readResponse())->toBe(PHASE_FRAME);
-
-        $started = hrtime(true);
-        $thrown = thrownBy(fn () => $fx['session']->readResponse());
-        $elapsed = (hrtime(true) - $started) / 1_000_000_000;
-
-        expect($hung)->toBeFalse();
-        expect($thrown)->toBeInstanceOf(IcapTimeoutException::class);
-        expect($elapsed)->toBeLessThan(2.0);
-    } finally {
-        EventLoop::cancel($watchdog);
-        $fx['client']->close();
         $fx['peer']->close();
         $fx['pool']->close();
     }

@@ -46,8 +46,10 @@ interface TransportSession
      * cancellation by the caller, also a `TimeoutCancellation`, throws
      * `Amp\CancelledException`, the window passing throws
      * {@see \Ndrstmr\Icap\Exception\IcapTimeoutException}. Both are looked
-     * at whenever the producer hands a chunk back, an empty one too, and
-     * before the call returns: a producer that is slow, or blocks the event
+     * at before the producer is asked for anything, whenever it hands a chunk
+     * back, an empty one too, after every write and before the call returns:
+     * a call that is cancelled or out of time before it begins asks the
+     * producer for nothing, and a producer that is slow, or blocks the event
      * loop, cannot extend the window or finish the call after it.
      *
      * @param iterable<string> $chunks
@@ -57,13 +59,11 @@ interface TransportSession
     /**
      * Read one fully-framed ICAP response from the socket. The response ends
      * where its layout says ({@see ResponseFrameReader}); one that is illegal,
-     * or that the stream cuts off, throws
-     * {@see \Ndrstmr\Icap\Exception\IcapMalformedResponseException} and ends
-     * the session. A read can bring in more than the response: what lies behind
-     * its end stays with the session and is the start of what the next call
-     * returns. No request waits for such bytes, so a {@see write()} on top of
-     * them throws and closes the session, and {@see release()} closes the
-     * socket instead of pooling it. Cancellation and failure behave as for
+     * that the stream cuts off, or behind which the read brought in further
+     * bytes throws {@see \Ndrstmr\Icap\Exception\IcapMalformedResponseException}
+     * and ends the session: a connection carries one outstanding request at a
+     * time (RFC 3507 §4.1), so those bytes answer nothing. Bytes that arrive
+     * later are not waited for. Cancellation and failure behave as for
      * {@see write()}; the windows are two, one after the other (M10): the
      * server's time to begin its answer once the request is sent
      * (`Config::getResponseStartTimeout()`), then, from the first byte, a
@@ -76,8 +76,7 @@ interface TransportSession
      * Return the socket to the underlying pool when one is configured;
      * otherwise close it. Call it only after the whole exchange has been
      * validated (frame, status, verdict, no `Connection: close`): a
-     * released socket is out of reach of {@see close()}. A socket that holds
-     * bytes behind the last response is closed instead. Idempotent in
+     * released socket is out of reach of {@see close()}. Idempotent in
      * the sense that further calls are no-ops.
      */
     public function release(): void;

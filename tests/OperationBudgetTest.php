@@ -48,7 +48,7 @@ use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\SocketOpener;
-use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
+use Ndrstmr\Icap\Transport\SynchronousStreamSession;
 use Ndrstmr\Icap\Transport\TransportInterface;
 use Ndrstmr\Icap\Transport\TransportSession;
 use Psr\Log\AbstractLogger;
@@ -391,9 +391,13 @@ final class BudgetSlowTransport implements SessionAwareTransport
 {
     public int $released = 0;
     public int $closed = 0;
+    public int $writes = 0;
 
-    /** @param bool $continueFirst the session answers its first read with 100 Continue at once, and holds only the final answer */
-    public function __construct(private readonly float $holdSeconds, private readonly bool $continueFirst = false)
+    /**
+     * @param bool $continueFirst the session answers its first read with 100 Continue at once, and holds only the final answer
+     * @param bool $lateContinue  the session holds its first answer as well, and it is a 100 Continue
+     */
+    public function __construct(private readonly float $holdSeconds, private readonly bool $continueFirst = false, private readonly bool $lateContinue = false)
     {
     }
 
@@ -413,16 +417,17 @@ final class BudgetSlowTransport implements SessionAwareTransport
     {
         $transport = $this;
 
-        return new class ($transport, $this->holdSeconds, $this->continueFirst) implements TransportSession {
+        return new class ($transport, $this->holdSeconds, $this->continueFirst, $this->lateContinue) implements TransportSession {
             private int $reads = 0;
 
-            public function __construct(private readonly BudgetSlowTransport $transport, private readonly float $holdSeconds, private readonly bool $continueFirst)
+            public function __construct(private readonly BudgetSlowTransport $transport, private readonly float $holdSeconds, private readonly bool $continueFirst, private readonly bool $lateContinue)
             {
             }
 
             #[\Override]
             public function write(iterable $chunks): void
             {
+                $this->transport->writes++;
                 foreach ($chunks as $_) {
                     // a real session writes every chunk
                 }
@@ -431,12 +436,13 @@ final class BudgetSlowTransport implements SessionAwareTransport
             #[\Override]
             public function readResponse(): string
             {
-                if ($this->continueFirst && $this->reads++ === 0) {
+                $first = $this->reads++ === 0;
+                if ($this->continueFirst && $first) {
                     return BUDGET_CONTINUE;
                 }
                 usleep((int) ($this->holdSeconds * 1_000_000));
 
-                return BUDGET_CLEAN;
+                return $this->lateContinue && $first ? BUDGET_CONTINUE : BUDGET_CLEAN;
             }
 
             #[\Override]
@@ -658,31 +664,6 @@ it('repeats a bodyless OPTIONS after a 503 but not a request that carried a body
 });
 
 /**
- * A transport without sessions (the preview then takes two requests) that answers every request with 100 Continue
- * after holding the event loop, and counts the requests it gets.
- */
-final class BudgetSlowPlainTransport implements TransportInterface
-{
-    public int $calls = 0;
-
-    public function __construct(private readonly float $holdSeconds)
-    {
-    }
-
-    #[\Override]
-    public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
-    {
-        foreach ($rawRequest as $_) {
-            // a real transport writes every chunk
-        }
-        $this->calls++;
-        usleep((int) ($this->holdSeconds * 1_000_000));
-
-        return Future::complete(BUDGET_CONTINUE);
-    }
-}
-
-/**
  * An OPTIONS cache that holds the event loop when it is asked and when it is written, counts both, and can cancel the
  * caller while it is asked.
  */
@@ -807,71 +788,20 @@ it('closes the session and gives it to nobody when the final answer of a preview
     }
 });
 
-it('sends no second request when the answer to the preview of a two-request flow came in after the end', function () {
-    $transport = new BudgetSlowPlainTransport(0.3);
+it('sends no continuation when the 100 Continue came in after the end of the operation', function () {
+    $transport = new BudgetSlowTransport(0.3, lateContinue: true);
     $client = new IcapClient(new Config('icap.example', operationTimeout: 0.15), $transport, new RequestFormatter(), new ResponseParser());
 
     try {
-        $path = ScriptedSource::add('budget-legacy', 'payload');
+        $path = ScriptedSource::add('budget-late-continue', 'payload');
 
         /** @var AsyncTestCase $this */
         $this->runAsyncTest(function () use ($client, $path, $transport) {
-            // The server said 100 Continue, late: the file is not sent a second time on the strength of that.
+            // The server said 100 Continue, late: the rest of the file is not sent on the strength of that.
             expect(budgetThrown(fn () => $client->scanFileWithPreview('/svc', $path, 4)->await()))->toBeInstanceOf(IcapTimeoutException::class)
-                ->and($transport->calls)->toBe(1)
-                ->and(ScriptedSource::$closed)->toBe(1);
-        });
-    } finally {
-        ScriptedSource::reset();
-    }
-});
-
-/**
- * A transport without sessions whose requests take as long as a script says, and honour the cancellation.
- */
-final class BudgetStepTransport implements TransportInterface
-{
-    public int $calls = 0;
-
-    /** @param list<array{float, string}> $steps the delay and the reply of the first request, of the second, ... */
-    public function __construct(private readonly array $steps)
-    {
-    }
-
-    #[\Override]
-    public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
-    {
-        [$delay, $reply] = $this->steps[$this->calls++] ?? [0.0, BUDGET_CLEAN];
-
-        /** @var Future<string> $answer */
-        $answer = async(static function () use ($delay, $reply, $cancellation): string {
-            delay($delay, true, $cancellation);
-
-            return $reply;
-        });
-
-        return $answer;
-    }
-}
-
-it('gives the second request of a two-request preview what is left of the operation, not a budget of its own', function () {
-    // The preview is answered with 100 Continue after 0.3 seconds; the full request then waits for ever. The operation
-    // has 0.5 seconds in all: the second request ends with it, not 0.5 seconds after it began.
-    $transport = new BudgetStepTransport([[0.3, BUDGET_CONTINUE], [8.0, BUDGET_CLEAN]]);
-    $client = new IcapClient(new Config('icap.example', operationTimeout: 0.5), $transport, new RequestFormatter(), new ResponseParser());
-
-    try {
-        $path = ScriptedSource::add('budget-second', 'payload');
-
-        /** @var AsyncTestCase $this */
-        $this->runAsyncTest(function () use ($client, $path, $transport) {
-            $started = hrtime(true);
-            $thrown = budgetThrown(fn () => $client->scanFileWithPreview('/svc', $path, 4)->await());
-            $elapsed = (hrtime(true) - $started) / 1e9;
-
-            expect($thrown)->toBeInstanceOf(IcapTimeoutException::class)
-                ->and($transport->calls)->toBe(2)
-                ->and($elapsed)->toBeGreaterThanOrEqual(0.45)->toBeLessThan(0.75)
+                ->and($transport->writes)->toBe(1)
+                ->and($transport->released)->toBe(0)
+                ->and($transport->closed)->toBe(1)
                 ->and(ScriptedSource::$closed)->toBe(1);
         });
     } finally {
@@ -1003,7 +933,7 @@ it('ends a TLS handshake at the limit of its own, leaves nothing subscribed, and
 });
 
 it('gives a synchronous connection no more time than is left of the operation', function () {
-    $connectTimeout = new ReflectionMethod(SynchronousStreamTransport::class, 'connectTimeout');
+    $connectTimeout = new ReflectionMethod(SynchronousStreamSession::class, 'connectTimeout');
     $config = new Config('127.0.0.1', socketTimeout: 5.0);
 
     $over = OperationDeadline::begin(null, 0.001);
@@ -1249,8 +1179,8 @@ it('does not call release() on a session whose operation was over or cancelled w
     }
 });
 
-it('sends no second request when the strategy of a two-request preview decided after the end of the operation', function () {
-    $transport = new BudgetSlowPlainTransport(0.0);
+it('sends no continuation when the strategy decided on the 100 Continue after the end of the operation', function () {
+    $transport = new BudgetSlowTransport(0.0, continueFirst: true);
     $client = new IcapClient(
         new Config('icap.example', operationTimeout: 0.15),
         $transport,
@@ -1260,13 +1190,15 @@ it('sends no second request when the strategy of a two-request preview decided a
     );
 
     try {
-        $path = ScriptedSource::add('budget-legacy-strategy', 'payload');
+        $path = ScriptedSource::add('budget-strategy-continue', 'payload');
 
         /** @var AsyncTestCase $this */
         $this->runAsyncTest(function () use ($client, $path, $transport) {
             // The answer to the preview came in time and said 100 Continue; the strategy said so after the end.
             expect(budgetThrown(fn () => $client->scanFileWithPreview('/svc', $path, 4)->await()))->toBeInstanceOf(IcapTimeoutException::class)
-                ->and($transport->calls)->toBe(1)
+                ->and($transport->writes)->toBe(1)
+                ->and($transport->released)->toBe(0)
+                ->and($transport->closed)->toBe(1)
                 ->and(ScriptedSource::$closed)->toBe(1);
         });
     } finally {
@@ -1277,34 +1209,32 @@ it('sends no second request when the strategy of a two-request preview decided a
 it('does not ask the strategy about a preview answer that came in after the end of the operation', function () {
     // The answer to the preview comes 0.3 s after the operation (0.15 s) ended: clean, or 100 Continue. The strategy
     // would decide on it at once; nothing is decided on an answer that is none.
-    $session = new BudgetSlowTransport(0.3);
-    $sessionStrategy = new BudgetSlowStrategy(0.0, PreviewDecision::ABORT_CLEAN);
-    $twoRequests = new BudgetSlowPlainTransport(0.3);
-    $twoRequestsStrategy = new BudgetSlowStrategy(0.0, PreviewDecision::CONTINUE_SENDING);
     $config = new Config('icap.example', operationTimeout: 0.15);
     $cases = [
-        'session'      => [new IcapClient($config, $session, new RequestFormatter(), new ResponseParser(), $sessionStrategy), $sessionStrategy],
-        'two requests' => [new IcapClient($config, $twoRequests, new RequestFormatter(), new ResponseParser(), $twoRequestsStrategy), $twoRequestsStrategy],
+        'clean'    => [new BudgetSlowTransport(0.3), new BudgetSlowStrategy(0.0, PreviewDecision::ABORT_CLEAN)],
+        'continue' => [new BudgetSlowTransport(0.3, lateContinue: true), new BudgetSlowStrategy(0.0, PreviewDecision::CONTINUE_SENDING)],
     ];
 
-    foreach ($cases as $case => [$client, $strategy]) {
+    foreach ($cases as $case => [$transport, $strategy]) {
+        $client = new IcapClient($config, $transport, new RequestFormatter(), new ResponseParser(), $strategy);
+
         try {
             $path = ScriptedSource::add('budget-late-answer', 'payload');
 
             /** @var AsyncTestCase $this */
-            $this->runAsyncTest(function () use ($client, $strategy, $path, $case) {
+            $this->runAsyncTest(function () use ($client, $strategy, $transport, $path, $case) {
                 expect(budgetThrown(fn () => $client->scanFileWithPreview('/svc', $path, 4)->await()))->toBeInstanceOf(IcapTimeoutException::class, $case)
                     ->and($strategy->asked)->toBe(0, $case)
+                    // No session was given back, and no continuation sent.
+                    ->and($transport->released)->toBe(0, $case)
+                    ->and($transport->closed)->toBe(1, $case)
+                    ->and($transport->writes)->toBe(1, $case)
                     ->and(ScriptedSource::$closed)->toBe(1, $case);
             });
         } finally {
             ScriptedSource::reset();
         }
     }
-    // Neither a session was given back, nor a second request sent.
-    expect($session->released)->toBe(0)
-        ->and($session->closed)->toBe(1)
-        ->and($twoRequests->calls)->toBe(1);
 });
 
 it('does not give the socket of a session back to the pool once its operation is over or was cancelled', function () {

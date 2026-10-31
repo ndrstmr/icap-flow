@@ -39,7 +39,9 @@ use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\AmpConnectionPool;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Ndrstmr\Icap\Transport\TransportSession;
 use Revolt\EventLoop;
 
 use function Amp\async;
@@ -235,7 +237,7 @@ it('gives the file handle back when the cancellation fires during the request', 
     try {
         foreach (['scanFile', 'scanFileWithPreview'] as $method) {
             $deferred = new DeferredCancellation();
-            $transport = new class ($deferred) implements TransportInterface {
+            $transport = new class ($deferred) implements SessionAwareTransport {
                 public function __construct(private DeferredCancellation $deferred)
                 {
                 }
@@ -250,6 +252,42 @@ it('gives the file handle back when the cancellation fires during the request', 
                     $cancellation?->throwIfRequested();
 
                     return Future::complete("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+                }
+
+                #[\Override]
+                public function openSession(Config $config, ?Cancellation $cancellation = null): TransportSession
+                {
+                    return new class ($this->deferred, $cancellation) implements TransportSession {
+                        public function __construct(private DeferredCancellation $deferred, private ?Cancellation $cancellation)
+                        {
+                        }
+
+                        #[\Override]
+                        public function write(iterable $chunks): void
+                        {
+                            foreach ($chunks as $_) {
+                                // a real session writes every chunk
+                            }
+                            $this->deferred->cancel();
+                            $this->cancellation?->throwIfRequested();
+                        }
+
+                        #[\Override]
+                        public function readResponse(): string
+                        {
+                            return "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n";
+                        }
+
+                        #[\Override]
+                        public function release(): void
+                        {
+                        }
+
+                        #[\Override]
+                        public function close(): void
+                        {
+                        }
+                    };
                 }
             };
             $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());

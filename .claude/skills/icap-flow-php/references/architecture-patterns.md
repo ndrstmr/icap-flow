@@ -33,13 +33,7 @@ Erweiterung läuft über Interfaces, nicht Subklassen:
 Alle `TransportInterface`-Implementierungen müssen denselben Wire-Vertrag erfüllen: Beide eingebauten Transporte rahmen Antworten mit demselben `ResponseFrameReader`, gleicher Server vorausgesetzt liefern sie dieselben Bytes.
 
 ### Interface Segregation
-Optionale Fähigkeiten sind eigene Interfaces, keine Pflichtmethoden: `SessionAwareTransport` (Sessions für Strict-§4.5) und `DiscardingTransport` (Antworten ohne gespeicherten Body). Der synchrone Transport implementiert `DiscardingTransport`, aber nicht `SessionAwareTransport` — kein No-Op-Stub. `IcapClient::scanFileWithPreview()` prüft `instanceof SessionAwareTransport` und wählt den Pfad.
-
-```php
-$result = $this->transport instanceof SessionAwareTransport
-    ? $this->scanFileWithPreviewStrict(...)
-    : $this->scanFileWithPreviewLegacy(...);
-```
+Optionale Fähigkeiten sind eigene Interfaces, keine Pflichtmethoden: `SessionAwareTransport` (Sessions für den Preview-Continue nach §4.5) und `DiscardingTransport` (Antworten ohne gespeicherten Body). Beide eingebauten Transporte implementieren beide. `IcapClient::scanFileWithPreview*()` verlangt `SessionAwareTransport` (`sessionTransport()`): ein Transport ohne Sessions ist am Aufruf eine `LogicException`, ein Fallback ist nicht vorgesehen.
 
 ### Dependency Inversion
 `IcapClient` hängt an Interfaces; konkret sind nur die Werte `Config` und `CicapVerdict`:

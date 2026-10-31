@@ -28,6 +28,7 @@ use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\ResponseParserInterface;
 use Ndrstmr\Icap\Tests\AsyncTestCase;
+use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 
 uses(AsyncTestCase::class);
@@ -100,32 +101,11 @@ it('scanFile merges caller-supplied headers including Allow into the outgoing re
     m::close();
 });
 
-it('scanFileWithPreview merges caller-supplied headers without overriding Preview/Allow, before and after 100 Continue', function () {
-    $wires = [];
-
-    /** @var TransportInterface&\Mockery\MockInterface $transport */
-    $transport = m::mock(TransportInterface::class);
-    /** @var \Mockery\Expectation $t */
-    $t = $transport->shouldReceive('request');
-    $t->twice();
-    $t->withArgs(
-        /** @param iterable<string> $chunks */
-        function (Config $config, iterable $chunks) use (&$wires): bool {
-            $wire = '';
-            foreach ($chunks as $chunk) {
-                $wire .= $chunk;
-            }
-            $wires[] = $wire;
-            return true;
-        },
-    );
-    // Without sessions the client sends the preview and, after
-    // 100 Continue, the whole file in a second request.
-    $t->andReturn(
-        \Amp\Future::complete("ICAP/1.0 100 Continue\r\n\r\n"),
-        \Amp\Future::complete("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n"),
-    );
-
+it('scanFileWithPreview merges caller-supplied headers without overriding Preview/Allow, and sends only the rest after 100 Continue', function () {
+    $transport = new ScriptedTransport([
+        "ICAP/1.0 100 Continue\r\n\r\n",
+        "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n",
+    ]);
     $client = new IcapClient(new Config('icap.example'), $transport, new RequestFormatter(), new ResponseParser());
 
     $tmp = tempnam(sys_get_temp_dir(), 'icap');
@@ -152,7 +132,7 @@ it('scanFileWithPreview merges caller-supplied headers without overriding Previe
             . "\r\n";
         $encapsulated = 'Encapsulated: res-hdr=0, res-body=' . strlen($httpHead) . "\r\n";
 
-        expect($wires)->toBe([
+        expect($transport->requests)->toBe([
             "RESPMOD icap://icap.example/svc ICAP/1.0\r\n"
             . "Host: icap.example\r\n"
             . "X-Client-IP: 203.0.113.99\r\n"
@@ -162,21 +142,12 @@ it('scanFileWithPreview merges caller-supplied headers without overriding Previe
             . "\r\n"
             . $httpHead
             . "3\r\nabc\r\n0\r\n\r\n",
-            // The full request is no preview: the caller's Preview/Allow
-            // stay out of it as well, the other caller headers go along.
-            "RESPMOD icap://icap.example/svc ICAP/1.0\r\n"
-            . "Host: icap.example\r\n"
-            . "X-Client-IP: 203.0.113.99\r\n"
-            . $encapsulated
-            . "\r\n"
-            . $httpHead
-            . "6\r\nabcdef\r\n0\r\n\r\n",
+            // The rest of the body continues the request: it carries no head, so no header of the caller either.
+            "3\r\ndef\r\n0\r\n\r\n",
         ]);
     } finally {
         @unlink($tmp);
     }
-
-    m::close();
 });
 
 it('rejects header names that contain CR/LF (injection)', function () {

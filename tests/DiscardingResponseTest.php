@@ -132,26 +132,24 @@ it('scans with and without preview when the server answers with its whole messag
         'file inside the preview, 200'    => [$echo, null, $size, true],
     ];
 
-    foreach (['one socket for preview and rest' => true, 'one request per message' => false] as $how => $sessions) {
-        foreach ($scenarios as $label => [$previewAnswer, $restAnswer, $discarded, $whole]) {
-            $server = IcapTestServer::start(static fn (array $r) => $r['stage'] === 'preview' ? $previewAnswer($r) : ($restAnswer ?? $clean)($r));
-            try {
-                $client = discardClient($server, $sessions ? new AsyncAmpTransport() : new OneRequestTransport());
-                $path = FileWorkers::file($whole ? str_repeat('a', 500) : str_repeat('a', 5000));
+    foreach ($scenarios as $label => [$previewAnswer, $restAnswer, $discarded, $whole]) {
+        $server = IcapTestServer::start(static fn (array $r) => $r['stage'] === 'preview' ? $previewAnswer($r) : ($restAnswer ?? $clean)($r));
+        try {
+            $client = discardClient($server);
+            $path = FileWorkers::file($whole ? str_repeat('a', 500) : str_repeat('a', 5000));
 
-                $result = $client->scanFileWithPreviewDiscardingBody('/avscan', $path, 2 * $size, 1024)->await();
+            $result = $client->scanFileWithPreviewDiscardingBody('/avscan', $path, 2 * $size, 1024)->await();
 
-                // After `100 Continue` the rest of the file goes on the same socket, or in a request of its own.
-                $followUp = $restAnswer !== null;
-                expect($result->isInfected())->toBeFalse("{$how}: {$label}")
-                    ->and($result->getOriginalResponse()->discardedBodyBytes)->toBe($discarded, "{$how}: {$label}")
-                    ->and($result->getOriginalResponse()->body)->toBe('', "{$how}: {$label}")
-                    ->and($server->requests[0]['headers']['preview'])->toBe('1024', "{$how}: {$label}")
-                    ->and(array_column($server->requests, 'stage'))->toBe($followUp ? ['preview', $sessions ? 'rest' : 'single'] : ['preview'], "{$how}: {$label}")
-                    ->and($server->connections)->toBe($followUp && !$sessions ? 2 : 1, "{$how}: {$label}");
-            } finally {
-                $server->stop();
-            }
+            // After `100 Continue` the rest of the file goes on the same socket.
+            $followUp = $restAnswer !== null;
+            expect($result->isInfected())->toBeFalse($label)
+                ->and($result->getOriginalResponse()->discardedBodyBytes)->toBe($discarded, $label)
+                ->and($result->getOriginalResponse()->body)->toBe('', $label)
+                ->and($server->requests[0]['headers']['preview'])->toBe('1024', $label)
+                ->and(array_column($server->requests, 'stage'))->toBe($followUp ? ['preview', 'rest'] : ['preview'], $label)
+                ->and($server->connections)->toBe(1, $label);
+        } finally {
+            $server->stop();
         }
     }
 
@@ -239,7 +237,7 @@ it('refuses a response that is forged, cut or illegal at its end, however large,
     }
 });
 
-it('refuses bytes the server sent behind a response, whichever response of the exchange it is', function () {
+it('refuses bytes the server sent behind a response, whichever response of the exchange it is, kept or not', function () {
     $stray = 'ICAP/1.0 204 No Con';
     // The end of the response and the bytes behind it go out in one write, after the rest has been read: they come in together.
     $echoBehind = static function (array $r) use ($stray): \Generator {
@@ -263,30 +261,38 @@ it('refuses bytes the server sent behind a response, whichever response of the e
         'preview, 100 Continue, then 204'             => [$continue, $cleanBehind, false, true],
     ];
 
-    foreach (['one socket for preview and rest' => true, 'one request per message' => false] as $how => $sessions) {
+    // A response that is kept is refused the same way: a clean answer with bytes behind it is no verdict.
+    foreach (['not kept' => true, 'kept' => false] as $mode => $discard) {
         foreach ($scenarios as $label => [$previewAnswer, $restAnswer, $whole, $sent]) {
             $server = IcapTestServer::start(static fn (array $r) => $r['stage'] === 'preview' ? $previewAnswer($r) : ($restAnswer ?? $cleanBehind)($r));
             try {
-                $client = discardClient($server, $sessions ? new AsyncAmpTransport() : new OneRequestTransport());
+                $client = discardClient($server);
                 $path = FileWorkers::file($whole ? str_repeat('a', 500) : str_repeat('a', 5000));
+                $scan = $discard
+                    ? fn () => $client->scanFileWithPreviewDiscardingBody('/avscan', $path, 1 << 20, 1024)->await()
+                    : fn () => $client->scanFileWithPreview('/avscan', $path, 1024)->await();
 
-                expect(fn () => $client->scanFileWithPreviewDiscardingBody('/avscan', $path, 1 << 20, 1024)->await())
-                    ->toThrow(IcapMalformedResponseException::class, '', "{$how}: {$label}");
+                expect($scan)->toThrow(IcapMalformedResponseException::class, '', "{$mode}, {$label}");
                 // Nothing follows a response that has bytes behind it: the rest of the file is not sent after a 100 like that.
-                expect(array_column($server->requests, 'stage'))->toBe($sent ? ['preview', $sessions ? 'rest' : 'single'] : ['preview'], "{$how}: {$label}");
+                expect(array_column($server->requests, 'stage'))->toBe($sent ? ['preview', 'rest'] : ['preview'], "{$mode}, {$label}");
             } finally {
                 $server->stop();
             }
         }
-    }
 
-    foreach (['a 200' => $echoBehind, 'a 204' => $cleanBehind] as $label => $answer) {
-        $server = IcapTestServer::start($answer);
-        try {
-            expect(fn () => discardClient($server)->scanFileDiscardingBody('/avscan', FileWorkers::file('abc'), 1 << 20)->await())
-                ->toThrow(IcapMalformedResponseException::class, '', $label);
-        } finally {
-            $server->stop();
+        foreach (['a 200' => $echoBehind, 'a 204' => $cleanBehind] as $label => $answer) {
+            $server = IcapTestServer::start($answer);
+            try {
+                $client = discardClient($server);
+                $path = FileWorkers::file('abc');
+                $scan = $discard
+                    ? fn () => $client->scanFileDiscardingBody('/avscan', $path, 1 << 20)->await()
+                    : fn () => $client->scanFile('/avscan', $path)->await();
+
+                expect($scan)->toThrow(IcapMalformedResponseException::class, '', "{$mode}, {$label}");
+            } finally {
+                $server->stop();
+            }
         }
     }
 });
@@ -318,20 +324,19 @@ it('refuses a preview strategy of its own, which would judge a body that is not 
         // Where the body is kept, the strategy sees the body.
         expect($clientOf(new AsyncAmpTransport(), $own)->scanFileWithPreview('/avscan', $path, 1024)->await()->isInfected())->toBeTrue();
 
-        foreach (['one socket for preview and rest' => new AsyncAmpTransport(), 'one request per message' => new OneRequestTransport()] as $how => $transport) {
-            $client = $clientOf($transport, $own);
-            $connections = $server->connections;
-            // Told at once, before a file is opened (this one does not exist) or a byte is sent.
-            expect(fn () => $client->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024))->toThrow(\LogicException::class, '', $how)
-                ->and(fn () => (new RetryingIcapClient($client))->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024)->await())->toThrow(\LogicException::class, '', $how)
-                ->and(fn () => (new SynchronousIcapClient($client))->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024))->toThrow(\LogicException::class, '', $how);
-            expect($server->connections)->toBe($connections, $how);
+        $transport = new AsyncAmpTransport();
+        $client = $clientOf($transport, $own);
+        $connections = $server->connections;
+        // Told at once, before a file is opened (this one does not exist) or a byte is sent.
+        expect(fn () => $client->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024))->toThrow(\LogicException::class)
+            ->and(fn () => (new RetryingIcapClient($client))->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024)->await())->toThrow(\LogicException::class)
+            ->and(fn () => (new SynchronousIcapClient($client))->scanFileWithPreviewDiscardingBody('/avscan', $missing, 1 << 20, 1024))->toThrow(\LogicException::class);
+        expect($server->connections)->toBe($connections);
 
-            // The strategy of the library, with the headers of the configuration or its own, only reads status and headers.
-            foreach ([null, new DefaultPreviewStrategy(['X-Virus-Name'])] as $strategy) {
-                $result = $clientOf($transport, $strategy)->scanFileWithPreviewDiscardingBody('/avscan', $path, 1 << 20, 1024)->await();
-                expect($result->getOriginalResponse()->discardedBodyBytes)->toBe(strlen($body), $how);
-            }
+        // The strategy of the library, with the headers of the configuration or its own, only reads status and headers.
+        foreach ([null, new DefaultPreviewStrategy(['X-Virus-Name'])] as $strategy) {
+            $result = $clientOf($transport, $strategy)->scanFileWithPreviewDiscardingBody('/avscan', $path, 1 << 20, 1024)->await();
+            expect($result->getOriginalResponse()->discardedBodyBytes)->toBe(strlen($body));
         }
     } finally {
         $server->stop();

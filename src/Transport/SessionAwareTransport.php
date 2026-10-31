@@ -24,15 +24,13 @@ use Amp\Cancellation;
 use Ndrstmr\Icap\Config;
 
 /**
- * Optional capability surface for transports that can hand out a
- * {@see TransportSession}. The default async transport
- * ({@see AsyncAmpTransport}) implements both this and
- * {@see TransportInterface}; the synchronous transport intentionally
- * does not — sync is for CLI usage where strict RFC 3507 §4.5
- * preview-continue isn't worth the added complexity.
+ * Capability of a transport that hands out a {@see TransportSession}: a connection that carries more than one
+ * write/read round trip. {@see AsyncAmpTransport} and {@see SynchronousStreamTransport} implement it.
  *
- * Callers (typically {@see \Ndrstmr\Icap\IcapClient}) check for this
- * interface via `instanceof` before opting into multi-round flows.
+ * A preview that the server answers with `100 Continue` is continued on the connection it began on (RFC 3507 §4.5),
+ * so {@see \Ndrstmr\Icap\IcapClient} refuses `scanFileWithPreview*()` with a transport that does not implement this
+ * interface (a `\LogicException`, before a file is opened or a connection made). Everything else works with
+ * {@see TransportInterface} alone.
  */
 interface SessionAwareTransport extends TransportInterface
 {

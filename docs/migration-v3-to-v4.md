@@ -37,11 +37,22 @@ This guide describes the unreleased 4.0 changes on `main`. See the
   upload requests are attempted once. Decide in the application whether a
   failed upload is safe to retry.
 - Responses are parsed more strictly. Check custom servers and fixtures for
-  valid ICAP framing, headers and `Encapsulated` layouts. Request metadata,
-  service paths and configuration are also validated more strictly.
+  valid ICAP framing, headers and `Encapsulated` layouts, and for bytes sent
+  behind a response, which are now an error. Request metadata, service paths
+  and configuration are also validated more strictly.
 
 ## Review resource limits and integrations
 
+- A preview is continued on the connection it began on (RFC 3507 §4.5).
+  `SynchronousStreamTransport` supports that now. A custom transport has to
+  implement `SessionAwareTransport` (and, for the discarding helpers,
+  `DiscardingTransport` with sessions that implement
+  `DiscardingTransportSession`) or `scanFileWithPreview*()` throws a
+  `LogicException` before it opens the file; the client no longer sends the
+  whole file again in a second request. `request()` and `scanFile()` need no
+  sessions. With `SynchronousStreamTransport` the rest of a previewed file now
+  has to go out within `streamTimeout`, as with the async transport: raise it
+  for large files.
 - Pooling remains opt-in. Its caps now include connecting and active sockets;
   a full pool fails unless a bounded queue is configured. Socket reuse is
   limited to the validated strict-preview flow.

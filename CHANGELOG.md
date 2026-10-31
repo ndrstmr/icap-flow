@@ -103,12 +103,13 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   of `streamTimeout` seconds for all its chunks (the preview and the
   continuation of a strict preview flow each get their own), looks at the
   caller's cancellation before it pulls the first chunk and around every
-  write, and ends a stalled write by closing the socket. Whenever the
-  producer hands a chunk back (an empty one too) and before the call
-  returns, the window is checked on a monotonic clock as well, so a slow
-  producer, or one that blocks the event loop, can neither run on past the
-  window nor finish the write after it. A call that was cancelled beforehand
-  pulls nothing from the producer and sends nothing. A write that ends in a
+  write, and ends a stalled write by closing the socket. Before the first
+  chunk is pulled, whenever the producer hands one back (an empty one too)
+  and before the call returns, the window is checked on a monotonic clock as
+  well, so a slow producer, or one that blocks the event loop, can neither
+  run on past the window nor finish the write after it. A call that was
+  cancelled, or whose window was over, before it began pulls nothing from
+  the producer and sends nothing. A write that ends in a
   cancellation, in the timeout or in any other failure closes the session
   for good, so a later `release()` cannot hand a half-sent request to the
   pool. *(B05)*
@@ -239,10 +240,12 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   gives the length of the header section, the body is read as chunks (hex size,
   exactly that many bytes, CRLF, last chunk, trailer), and terminators or
   responses inside a chunk are data. Bytes read behind the end of a response
-  stay with the session: `AmpTransportSession` refuses to write on top of them
-  and does not give the socket back to the pool, and `ResponseParser::parse()`
-  refuses a string with bytes behind its response. A one-shot `request()`
-  closes its socket after the response, as before. *(B02)*
+  are an `IcapMalformedResponseException` whether the response is kept or not,
+  in `request()` and in a session, and the connection is closed instead of
+  pooled: a connection carries one outstanding request at a time (RFC 3507
+  §4.1), so they answer nothing. Bytes that arrive later are not waited for.
+  `ResponseParser::parse()` refuses a string with bytes behind its response.
+  A one-shot `request()` closes its socket after the response, as before. *(B02)*
 - Responses that are not legal are refused, not read as clean. The old parser
   took `-1`, `ZZ`, `10000000000000000` and `ffffffffffffffff` as chunk sizes for
   an empty body, raised a `ValueError` for `8000000000000000`, skipped the two
@@ -453,6 +456,17 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   missing event log is a failure). The `CI gate` job fails when a check of the event failed or did not run, and
   `workflow_dispatch` runs every check on a release candidate. Actions are pinned to commit SHAs, the token only
   reads outside the coverage deploy, and every job has a time limit. *(N08, M17)*
+- **Behaviour change:** a preview is always continued on the connection it began on (RFC 3507 §4.5).
+  `SynchronousStreamTransport` is now a `SessionAwareTransport`, so `scanFileWithPreview()` and its discarding variant
+  send the rest of the file after `100 Continue` on the same connection, as the async transport does, instead of
+  sending the whole file again in a second request on a new one. The two-request fallback is removed: with a transport
+  that does not implement `SessionAwareTransport` both methods throw `LogicException` at the call, before a file is
+  opened or a connection is made; scans without a preview and `request()` still work with it. A session that takes less
+  than the whole rest of the file fails the scan with `IcapStorageException`. Each write of a session has one window of
+  `streamTimeout` on both transports (`TransportSession::write()`), so with `SynchronousStreamTransport` the rest of a
+  previewed file now has to go out within it, as with the async transport; before, the second request only limited the
+  time the peer went without taking a byte. `request()`, `options()` and `scanFile()` of the synchronous transport keep
+  that limit.
 
 ## [3.0.0] - 2026-05-01
 

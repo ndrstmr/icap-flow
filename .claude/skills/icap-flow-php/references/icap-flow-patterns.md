@@ -27,16 +27,11 @@ if ($code !== 204 && $code !== 200) {
 throw new IcapProtocolException('Unexpected ICAP status: ' . $code, $code);
 ```
 
-## Strict RFC 3507 §4.5 vs. Legacy-Approximation
+## RFC 3507 §4.5 Preview-Continue
 
-| Pfad | Wann |
-|---|---|
-| `IcapClient::scanFileWithPreviewStrict()` | `transport instanceof SessionAwareTransport` (`AsyncAmpTransport`) |
-| `IcapClient::scanFileWithPreviewLegacy()` | sonst (`SynchronousStreamTransport`, eigene Transporte) |
+`IcapClient::scanFileWithPreview*()` verlangt einen `SessionAwareTransport` (`AsyncAmpTransport`, `SynchronousStreamTransport`); jeder andere ist am Aufruf eine `LogicException`, vor Datei und Verbindung. Preview + Continuation laufen in `scanFileWithPreviewStrict()` auf demselben Socket, **ein** logischer ICAP-Request, kein zweiter HTTP-Head; die Continuation sind nur die restlichen Chunks. Einen Zwei-Request-Fallback gibt es nicht. Tests: `tests/PreviewContinueStrictTest.php` (async, Socketpaar), `tests/Transport/SynchronousStreamTransportTest.php` (synchron, echte Sockets im Kindprozess).
 
-Strict-Pfad: Preview + Continuation auf demselben Socket, **ein** logischer ICAP-Request, kein zweiter HTTP-Head. Legacy-Pfad: zwei Requests, der zweite mit der ganzen Datei; kostet einen weiteren TCP/TLS-Handshake. Die beiden Pfade nicht zusammenlegen; Tests: `tests/PreviewContinueStrictTest.php` (Strict), `tests/IcapClientTest.php` (Legacy).
-
-Beide lesen das Preview über `readPreview()`: 0..1 MiB (`MAX_PREVIEW_SIZE`), die Größe der offenen Datei (`LocalFile`), `ieof` erst nach beobachtetem EOF und passender Länge. Der Rest (Strict) und der Vollbody (`scanFile()`, Legacy-Vollrequest) gehen mit genau der angekündigten `Content-Length` raus; Unter- und Überlänge werfen vor dem Abschlusschunk (nicht bei einem Teil-Preview: `Preview` ohne `ieof`, seine `Content-Length` beschreibt den ganzen Body). `Preview: 0` geht mit `res-body` und `0\r\n\r\n` raus (`RequestFormatter::isEmptyPreview()`), nie als `null-body`. Ohne Größe nimmt der Client das `Preview` einer gecachten OPTIONS-Antwort (Dezimalzahl, auf 1 MiB gekappt), sonst 1024; ein Eintrag mit ungültigem `Preview` ist ein Miss.
+Das Preview wird über `readPreview()` gelesen: 0..1 MiB (`MAX_PREVIEW_SIZE`), die Größe der offenen Datei (`LocalFile`), `ieof` erst nach beobachtetem EOF und passender Länge. Der Rest der Datei nach dem Preview und der Vollbody (`scanFile()`) gehen mit genau der angekündigten `Content-Length` raus; Unter- und Überlänge werfen vor dem Abschlusschunk (nicht bei einem Teil-Preview: `Preview` ohne `ieof`, seine `Content-Length` beschreibt den ganzen Body). `Preview: 0` geht mit `res-body` und `0\r\n\r\n` raus (`RequestFormatter::isEmptyPreview()`), nie als `null-body`. Ohne Größe nimmt der Client das `Preview` einer gecachten OPTIONS-Antwort (Dezimalzahl, auf 1 MiB gekappt), sonst 1024; ein Eintrag mit ungültigem `Preview` ist ein Miss.
 
 ## Header- und URI-Injection-Schutz
 
@@ -52,9 +47,9 @@ Beide lesen das Preview über `readPreview()`: 0..1 MiB (`MAX_PREVIEW_SIZE`), di
 Caller-Werte für verwaltete Header fallen in jeder Schreibweise weg (`HeaderFields::without()`):
 
 - `Host` und `Encapsulated` — setzt immer der Formatter, aus dem URI und aus den berechneten Offsets.
-- `Preview` und `Allow` — im Preview-Request setzt `IcapClient` `Preview: <n>` und `Allow: 204` über `mergeHeaders()`; der Legacy-Vollrequest nach `100 Continue` trägt keinen der beiden.
+- `Preview` und `Allow` — im Preview-Request setzt `IcapClient` `Preview: <n>` und `Allow: 204` über `mergeHeaders()`; die Continuation nach `100 Continue` hat keinen Kopf und trägt keinen der beiden.
 - `scanFile()` sendet ohne Preview-Handshake und verwirft nur `Preview`; `Allow` und die übrigen `extraHeaders` gehen mit.
-- Ausnahme im verifizierten Modus: jeder Request, der die ganze Datei sendet (`scanFile()`, Legacy-Vollrequest), trägt `Allow: 204` (`wholeFileHeaders()`).
+- Ausnahme im verifizierten Modus: `scanFile()`, der Request, der die ganze Datei ohne Preview sendet, trägt `Allow: 204` (`wholeFileHeaders()`).
 
 Wer einen `extraHeaders`-Param mit `Encapsulated` ankommt, sieht seinen Wert nicht im Wire — das ist **gewollt**.
 
@@ -108,7 +103,7 @@ try {
 
 - `AsyncAmpTransport::request()` liefert einen ungeprüften String und schließt deshalb immer; wiederverwendet wird nur im Strict-Preview-Flow.
 - Exceptions, unerlaubte Status (100 nach `ieof`, 3xx, 4xx/5xx) und Framing-Fehler schließen.
-- Bytes hinter einer Antwort gehören der Session: `release()` schließt dann statt zu poolen. Der Pool nimmt nur Sockets zurück, die er verliehen hat.
+- Bytes hinter einer Antwort sind `IcapMalformedResponseException` (eine ausstehende Anfrage je Verbindung, RFC 3507 §4.1): die Session schließt, nichts geht in den Pool. Der Pool nimmt nur Sockets zurück, die er verliehen hat.
 
 ## OPTIONS-Cache
 
@@ -129,4 +124,4 @@ Ein Treffer zählt nur nach `OptionsEntry::keeps()` und `ResponseDecoder::admits
 
 ## Encapsulated-Aware Response-Framing
 
-`ResponseFrameReader` (Transporte) und `ResponseParser` lesen mit demselben internen `ResponseDecoder`: Das Ende einer Response ergibt sich aus ihrem `Encapsulated`-Layout (eine der Antwortformen aus RFC 3507 §4.4.1, Headersegmente exakt so lang wie angegeben, Body als Chunks bis Abschlusschunk und Trailer), **nicht** aus `Connection: close` und nicht aus einer Suche nach `0\r\n\r\n`. Damit funktioniert Keep-Alive auch gegen Server, die den Socket weiter offen halten, und Bytes im Payload bleiben Nutzbytes. obs-fold im `Encapsulated`-Header wird über `HeaderFields::parse()` aufgelöst. Finale Antworten brauchen `Encapsulated`; nur 100, 204 und 4xx/5xx dürfen ohne enden, und 100/204 tragen keine Nachricht (Layout höchstens `null-body=0`). Headerzeilen werden vor trim/Unfold geprüft (Name ein Token, Wert ohne Steuerzeichen). Bytes hinter einer Antwort gehören der Session: Schreiben darauf wirft, `release()` schließt statt zu poolen.
+`ResponseFrameReader` (Transporte) und `ResponseParser` lesen mit demselben internen `ResponseDecoder`: Das Ende einer Response ergibt sich aus ihrem `Encapsulated`-Layout (eine der Antwortformen aus RFC 3507 §4.4.1, Headersegmente exakt so lang wie angegeben, Body als Chunks bis Abschlusschunk und Trailer), **nicht** aus `Connection: close` und nicht aus einer Suche nach `0\r\n\r\n`. Damit funktioniert Keep-Alive auch gegen Server, die den Socket weiter offen halten, und Bytes im Payload bleiben Nutzbytes. obs-fold im `Encapsulated`-Header wird über `HeaderFields::parse()` aufgelöst. Finale Antworten brauchen `Encapsulated`; nur 100, 204 und 4xx/5xx dürfen ohne enden, und 100/204 tragen keine Nachricht (Layout höchstens `null-body=0`). Headerzeilen werden vor trim/Unfold geprüft (Name ein Token, Wert ohne Steuerzeichen). Bytes hinter einer Antwort sind in beiden Modi ein Framingfehler; die Session schließt, statt zu poolen.
