@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="UTF-8">
+  <title>Dashboard for /home/runner/work/icap-flow/icap-flow/src</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="_css/bootstrap.min.css?v=11.0.12" rel="stylesheet" type="text/css">
+  <link href="_css/nv.d3.min.css?v=11.0.12" rel="stylesheet" type="text/css">
+  <link href="_css/style.css?v=11.0.12" rel="stylesheet" type="text/css">
+  <link href="_css/custom.css" rel="stylesheet" type="text/css">
+ </head>
+ <body>
+  <header>
+   <div class="container-fluid">
+    <div class="row">
+     <div class="col-md-12">
+      <nav aria-label="breadcrumb">
+       <ol class="breadcrumb">
+         <li class="breadcrumb-item"><a href="index.html">/home/runner/work/icap-flow/icap-flow/src</a></li>
+         <li class="breadcrumb-item active">(Dashboard)</li>
+
+       </ol>
+      </nav>
+     </div>
+    </div>
+   </div>
+  </header>
+  <div class="container-fluid">
+   <div class="row">
+    <div class="col-md-12">
+     <h2>Classes</h2>
+    </div>
+   </div>
+   <div class="row">
+    <div class="col-md-6">
+     <h3>Coverage Distribution</h3>
+     <div id="classCoverageDistribution" style="height: 300px;">
+       <svg></svg>
+     </div>
+    </div>
+    <div class="col-md-6">
+     <h3>Complexity</h3>
+     <div id="classComplexity" style="height: 300px;">
+       <svg></svg>
+     </div>
+    </div>
+   </div>
+   <div class="row">
+    <div class="col-md-6">
+     <h3>Insufficient Coverage</h3>
+     <div class="scrollbox">
+      <table class="table">
+       <thead>
+        <tr>
+         <th>Class</th>
+         <th class="text-right">Coverage</th>
+        </tr>
+       </thead>
+       <tbody>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#68">Ndrstmr\Icap\Transport\SynchronousStreamTransport</a></td><td class="text-right">87%</td></tr>
+       <tr><td><a href="ChunkedBodyEncoder.php.html#44">Ndrstmr\Icap\ChunkedBodyEncoder</a></td><td class="text-right">88%</td></tr>
+
+       </tbody>
+      </table>
+     </div>
+    </div>
+    <div class="col-md-6">
+     <h3>Project Risks</h3>
+     <div class="scrollbox">
+      <table class="table">
+       <thead>
+        <tr>
+         <th>Class</th>
+         <th class="text-right"><abbr title="Change Risk Anti-Patterns (CRAP) Index">CRAP</abbr></th>
+        </tr>
+       </thead>
+       <tbody>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#68">Ndrstmr\Icap\Transport\SynchronousStreamTransport</a></td><td class="text-right">51</td></tr>
+       <tr><td><a href="ChunkedBodyEncoder.php.html#44">Ndrstmr\Icap\ChunkedBodyEncoder</a></td><td class="text-right">30</td></tr>
+
+       </tbody>
+      </table>
+     </div>
+    </div>
+   </div>
+   <div class="row">
+    <div class="col-md-12">
+     <h2>Methods</h2>
+    </div>
+   </div>
+   <div class="row">
+    <div class="col-md-6">
+     <h3>Coverage Distribution</h3>
+     <div id="methodCoverageDistribution" style="height: 300px;">
+       <svg></svg>
+     </div>
+    </div>
+    <div class="col-md-6">
+     <h3>Complexity</h3>
+     <div id="methodComplexity" style="height: 300px;">
+       <svg></svg>
+     </div>
+    </div>
+   </div>
+   <div class="row">
+    <div class="col-md-6">
+     <h3>Insufficient Coverage</h3>
+     <div class="scrollbox">
+      <table class="table">
+       <thead>
+        <tr>
+         <th>Method</th>
+         <th class="text-right">Coverage</th>
+        </tr>
+       </thead>
+       <tbody>
+       <tr><td><a href="Cache/InMemoryOptionsCache.php.html#107"><abbr title="Ndrstmr\Icap\Cache\InMemoryOptionsCache::delete">delete</abbr></a></td><td class="text-right">0%</td></tr>
+       <tr><td><a href="IcapClient.php.html#105"><abbr title="Ndrstmr\Icap\IcapClient::create">create</abbr></a></td><td class="text-right">0%</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#89"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::requestDiscardingBody">requestDiscardingBody</abbr></a></td><td class="text-right">0%</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#249"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::setBlocking">setBlocking</abbr></a></td><td class="text-right">25%</td></tr>
+       <tr><td><a href="ResponseParser.php.html#38"><abbr title="Ndrstmr\Icap\ResponseParser::__construct">__construct</abbr></a></td><td class="text-right">50%</td></tr>
+       <tr><td><a href="Transport/AmpTransportSession.php.html#341"><abbr title="Ndrstmr\Icap\Transport\AmpTransportSession::assertActive">assertActive</abbr></a></td><td class="text-right">50%</td></tr>
+       <tr><td><a href="Transport/ResponseFrameReader.php.html#50"><abbr title="Ndrstmr\Icap\Transport\ResponseFrameReader::__construct">__construct</abbr></a></td><td class="text-right">50%</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#215"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::look">look</abbr></a></td><td class="text-right">50%</td></tr>
+       <tr><td><a href="ChunkedBodyEncoder.php.html#112"><abbr title="Ndrstmr\Icap\ChunkedBodyEncoder::encodeRemainderFromStream">encodeRemainderFromStream</abbr></a></td><td class="text-right">57%</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#312"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::awaitWritable">awaitWritable</abbr></a></td><td class="text-right">66%</td></tr>
+       <tr><td><a href="ResponseDecoder.php.html#131"><abbr title="Ndrstmr\Icap\ResponseDecoder::__construct">__construct</abbr></a></td><td class="text-right">75%</td></tr>
+       <tr><td><a href="ChunkedBodyEncoder.php.html#58"><abbr title="Ndrstmr\Icap\ChunkedBodyEncoder::encode">encode</abbr></a></td><td class="text-right">80%</td></tr>
+       <tr><td><a href="Transport/AmpConnectionPool.php.html#751"><abbr title="Ndrstmr\Icap\Transport\AmpConnectionPool::startSweeper">startSweeper</abbr></a></td><td class="text-right">81%</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#346"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::readChunk">readChunk</abbr></a></td><td class="text-right">86%</td></tr>
+
+       </tbody>
+      </table>
+     </div>
+    </div>
+    <div class="col-md-6">
+     <h3>Project Risks</h3>
+     <div class="scrollbox">
+      <table class="table">
+       <thead>
+        <tr>
+         <th>Method</th>
+         <th class="text-right"><abbr title="Change Risk Anti-Patterns (CRAP) Index">CRAP</abbr></th>
+        </tr>
+       </thead>
+       <tbody>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#346"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::readChunk">readChunk</abbr></a></td><td class="text-right">12</td></tr>
+       <tr><td><a href="ChunkedBodyEncoder.php.html#58"><abbr title="Ndrstmr\Icap\ChunkedBodyEncoder::encode">encode</abbr></a></td><td class="text-right">10</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#249"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::setBlocking">setBlocking</abbr></a></td><td class="text-right">6</td></tr>
+       <tr><td><a href="ResponseDecoder.php.html#131"><abbr title="Ndrstmr\Icap\ResponseDecoder::__construct">__construct</abbr></a></td><td class="text-right">6</td></tr>
+       <tr><td><a href="Transport/ResponseFrameReader.php.html#50"><abbr title="Ndrstmr\Icap\Transport\ResponseFrameReader::__construct">__construct</abbr></a></td><td class="text-right">6</td></tr>
+       <tr><td><a href="ChunkedBodyEncoder.php.html#112"><abbr title="Ndrstmr\Icap\ChunkedBodyEncoder::encodeRemainderFromStream">encodeRemainderFromStream</abbr></a></td><td class="text-right">5</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#312"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::awaitWritable">awaitWritable</abbr></a></td><td class="text-right">4</td></tr>
+       <tr><td><a href="ResponseParser.php.html#38"><abbr title="Ndrstmr\Icap\ResponseParser::__construct">__construct</abbr></a></td><td class="text-right">4</td></tr>
+       <tr><td><a href="Transport/AmpConnectionPool.php.html#751"><abbr title="Ndrstmr\Icap\Transport\AmpConnectionPool::startSweeper">startSweeper</abbr></a></td><td class="text-right">4</td></tr>
+       <tr><td><a href="Transport/AmpTransportSession.php.html#341"><abbr title="Ndrstmr\Icap\Transport\AmpTransportSession::assertActive">assertActive</abbr></a></td><td class="text-right">2</td></tr>
+       <tr><td><a href="Transport/SynchronousStreamTransport.php.html#215"><abbr title="Ndrstmr\Icap\Transport\SynchronousStreamTransport::look">look</abbr></a></td><td class="text-right">2</td></tr>
+
+       </tbody>
+      </table>
+     </div>
+    </div>
+   </div>
+   <footer>
+    <hr/>
+    <p>
+     <small>Generated by <a href="https://github.com/sebastianbergmann/php-code-coverage" target="_top">php-code-coverage 11.0.12</a> using <a href="https://www.php.net/" target="_top">PHP 8.5.12</a> and <a href="https://phpunit.de/">PHPUnit 11.5.50</a> at Sat Oct 31 12:34:59 UTC 2026.</small>
+    </p>
+   </footer>
+  </div>
+  <script src="_js/jquery.min.js?v=11.0.12" type="text/javascript"></script>
+  <script src="_js/d3.min.js?v=11.0.12" type="text/javascript"></script>
+  <script src="_js/nv.d3.min.js?v=11.0.12" type="text/javascript"></script>
+  <script type="text/javascript">
+$(document).ready(function() {
+  nv.addGraph(function() {
+    var chart = nv.models.multiBarChart();
+    chart.tooltips(false)
+      .showControls(false)
+      .showLegend(false)
+      .reduceXTicks(false)
+      .staggerLabels(true)
+      .yAxis.tickFormat(d3.format('d'));
+
+    d3.select('#classCoverageDistribution svg')
+      .datum(getCoverageDistributionData([0,0,0,0,0,0,0,0,0,2,10,30], "Class Coverage"))
+      .transition().duration(500).call(chart);
+
+    nv.utils.windowResize(chart.update);
+
+    return chart;
+  });
+
+  nv.addGraph(function() {
+    var chart = nv.models.multiBarChart();
+    chart.tooltips(false)
+      .showControls(false)
+      .showLegend(false)
+      .reduceXTicks(false)
+      .staggerLabels(true)
+      .yAxis.tickFormat(d3.format('d'));
+
+    d3.select('#methodCoverageDistribution svg')
+      .datum(getCoverageDistributionData([3,0,0,1,0,0,5,1,1,3,6,286], "Method Coverage"))
+      .transition().duration(500).call(chart);
+
+    nv.utils.windowResize(chart.update);
+
+    return chart;
+  });
+
+  function getCoverageDistributionData(data, label) {
+    var labels = [
+      '0%',
+      '0-10%',
+      '10-20%',
+      '20-30%',
+      '30-40%',
+      '40-50%',
+      '50-60%',
+      '60-70%',
+      '70-80%',
+      '80-90%',
+      '90-100%',
+      '100%'
+    ];
+    var values = [];
+    $.each(labels, function(key) {
+      values.push({x: labels[key], y: data[key]});
+    });
+
+    return [
+      {
+        key: label,
+        values: values,
+        color: "#4572A7"
+      }
+    ];
+  }
+  nv.addGraph(function() {
+    var chart = nv.models.scatterChart()
+      .showDistX(true)
+      .showDistY(true)
+      .showLegend(false)
+      .forceX([0, 100]);
+    chart.tooltipContent(function(graph) {
+      return '<p>' + graph.point.class + '</p>';
+    });
+
+    chart.xAxis.axisLabel('Code Coverage (in percent)');
+    chart.yAxis.axisLabel('Cyclomatic Complexity');
+
+    d3.select('#classComplexity svg')
+      .datum(getComplexityData([[95.45454545454545,12,"<a href=\"Cache\/InMemoryOptionsCache.php.html#44\">Ndrstmr\\Icap\\Cache\\InMemoryOptionsCache<\/a>"],[100,7,"<a href=\"Cache\/OptionsCacheKey.php.html#40\">Ndrstmr\\Icap\\Cache\\OptionsCacheKey<\/a>"],[100,54,"<a href=\"Cache\/OptionsEntry.php.html#40\">Ndrstmr\\Icap\\Cache\\OptionsEntry<\/a>"],[100,10,"<a href=\"Cache\/Psr16OptionsCache.php.html#47\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache<\/a>"],[100,11,"<a href=\"Cache\/Psr6OptionsCache.php.html#47\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache<\/a>"],[88,29,"<a href=\"ChunkedBodyEncoder.php.html#44\">Ndrstmr\\Icap\\ChunkedBodyEncoder<\/a>"],[100,34,"<a href=\"CicapVerdict.php.html#53\">Ndrstmr\\Icap\\CicapVerdict<\/a>"],[100,41,"<a href=\"Config.php.html#34\">Ndrstmr\\Icap\\Config<\/a>"],[100,1,"<a href=\"DTO\/HttpRequest.php.html#33\">Ndrstmr\\Icap\\DTO\\HttpRequest<\/a>"],[100,1,"<a href=\"DTO\/HttpResponse.php.html#37\">Ndrstmr\\Icap\\DTO\\HttpResponse<\/a>"],[100,8,"<a href=\"DTO\/IcapRequest.php.html#35\">Ndrstmr\\Icap\\DTO\\IcapRequest<\/a>"],[100,2,"<a href=\"DTO\/IcapResponse.php.html#35\">Ndrstmr\\Icap\\DTO\\IcapResponse<\/a>"],[100,4,"<a href=\"DTO\/ScanResult.php.html#26\">Ndrstmr\\Icap\\DTO\\ScanResult<\/a>"],[100,8,"<a href=\"DefaultPreviewStrategy.php.html#38\">Ndrstmr\\Icap\\DefaultPreviewStrategy<\/a>"],[100,0,"<a href=\"Exception\/IcapClientException.php.html#27\">Ndrstmr\\Icap\\Exception\\IcapClientException<\/a>"],[100,0,"<a href=\"Exception\/IcapConnectionException.php.html#29\">Ndrstmr\\Icap\\Exception\\IcapConnectionException<\/a>"],[100,0,"<a href=\"Exception\/IcapMalformedResponseException.php.html#28\">Ndrstmr\\Icap\\Exception\\IcapMalformedResponseException<\/a>"],[100,0,"<a href=\"Exception\/IcapProtocolException.php.html#28\">Ndrstmr\\Icap\\Exception\\IcapProtocolException<\/a>"],[100,0,"<a href=\"Exception\/IcapServerException.php.html#27\">Ndrstmr\\Icap\\Exception\\IcapServerException<\/a>"],[100,0,"<a href=\"Exception\/IcapStorageException.php.html#27\">Ndrstmr\\Icap\\Exception\\IcapStorageException<\/a>"],[100,0,"<a href=\"Exception\/IcapTimeoutException.php.html#27\">Ndrstmr\\Icap\\Exception\\IcapTimeoutException<\/a>"],[100,21,"<a href=\"FileCalls.php.html#58\">Ndrstmr\\Icap\\FileCalls<\/a>"],[98.57142857142858,34,"<a href=\"HeaderFields.php.html#41\">Ndrstmr\\Icap\\HeaderFields<\/a>"],[97.9002624671916,100,"<a href=\"IcapClient.php.html#54\">Ndrstmr\\Icap\\IcapClient<\/a>"],[100,5,"<a href=\"IcapStatus.php.html#33\">Ndrstmr\\Icap\\IcapStatus<\/a>"],[100,17,"<a href=\"IcapUri.php.html#31\">Ndrstmr\\Icap\\IcapUri<\/a>"],[97.5,14,"<a href=\"LocalFile.php.html#40\">Ndrstmr\\Icap\\LocalFile<\/a>"],[100,28,"<a href=\"OperationDeadline.php.html#50\">Ndrstmr\\Icap\\OperationDeadline<\/a>"],[99.04761904761905,50,"<a href=\"RequestFormatter.php.html#58\">Ndrstmr\\Icap\\RequestFormatter<\/a>"],[99.14893617021276,126,"<a href=\"ResponseDecoder.php.html#71\">Ndrstmr\\Icap\\ResponseDecoder<\/a>"],[92.3076923076923,6,"<a href=\"ResponseParser.php.html#33\">Ndrstmr\\Icap\\ResponseParser<\/a>"],[100,31,"<a href=\"RetryingIcapClient.php.html#78\">Ndrstmr\\Icap\\RetryingIcapClient<\/a>"],[100,10,"<a href=\"SynchronousIcapClient.php.html#42\">Ndrstmr\\Icap\\SynchronousIcapClient<\/a>"],[98.25783972125436,122,"<a href=\"Transport\/AmpConnectionPool.php.html#73\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool<\/a>"],[99.10714285714286,34,"<a href=\"Transport\/AmpTransportSession.php.html#76\">Ndrstmr\\Icap\\Transport\\AmpTransportSession<\/a>"],[100,14,"<a href=\"Transport\/AsyncAmpTransport.php.html#72\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport<\/a>"],[100,4,"<a href=\"Transport\/NullConnectionPool.php.html#42\">Ndrstmr\\Icap\\Transport\\NullConnectionPool<\/a>"],[100,1,"<a href=\"Transport\/PoolSlot.php.html#32\">Ndrstmr\\Icap\\Transport\\PoolSlot<\/a>"],[100,4,"<a href=\"Transport\/PoolWaiter.php.html#38\">Ndrstmr\\Icap\\Transport\\PoolWaiter<\/a>"],[97.14285714285714,12,"<a href=\"Transport\/ResponseFrameReader.php.html#46\">Ndrstmr\\Icap\\Transport\\ResponseFrameReader<\/a>"],[100,12,"<a href=\"Transport\/SocketOpener.php.html#50\">Ndrstmr\\Icap\\Transport\\SocketOpener<\/a>"],[87.59689922480621,47,"<a href=\"Transport\/SynchronousStreamTransport.php.html#68\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport<\/a>"]], 'Class Complexity'))
+      .transition()
+      .duration(500)
+      .call(chart);
+
+    nv.utils.windowResize(chart.update);
+
+    return chart;
+  });
+
+  nv.addGraph(function() {
+    var chart = nv.models.scatterChart()
+      .showDistX(true)
+      .showDistY(true)
+      .showLegend(false)
+      .forceX([0, 100]);
+    chart.tooltipContent(function(graph) {
+      return '<p>' + graph.point.class + '</p>';
+    });
+
+    chart.xAxis.axisLabel('Code Coverage (in percent)');
+    chart.yAxis.axisLabel('Method Complexity');
+
+    d3.select('#methodComplexity svg')
+      .datum(getComplexityData([[100,2,"<a href=\"Cache\/InMemoryOptionsCache.php.html#59\">Ndrstmr\\Icap\\Cache\\InMemoryOptionsCache::__construct<\/a>"],[100,3,"<a href=\"Cache\/InMemoryOptionsCache.php.html#69\">Ndrstmr\\Icap\\Cache\\InMemoryOptionsCache::get<\/a>"],[100,6,"<a href=\"Cache\/InMemoryOptionsCache.php.html#85\">Ndrstmr\\Icap\\Cache\\InMemoryOptionsCache::set<\/a>"],[0,1,"<a href=\"Cache\/InMemoryOptionsCache.php.html#107\">Ndrstmr\\Icap\\Cache\\InMemoryOptionsCache::delete<\/a>"],[100,1,"<a href=\"Cache\/OptionsCacheKey.php.html#53\">Ndrstmr\\Icap\\Cache\\OptionsCacheKey::forService<\/a>"],[100,1,"<a href=\"Cache\/OptionsCacheKey.php.html#63\">Ndrstmr\\Icap\\Cache\\OptionsCacheKey::backend<\/a>"],[100,3,"<a href=\"Cache\/OptionsCacheKey.php.html#68\">Ndrstmr\\Icap\\Cache\\OptionsCacheKey::profile<\/a>"],[100,2,"<a href=\"Cache\/OptionsCacheKey.php.html#82\">Ndrstmr\\Icap\\Cache\\OptionsCacheKey::digest<\/a>"],[100,1,"<a href=\"Cache\/OptionsEntry.php.html#59\">Ndrstmr\\Icap\\Cache\\OptionsEntry::__construct<\/a>"],[100,2,"<a href=\"Cache\/OptionsEntry.php.html#71\">Ndrstmr\\Icap\\Cache\\OptionsEntry::from<\/a>"],[100,15,"<a href=\"Cache\/OptionsEntry.php.html#84\">Ndrstmr\\Icap\\Cache\\OptionsEntry::fromStored<\/a>"],[100,1,"<a href=\"Cache\/OptionsEntry.php.html#119\">Ndrstmr\\Icap\\Cache\\OptionsEntry::keeps<\/a>"],[100,4,"<a href=\"Cache\/OptionsEntry.php.html#130\">Ndrstmr\\Icap\\Cache\\OptionsEntry::ttl<\/a>"],[100,2,"<a href=\"Cache\/OptionsEntry.php.html#143\">Ndrstmr\\Icap\\Cache\\OptionsEntry::isLiveAt<\/a>"],[100,1,"<a href=\"Cache\/OptionsEntry.php.html#151\">Ndrstmr\\Icap\\Cache\\OptionsEntry::lifetime<\/a>"],[100,1,"<a href=\"Cache\/OptionsEntry.php.html#161\">Ndrstmr\\Icap\\Cache\\OptionsEntry::toArray<\/a>"],[100,5,"<a href=\"Cache\/OptionsEntry.php.html#177\">Ndrstmr\\Icap\\Cache\\OptionsEntry::lifetimeOf<\/a>"],[100,9,"<a href=\"Cache\/OptionsEntry.php.html#195\">Ndrstmr\\Icap\\Cache\\OptionsEntry::lifetimeOfFields<\/a>"],[100,1,"<a href=\"Cache\/OptionsEntry.php.html#221\">Ndrstmr\\Icap\\Cache\\OptionsEntry::distinct<\/a>"],[100,12,"<a href=\"Cache\/OptionsEntry.php.html#236\">Ndrstmr\\Icap\\Cache\\OptionsEntry::checkedFields<\/a>"],[100,1,"<a href=\"Cache\/Psr16OptionsCache.php.html#57\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache::__construct<\/a>"],[100,2,"<a href=\"Cache\/Psr16OptionsCache.php.html#65\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache::get<\/a>"],[100,3,"<a href=\"Cache\/Psr16OptionsCache.php.html#77\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache::set<\/a>"],[100,2,"<a href=\"Cache\/Psr16OptionsCache.php.html#92\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache::delete<\/a>"],[100,1,"<a href=\"Cache\/Psr16OptionsCache.php.html#102\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache::failed<\/a>"],[100,1,"<a href=\"Cache\/Psr16OptionsCache.php.html#107\">Ndrstmr\\Icap\\Cache\\Psr16OptionsCache::backendKey<\/a>"],[100,1,"<a href=\"Cache\/Psr6OptionsCache.php.html#57\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache::__construct<\/a>"],[100,3,"<a href=\"Cache\/Psr6OptionsCache.php.html#65\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache::get<\/a>"],[100,3,"<a href=\"Cache\/Psr6OptionsCache.php.html#82\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache::set<\/a>"],[100,2,"<a href=\"Cache\/Psr6OptionsCache.php.html#100\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache::delete<\/a>"],[100,1,"<a href=\"Cache\/Psr6OptionsCache.php.html#110\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache::failed<\/a>"],[100,1,"<a href=\"Cache\/Psr6OptionsCache.php.html#115\">Ndrstmr\\Icap\\Cache\\Psr6OptionsCache::backendKey<\/a>"],[80,10,"<a href=\"ChunkedBodyEncoder.php.html#58\">Ndrstmr\\Icap\\ChunkedBodyEncoder::encode<\/a>"],[57.14285714285714,4,"<a href=\"ChunkedBodyEncoder.php.html#112\">Ndrstmr\\Icap\\ChunkedBodyEncoder::encodeRemainderFromStream<\/a>"],[100,9,"<a href=\"ChunkedBodyEncoder.php.html#144\">Ndrstmr\\Icap\\ChunkedBodyEncoder::streamChunks<\/a>"],[100,6,"<a href=\"ChunkedBodyEncoder.php.html#188\">Ndrstmr\\Icap\\ChunkedBodyEncoder::readBlock<\/a>"],[100,1,"<a href=\"CicapVerdict.php.html#60\">Ndrstmr\\Icap\\CicapVerdict::__construct<\/a>"],[100,11,"<a href=\"CicapVerdict.php.html#73\">Ndrstmr\\Icap\\CicapVerdict::interpret<\/a>"],[100,2,"<a href=\"CicapVerdict.php.html#116\">Ndrstmr\\Icap\\CicapVerdict::assertContinuation<\/a>"],[100,9,"<a href=\"CicapVerdict.php.html#130\">Ndrstmr\\Icap\\CicapVerdict::threats<\/a>"],[100,1,"<a href=\"CicapVerdict.php.html#162\">Ndrstmr\\Icap\\CicapVerdict::isDiagnostic<\/a>"],[100,8,"<a href=\"CicapVerdict.php.html#175\">Ndrstmr\\Icap\\CicapVerdict::violations<\/a>"],[100,1,"<a href=\"CicapVerdict.php.html#198\">Ndrstmr\\Icap\\CicapVerdict::malformed<\/a>"],[100,1,"<a href=\"CicapVerdict.php.html#203\">Ndrstmr\\Icap\\CicapVerdict::contradiction<\/a>"],[100,18,"<a href=\"Config.php.html#84\">Ndrstmr\\Icap\\Config::__construct<\/a>"],[100,7,"<a href=\"Config.php.html#145\">Ndrstmr\\Icap\\Config::checkedHeaderNames<\/a>"],[100,1,"<a href=\"Config.php.html#165\">Ndrstmr\\Icap\\Config::getSocketTimeout<\/a>"],[100,1,"<a href=\"Config.php.html#170\">Ndrstmr\\Icap\\Config::getStreamTimeout<\/a>"],[100,1,"<a href=\"Config.php.html#178\">Ndrstmr\\Icap\\Config::getOperationTimeout<\/a>"],[100,1,"<a href=\"Config.php.html#186\">Ndrstmr\\Icap\\Config::getTlsHandshakeTimeout<\/a>"],[100,1,"<a href=\"Config.php.html#195\">Ndrstmr\\Icap\\Config::getResponseStartTimeout<\/a>"],[100,1,"<a href=\"Config.php.html#205\">Ndrstmr\\Icap\\Config::getVirusFoundHeader<\/a>"],[100,1,"<a href=\"Config.php.html#221\">Ndrstmr\\Icap\\Config::getVirusFoundHeaders<\/a>"],[100,1,"<a href=\"Config.php.html#226\">Ndrstmr\\Icap\\Config::withVirusFoundHeader<\/a>"],[100,1,"<a href=\"Config.php.html#236\">Ndrstmr\\Icap\\Config::withVirusFoundHeaders<\/a>"],[100,1,"<a href=\"Config.php.html#254\">Ndrstmr\\Icap\\Config::getTlsContext<\/a>"],[100,1,"<a href=\"Config.php.html#264\">Ndrstmr\\Icap\\Config::withTlsContext<\/a>"],[100,1,"<a href=\"Config.php.html#288\">Ndrstmr\\Icap\\Config::withTimeouts<\/a>"],[100,1,"<a href=\"Config.php.html#309\">Ndrstmr\\Icap\\Config::getMaxResponseSize<\/a>"],[100,1,"<a href=\"Config.php.html#314\">Ndrstmr\\Icap\\Config::getMaxHeaderCount<\/a>"],[100,1,"<a href=\"Config.php.html#319\">Ndrstmr\\Icap\\Config::getMaxHeaderLineLength<\/a>"],[100,1,"<a href=\"Config.php.html#330\">Ndrstmr\\Icap\\Config::withLimits<\/a>"],[100,1,"<a href=\"DTO\/HttpRequest.php.html#42\">Ndrstmr\\Icap\\DTO\\HttpRequest::__construct<\/a>"],[100,1,"<a href=\"DTO\/HttpResponse.php.html#47\">Ndrstmr\\Icap\\DTO\\HttpResponse::__construct<\/a>"],[100,1,"<a href=\"DTO\/IcapRequest.php.html#58\">Ndrstmr\\Icap\\DTO\\IcapRequest::__construct<\/a>"],[100,4,"<a href=\"DTO\/IcapRequest.php.html#81\">Ndrstmr\\Icap\\DTO\\IcapRequest::assertHeaderValueTypes<\/a>"],[100,2,"<a href=\"DTO\/IcapRequest.php.html#97\">Ndrstmr\\Icap\\DTO\\IcapRequest::isPartialPreview<\/a>"],[100,1,"<a href=\"DTO\/IcapRequest.php.html#106\">Ndrstmr\\Icap\\DTO\\IcapRequest::withHeader<\/a>"],[100,1,"<a href=\"DTO\/IcapResponse.php.html#47\">Ndrstmr\\Icap\\DTO\\IcapResponse::__construct<\/a>"],[100,1,"<a href=\"DTO\/IcapResponse.php.html#60\">Ndrstmr\\Icap\\DTO\\IcapResponse::withHeader<\/a>"],[100,1,"<a href=\"DTO\/ScanResult.php.html#28\">Ndrstmr\\Icap\\DTO\\ScanResult::__construct<\/a>"],[100,1,"<a href=\"DTO\/ScanResult.php.html#38\">Ndrstmr\\Icap\\DTO\\ScanResult::isInfected<\/a>"],[100,1,"<a href=\"DTO\/ScanResult.php.html#46\">Ndrstmr\\Icap\\DTO\\ScanResult::getVirusName<\/a>"],[100,1,"<a href=\"DTO\/ScanResult.php.html#54\">Ndrstmr\\Icap\\DTO\\ScanResult::getOriginalResponse<\/a>"],[100,1,"<a href=\"DefaultPreviewStrategy.php.html#50\">Ndrstmr\\Icap\\DefaultPreviewStrategy::__construct<\/a>"],[100,5,"<a href=\"DefaultPreviewStrategy.php.html#71\">Ndrstmr\\Icap\\DefaultPreviewStrategy::handlePreviewResponse<\/a>"],[100,2,"<a href=\"DefaultPreviewStrategy.php.html#95\">Ndrstmr\\Icap\\DefaultPreviewStrategy::classifyBodyResponse<\/a>"],[100,1,"<a href=\"FileCalls.php.html#80\">Ndrstmr\\Icap\\FileCalls::__construct<\/a>"],[100,2,"<a href=\"FileCalls.php.html#86\">Ndrstmr\\Icap\\FileCalls::current<\/a>"],[100,2,"<a href=\"FileCalls.php.html#102\">Ndrstmr\\Icap\\FileCalls::use<\/a>"],[100,4,"<a href=\"FileCalls.php.html#112\">Ndrstmr\\Icap\\FileCalls::open<\/a>"],[100,1,"<a href=\"FileCalls.php.html#141\">Ndrstmr\\Icap\\FileCalls::run<\/a>"],[100,1,"<a href=\"FileCalls.php.html#150\">Ndrstmr\\Icap\\FileCalls::close<\/a>"],[100,1,"<a href=\"FileCalls.php.html#159\">Ndrstmr\\Icap\\FileCalls::detach<\/a>"],[100,1,"<a href=\"FileCalls.php.html#171\">Ndrstmr\\Icap\\FileCalls::begin<\/a>"],[100,1,"<a href=\"FileCalls.php.html#193\">Ndrstmr\\Icap\\FileCalls::closing<\/a>"],[100,2,"<a href=\"FileCalls.php.html#218\">Ndrstmr\\Icap\\FileCalls::await<\/a>"],[100,3,"<a href=\"FileCalls.php.html#230\">Ndrstmr\\Icap\\FileCalls::take<\/a>"],[100,2,"<a href=\"FileCalls.php.html#257\">Ndrstmr\\Icap\\FileCalls::give<\/a>"],[95.65217391304348,10,"<a href=\"HeaderFields.php.html#62\">Ndrstmr\\Icap\\HeaderFields::parse<\/a>"],[100,3,"<a href=\"HeaderFields.php.html#113\">Ndrstmr\\Icap\\HeaderFields::first<\/a>"],[100,2,"<a href=\"HeaderFields.php.html#134\">Ndrstmr\\Icap\\HeaderFields::single<\/a>"],[100,4,"<a href=\"HeaderFields.php.html#153\">Ndrstmr\\Icap\\HeaderFields::hasToken<\/a>"],[100,8,"<a href=\"HeaderFields.php.html#178\">Ndrstmr\\Icap\\HeaderFields::validated<\/a>"],[100,1,"<a href=\"HeaderFields.php.html#215\">Ndrstmr\\Icap\\HeaderFields::without<\/a>"],[100,1,"<a href=\"HeaderFields.php.html#230\">Ndrstmr\\Icap\\HeaderFields::isToken<\/a>"],[100,1,"<a href=\"HeaderFields.php.html#241\">Ndrstmr\\Icap\\HeaderFields::isText<\/a>"],[100,4,"<a href=\"HeaderFields.php.html#252\">Ndrstmr\\Icap\\HeaderFields::values<\/a>"],[100,4,"<a href=\"IcapClient.php.html#66\">Ndrstmr\\Icap\\IcapClient::__construct<\/a>"],[100,1,"<a href=\"IcapClient.php.html#90\">Ndrstmr\\Icap\\IcapClient::forServer<\/a>"],[0,1,"<a href=\"IcapClient.php.html#105\">Ndrstmr\\Icap\\IcapClient::create<\/a>"],[100,1,"<a href=\"IcapClient.php.html#117\">Ndrstmr\\Icap\\IcapClient::parserFor<\/a>"],[100,2,"<a href=\"IcapClient.php.html#129\">Ndrstmr\\Icap\\IcapClient::request<\/a>"],[100,2,"<a href=\"IcapClient.php.html#144\">Ndrstmr\\Icap\\IcapClient::requestWith<\/a>"],[100,2,"<a href=\"IcapClient.php.html#186\">Ndrstmr\\Icap\\IcapClient::run<\/a>"],[100,2,"<a href=\"IcapClient.php.html#224\">Ndrstmr\\Icap\\IcapClient::executeRaw<\/a>"],[100,6,"<a href=\"IcapClient.php.html#239\">Ndrstmr\\Icap\\IcapClient::options<\/a>"],[100,1,"<a href=\"IcapClient.php.html#313\">Ndrstmr\\Icap\\IcapClient::scanFile<\/a>"],[100,1,"<a href=\"IcapClient.php.html#335\">Ndrstmr\\Icap\\IcapClient::scanFileDiscardingBody<\/a>"],[100,1,"<a href=\"IcapClient.php.html#353\">Ndrstmr\\Icap\\IcapClient::scanFileWith<\/a>"],[100,1,"<a href=\"IcapClient.php.html#427\">Ndrstmr\\Icap\\IcapClient::scanFileWithPreview<\/a>"],[100,2,"<a href=\"IcapClient.php.html#450\">Ndrstmr\\Icap\\IcapClient::scanFileWithPreviewDiscardingBody<\/a>"],[100,5,"<a href=\"IcapClient.php.html#473\">Ndrstmr\\Icap\\IcapClient::scanFileWithPreviewWith<\/a>"],[100,5,"<a href=\"IcapClient.php.html#524\">Ndrstmr\\Icap\\IcapClient::scanFileWithPreviewStrict<\/a>"],[100,3,"<a href=\"IcapClient.php.html#621\">Ndrstmr\\Icap\\IcapClient::scanFileWithPreviewLegacy<\/a>"],[100,8,"<a href=\"IcapClient.php.html#697\">Ndrstmr\\Icap\\IcapClient::previewResult<\/a>"],[100,3,"<a href=\"IcapClient.php.html#743\">Ndrstmr\\Icap\\IcapClient::assertVerifiedService<\/a>"],[100,2,"<a href=\"IcapClient.php.html#763\">Ndrstmr\\Icap\\IcapClient::wholeFileHeaders<\/a>"],[100,3,"<a href=\"IcapClient.php.html#778\">Ndrstmr\\Icap\\IcapClient::responseReader<\/a>"],[100,3,"<a href=\"IcapClient.php.html#797\">Ndrstmr\\Icap\\IcapClient::assertCanDiscard<\/a>"],[100,2,"<a href=\"IcapClient.php.html#808\">Ndrstmr\\Icap\\IcapClient::discardingTransport<\/a>"],[100,4,"<a href=\"IcapClient.php.html#833\">Ndrstmr\\Icap\\IcapClient::resolvePreviewSize<\/a>"],[100,5,"<a href=\"IcapClient.php.html#851\">Ndrstmr\\Icap\\IcapClient::cachedOptions<\/a>"],[100,2,"<a href=\"IcapClient.php.html#878\">Ndrstmr\\Icap\\IcapClient::boundedPreviewSize<\/a>"],[100,6,"<a href=\"IcapClient.php.html#901\">Ndrstmr\\Icap\\IcapClient::readPreview<\/a>"],[100,1,"<a href=\"IcapClient.php.html#936\">Ndrstmr\\Icap\\IcapClient::buildServiceUri<\/a>"],[100,1,"<a href=\"IcapClient.php.html#946\">Ndrstmr\\Icap\\IcapClient::optionsCacheKey<\/a>"],[100,2,"<a href=\"IcapClient.php.html#959\">Ndrstmr\\Icap\\IcapClient::logContext<\/a>"],[100,2,"<a href=\"IcapClient.php.html#975\">Ndrstmr\\Icap\\IcapClient::logFailure<\/a>"],[100,6,"<a href=\"IcapClient.php.html#998\">Ndrstmr\\Icap\\IcapClient::interpretResponse<\/a>"],[100,2,"<a href=\"IcapClient.php.html#1049\">Ndrstmr\\Icap\\IcapClient::assertOptionsStatus<\/a>"],[100,3,"<a href=\"IcapClient.php.html#1069\">Ndrstmr\\Icap\\IcapClient::assertSuccessfulStatus<\/a>"],[100,1,"<a href=\"IcapClient.php.html#1084\">Ndrstmr\\Icap\\IcapClient::extractVirusName<\/a>"],[100,1,"<a href=\"IcapClient.php.html#1098\">Ndrstmr\\Icap\\IcapClient::validateIcapHeaders<\/a>"],[100,3,"<a href=\"IcapClient.php.html#1114\">Ndrstmr\\Icap\\IcapClient::mergeHeaders<\/a>"],[100,5,"<a href=\"IcapStatus.php.html#39\">Ndrstmr\\Icap\\IcapStatus::failure<\/a>"],[100,2,"<a href=\"IcapUri.php.html#57\">Ndrstmr\\Icap\\IcapUri::forService<\/a>"],[100,2,"<a href=\"IcapUri.php.html#72\">Ndrstmr\\Icap\\IcapUri::assertService<\/a>"],[100,1,"<a href=\"IcapUri.php.html#91\">Ndrstmr\\Icap\\IcapUri::serviceOf<\/a>"],[100,1,"<a href=\"IcapUri.php.html#103\">Ndrstmr\\Icap\\IcapUri::authority<\/a>"],[100,3,"<a href=\"IcapUri.php.html#113\">Ndrstmr\\Icap\\IcapUri::parts<\/a>"],[100,1,"<a href=\"IcapUri.php.html#131\">Ndrstmr\\Icap\\IcapUri::tcp<\/a>"],[100,4,"<a href=\"IcapUri.php.html#146\">Ndrstmr\\Icap\\IcapUri::host<\/a>"],[100,3,"<a href=\"IcapUri.php.html#162\">Ndrstmr\\Icap\\IcapUri::isHost<\/a>"],[100,1,"<a href=\"LocalFile.php.html#48\">Ndrstmr\\Icap\\LocalFile::__construct<\/a>"],[93.75,4,"<a href=\"LocalFile.php.html#62\">Ndrstmr\\Icap\\LocalFile::open<\/a>"],[100,2,"<a href=\"LocalFile.php.html#100\">Ndrstmr\\Icap\\LocalFile::read<\/a>"],[100,1,"<a href=\"LocalFile.php.html#121\">Ndrstmr\\Icap\\LocalFile::rewind<\/a>"],[100,2,"<a href=\"LocalFile.php.html#135\">Ndrstmr\\Icap\\LocalFile::assertRead<\/a>"],[100,2,"<a href=\"LocalFile.php.html#149\">Ndrstmr\\Icap\\LocalFile::close<\/a>"],[100,2,"<a href=\"LocalFile.php.html#163\">Ndrstmr\\Icap\\LocalFile::discard<\/a>"],[100,1,"<a href=\"OperationDeadline.php.html#63\">Ndrstmr\\Icap\\OperationDeadline::__construct<\/a>"],[100,2,"<a href=\"OperationDeadline.php.html#72\">Ndrstmr\\Icap\\OperationDeadline::begin<\/a>"],[100,1,"<a href=\"OperationDeadline.php.html#82\">Ndrstmr\\Icap\\OperationDeadline::remaining<\/a>"],[100,1,"<a href=\"OperationDeadline.php.html#90\">Ndrstmr\\Icap\\OperationDeadline::hasEnded<\/a>"],[100,2,"<a href=\"OperationDeadline.php.html#101\">Ndrstmr\\Icap\\OperationDeadline::throwIfCallerRequested<\/a>"],[100,2,"<a href=\"OperationDeadline.php.html#121\">Ndrstmr\\Icap\\OperationDeadline::checkpoint<\/a>"],[100,4,"<a href=\"OperationDeadline.php.html#137\">Ndrstmr\\Icap\\OperationDeadline::outcome<\/a>"],[100,3,"<a href=\"OperationDeadline.php.html#156\">Ndrstmr\\Icap\\OperationDeadline::arm<\/a>"],[100,5,"<a href=\"OperationDeadline.php.html#176\">Ndrstmr\\Icap\\OperationDeadline::close<\/a>"],[100,1,"<a href=\"OperationDeadline.php.html#193\">Ndrstmr\\Icap\\OperationDeadline::subscribe<\/a>"],[100,1,"<a href=\"OperationDeadline.php.html#203\">Ndrstmr\\Icap\\OperationDeadline::unsubscribe<\/a>"],[100,2,"<a href=\"OperationDeadline.php.html#209\">Ndrstmr\\Icap\\OperationDeadline::isRequested<\/a>"],[100,2,"<a href=\"OperationDeadline.php.html#215\">Ndrstmr\\Icap\\OperationDeadline::throwIfRequested<\/a>"],[100,1,"<a href=\"OperationDeadline.php.html#228\">Ndrstmr\\Icap\\OperationDeadline::timeout<\/a>"],[100,5,"<a href=\"RequestFormatter.php.html#64\">Ndrstmr\\Icap\\RequestFormatter::format<\/a>"],[100,4,"<a href=\"RequestFormatter.php.html#110\">Ndrstmr\\Icap\\RequestFormatter::emit<\/a>"],[100,3,"<a href=\"RequestFormatter.php.html#135\">Ndrstmr\\Icap\\RequestFormatter::resolveBodySource<\/a>"],[100,5,"<a href=\"RequestFormatter.php.html#148\">Ndrstmr\\Icap\\RequestFormatter::bodyMessage<\/a>"],[90.9090909090909,5,"<a href=\"RequestFormatter.php.html#167\">Ndrstmr\\Icap\\RequestFormatter::announcedLength<\/a>"],[100,4,"<a href=\"RequestFormatter.php.html#195\">Ndrstmr\\Icap\\RequestFormatter::isEmptyPreview<\/a>"],[100,4,"<a href=\"RequestFormatter.php.html#209\">Ndrstmr\\Icap\\RequestFormatter::bodyCarrier<\/a>"],[100,4,"<a href=\"RequestFormatter.php.html#218\">Ndrstmr\\Icap\\RequestFormatter::buildEncapsulatedHeader<\/a>"],[100,2,"<a href=\"RequestFormatter.php.html#247\">Ndrstmr\\Icap\\RequestFormatter::renderIcapHead<\/a>"],[100,4,"<a href=\"RequestFormatter.php.html#273\">Ndrstmr\\Icap\\RequestFormatter::renderHttpRequestHeaders<\/a>"],[100,5,"<a href=\"RequestFormatter.php.html#288\">Ndrstmr\\Icap\\RequestFormatter::renderHttpResponseHeaders<\/a>"],[100,3,"<a href=\"RequestFormatter.php.html#307\">Ndrstmr\\Icap\\RequestFormatter::renderFields<\/a>"],[100,1,"<a href=\"RequestFormatter.php.html#322\">Ndrstmr\\Icap\\RequestFormatter::isHttpVersion<\/a>"],[100,1,"<a href=\"RequestFormatter.php.html#337\">Ndrstmr\\Icap\\RequestFormatter::chunkBody<\/a>"],[75,6,"<a href=\"ResponseDecoder.php.html#131\">Ndrstmr\\Icap\\ResponseDecoder::__construct<\/a>"],[100,4,"<a href=\"ResponseDecoder.php.html#152\">Ndrstmr\\Icap\\ResponseDecoder::feed<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#170\">Ndrstmr\\Icap\\ResponseDecoder::isComplete<\/a>"],[100,2,"<a href=\"ResponseDecoder.php.html#178\">Ndrstmr\\Icap\\ResponseDecoder::frame<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#192\">Ndrstmr\\Icap\\ResponseDecoder::remainder<\/a>"],[100,3,"<a href=\"ResponseDecoder.php.html#203\">Ndrstmr\\Icap\\ResponseDecoder::response<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#220\">Ndrstmr\\Icap\\ResponseDecoder::workedBytes<\/a>"],[100,9,"<a href=\"ResponseDecoder.php.html#234\">Ndrstmr\\Icap\\ResponseDecoder::admits<\/a>"],[100,2,"<a href=\"ResponseDecoder.php.html#266\">Ndrstmr\\Icap\\ResponseDecoder::assertComplete<\/a>"],[91.66666666666666,9,"<a href=\"ResponseDecoder.php.html#273\">Ndrstmr\\Icap\\ResponseDecoder::advance<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#295\">Ndrstmr\\Icap\\ResponseDecoder::offset<\/a>"],[100,4,"<a href=\"ResponseDecoder.php.html#303\">Ndrstmr\\Icap\\ResponseDecoder::release<\/a>"],[100,5,"<a href=\"ResponseDecoder.php.html#316\">Ndrstmr\\Icap\\ResponseDecoder::readHead<\/a>"],[100,8,"<a href=\"ResponseDecoder.php.html#344\">Ndrstmr\\Icap\\ResponseDecoder::endOfHead<\/a>"],[100,16,"<a href=\"ResponseDecoder.php.html#379\">Ndrstmr\\Icap\\ResponseDecoder::layout<\/a>"],[100,9,"<a href=\"ResponseDecoder.php.html#425\">Ndrstmr\\Icap\\ResponseDecoder::readSection<\/a>"],[100,4,"<a href=\"ResponseDecoder.php.html#465\">Ndrstmr\\Icap\\ResponseDecoder::readSize<\/a>"],[100,5,"<a href=\"ResponseDecoder.php.html#488\">Ndrstmr\\Icap\\ResponseDecoder::readData<\/a>"],[100,5,"<a href=\"ResponseDecoder.php.html#510\">Ndrstmr\\Icap\\ResponseDecoder::readDataEnd<\/a>"],[100,5,"<a href=\"ResponseDecoder.php.html#530\">Ndrstmr\\Icap\\ResponseDecoder::readTrailer<\/a>"],[100,6,"<a href=\"ResponseDecoder.php.html#557\">Ndrstmr\\Icap\\ResponseDecoder::line<\/a>"],[100,2,"<a href=\"ResponseDecoder.php.html#591\">Ndrstmr\\Icap\\ResponseDecoder::complete<\/a>"],[100,3,"<a href=\"ResponseDecoder.php.html#603\">Ndrstmr\\Icap\\ResponseDecoder::statusOf<\/a>"],[100,2,"<a href=\"ResponseDecoder.php.html#613\">Ndrstmr\\Icap\\ResponseDecoder::isStartLine<\/a>"],[100,2,"<a href=\"ResponseDecoder.php.html#625\">Ndrstmr\\Icap\\ResponseDecoder::isBodyless<\/a>"],[100,3,"<a href=\"ResponseDecoder.php.html#633\">Ndrstmr\\Icap\\ResponseDecoder::needsLayout<\/a>"],[100,4,"<a href=\"ResponseDecoder.php.html#644\">Ndrstmr\\Icap\\ResponseDecoder::number<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#659\">Ndrstmr\\Icap\\ResponseDecoder::tooLarge<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#664\">Ndrstmr\\Icap\\ResponseDecoder::tooManyHeaders<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#669\">Ndrstmr\\Icap\\ResponseDecoder::lineTooLong<\/a>"],[100,1,"<a href=\"ResponseDecoder.php.html#674\">Ndrstmr\\Icap\\ResponseDecoder::invalidLayout<\/a>"],[50,3,"<a href=\"ResponseParser.php.html#38\">Ndrstmr\\Icap\\ResponseParser::__construct<\/a>"],[100,3,"<a href=\"ResponseParser.php.html#47\">Ndrstmr\\Icap\\ResponseParser::parse<\/a>"],[100,10,"<a href=\"RetryingIcapClient.php.html#98\">Ndrstmr\\Icap\\RetryingIcapClient::__construct<\/a>"],[100,1,"<a href=\"RetryingIcapClient.php.html#130\">Ndrstmr\\Icap\\RetryingIcapClient::request<\/a>"],[100,4,"<a href=\"RetryingIcapClient.php.html#143\">Ndrstmr\\Icap\\RetryingIcapClient::options<\/a>"],[100,1,"<a href=\"RetryingIcapClient.php.html#170\">Ndrstmr\\Icap\\RetryingIcapClient::scanFile<\/a>"],[100,1,"<a href=\"RetryingIcapClient.php.html#186\">Ndrstmr\\Icap\\RetryingIcapClient::scanFileWithPreview<\/a>"],[100,1,"<a href=\"RetryingIcapClient.php.html#205\">Ndrstmr\\Icap\\RetryingIcapClient::scanFileDiscardingBody<\/a>"],[100,1,"<a href=\"RetryingIcapClient.php.html#226\">Ndrstmr\\Icap\\RetryingIcapClient::scanFileWithPreviewDiscardingBody<\/a>"],[100,2,"<a href=\"RetryingIcapClient.php.html#243\">Ndrstmr\\Icap\\RetryingIcapClient::discardingInner<\/a>"],[100,1,"<a href=\"RetryingIcapClient.php.html#259\">Ndrstmr\\Icap\\RetryingIcapClient::once<\/a>"],[100,2,"<a href=\"RetryingIcapClient.php.html#276\">Ndrstmr\\Icap\\RetryingIcapClient::run<\/a>"],[100,3,"<a href=\"RetryingIcapClient.php.html#301\">Ndrstmr\\Icap\\RetryingIcapClient::pause<\/a>"],[100,2,"<a href=\"RetryingIcapClient.php.html#321\">Ndrstmr\\Icap\\RetryingIcapClient::pauseAfter<\/a>"],[100,2,"<a href=\"RetryingIcapClient.php.html#333\">Ndrstmr\\Icap\\RetryingIcapClient::backoffCap<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#49\">Ndrstmr\\Icap\\SynchronousIcapClient::__construct<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#57\">Ndrstmr\\Icap\\SynchronousIcapClient::create<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#70\">Ndrstmr\\Icap\\SynchronousIcapClient::request<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#75\">Ndrstmr\\Icap\\SynchronousIcapClient::options<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#84\">Ndrstmr\\Icap\\SynchronousIcapClient::scanFile<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#99\">Ndrstmr\\Icap\\SynchronousIcapClient::scanFileDiscardingBody<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#115\">Ndrstmr\\Icap\\SynchronousIcapClient::scanFileWithPreviewDiscardingBody<\/a>"],[100,2,"<a href=\"SynchronousIcapClient.php.html#126\">Ndrstmr\\Icap\\SynchronousIcapClient::discardingClient<\/a>"],[100,1,"<a href=\"SynchronousIcapClient.php.html#137\">Ndrstmr\\Icap\\SynchronousIcapClient::scanFileWithPreview<\/a>"],[90.32258064516128,14,"<a href=\"Transport\/AmpConnectionPool.php.html#130\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::__construct<\/a>"],[100,1,"<a href=\"Transport\/AmpConnectionPool.php.html#185\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::__destruct<\/a>"],[100,6,"<a href=\"Transport\/AmpConnectionPool.php.html#197\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::acquire<\/a>"],[100,7,"<a href=\"Transport\/AmpConnectionPool.php.html#224\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::release<\/a>"],[100,4,"<a href=\"Transport\/AmpConnectionPool.php.html#266\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::close<\/a>"],[100,8,"<a href=\"Transport\/AmpConnectionPool.php.html#311\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::tuneFromOptions<\/a>"],[100,3,"<a href=\"Transport\/AmpConnectionPool.php.html#351\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::advertised<\/a>"],[100,6,"<a href=\"Transport\/AmpConnectionPool.php.html#365\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::admit<\/a>"],[100,1,"<a href=\"Transport\/AmpConnectionPool.php.html#388\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::reserve<\/a>"],[100,5,"<a href=\"Transport\/AmpConnectionPool.php.html#400\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::makeRoom<\/a>"],[100,9,"<a href=\"Transport\/AmpConnectionPool.php.html#430\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::wait<\/a>"],[100,5,"<a href=\"Transport\/AmpConnectionPool.php.html#495\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::dispatch<\/a>"],[100,2,"<a href=\"Transport\/AmpConnectionPool.php.html#521\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::giveBack<\/a>"],[100,4,"<a href=\"Transport\/AmpConnectionPool.php.html#535\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::connect<\/a>"],[100,5,"<a href=\"Transport\/AmpConnectionPool.php.html#576\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::vet<\/a>"],[100,3,"<a href=\"Transport\/AmpConnectionPool.php.html#613\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::isQuiet<\/a>"],[100,6,"<a href=\"Transport\/AmpConnectionPool.php.html#633\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::sweep<\/a>"],[100,10,"<a href=\"Transport\/AmpConnectionPool.php.html#658\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::evictOldestIdle<\/a>"],[100,5,"<a href=\"Transport\/AmpConnectionPool.php.html#693\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::occupancy<\/a>"],[100,2,"<a href=\"Transport\/AmpConnectionPool.php.html#719\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::slotOf<\/a>"],[100,1,"<a href=\"Transport\/AmpConnectionPool.php.html#734\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::watch<\/a>"],[100,2,"<a href=\"Transport\/AmpConnectionPool.php.html#744\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::assertOpen<\/a>"],[81.81818181818183,4,"<a href=\"Transport\/AmpConnectionPool.php.html#751\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::startSweeper<\/a>"],[100,2,"<a href=\"Transport\/AmpConnectionPool.php.html#772\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::sweepIdle<\/a>"],[100,2,"<a href=\"Transport\/AmpConnectionPool.php.html#780\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::stopSweeper<\/a>"],[100,1,"<a href=\"Transport\/AmpConnectionPool.php.html#791\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::endpointCap<\/a>"],[100,1,"<a href=\"Transport\/AmpConnectionPool.php.html#803\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::endpointOf<\/a>"],[100,2,"<a href=\"Transport\/AmpConnectionPool.php.html#811\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::bucketOf<\/a>"],[100,1,"<a href=\"Transport\/AmpConnectionPool.php.html#829\">Ndrstmr\\Icap\\Transport\\AmpConnectionPool::tlsToken<\/a>"],[100,1,"<a href=\"Transport\/AmpTransportSession.php.html#82\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::__construct<\/a>"],[100,5,"<a href=\"Transport\/AmpTransportSession.php.html#98\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::write<\/a>"],[100,1,"<a href=\"Transport\/AmpTransportSession.php.html#139\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::readResponse<\/a>"],[100,1,"<a href=\"Transport\/AmpTransportSession.php.html#145\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::readResponseDiscardingBody<\/a>"],[100,7,"<a href=\"Transport\/AmpTransportSession.php.html#160\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::receive<\/a>"],[100,9,"<a href=\"Transport\/AmpTransportSession.php.html#233\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::inWindow<\/a>"],[100,1,"<a href=\"Transport\/AmpTransportSession.php.html#306\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::socketFailed<\/a>"],[100,5,"<a href=\"Transport\/AmpTransportSession.php.html#313\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::release<\/a>"],[100,2,"<a href=\"Transport\/AmpTransportSession.php.html#331\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::close<\/a>"],[50,2,"<a href=\"Transport\/AmpTransportSession.php.html#341\">Ndrstmr\\Icap\\Transport\\AmpTransportSession::assertActive<\/a>"],[100,1,"<a href=\"Transport\/AsyncAmpTransport.php.html#74\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport::__construct<\/a>"],[100,1,"<a href=\"Transport\/AsyncAmpTransport.php.html#83\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport::request<\/a>"],[100,1,"<a href=\"Transport\/AsyncAmpTransport.php.html#93\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport::requestDiscardingBody<\/a>"],[100,1,"<a href=\"Transport\/AsyncAmpTransport.php.html#109\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport::exchange<\/a>"],[100,8,"<a href=\"Transport\/AsyncAmpTransport.php.html#131\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport::openSession<\/a>"],[100,2,"<a href=\"Transport\/AsyncAmpTransport.php.html#205\">Ndrstmr\\Icap\\Transport\\AsyncAmpTransport::acquireSocket<\/a>"],[100,1,"<a href=\"Transport\/NullConnectionPool.php.html#50\">Ndrstmr\\Icap\\Transport\\NullConnectionPool::__construct<\/a>"],[100,1,"<a href=\"Transport\/NullConnectionPool.php.html#55\">Ndrstmr\\Icap\\Transport\\NullConnectionPool::acquire<\/a>"],[100,1,"<a href=\"Transport\/NullConnectionPool.php.html#61\">Ndrstmr\\Icap\\Transport\\NullConnectionPool::release<\/a>"],[100,1,"<a href=\"Transport\/NullConnectionPool.php.html#67\">Ndrstmr\\Icap\\Transport\\NullConnectionPool::close<\/a>"],[100,1,"<a href=\"Transport\/PoolSlot.php.html#36\">Ndrstmr\\Icap\\Transport\\PoolSlot::__construct<\/a>"],[100,1,"<a href=\"Transport\/PoolWaiter.php.html#45\">Ndrstmr\\Icap\\Transport\\PoolWaiter::__construct<\/a>"],[100,2,"<a href=\"Transport\/PoolWaiter.php.html#56\">Ndrstmr\\Icap\\Transport\\PoolWaiter::wake<\/a>"],[100,1,"<a href=\"Transport\/PoolWaiter.php.html#63\">Ndrstmr\\Icap\\Transport\\PoolWaiter::await<\/a>"],[50,4,"<a href=\"Transport\/ResponseFrameReader.php.html#50\">Ndrstmr\\Icap\\Transport\\ResponseFrameReader::__construct<\/a>"],[100,1,"<a href=\"Transport\/ResponseFrameReader.php.html#73\">Ndrstmr\\Icap\\Transport\\ResponseFrameReader::readFrom<\/a>"],[100,2,"<a href=\"Transport\/ResponseFrameReader.php.html#103\">Ndrstmr\\Icap\\Transport\\ResponseFrameReader::readDiscardingBody<\/a>"],[100,4,"<a href=\"Transport\/ResponseFrameReader.php.html#126\">Ndrstmr\\Icap\\Transport\\ResponseFrameReader::readInto<\/a>"],[100,1,"<a href=\"Transport\/ResponseFrameReader.php.html#153\">Ndrstmr\\Icap\\Transport\\ResponseFrameReader::hasPendingBytes<\/a>"],[100,2,"<a href=\"Transport\/SocketOpener.php.html#57\">Ndrstmr\\Icap\\Transport\\SocketOpener::open<\/a>"],[100,4,"<a href=\"Transport\/SocketOpener.php.html#66\">Ndrstmr\\Icap\\Transport\\SocketOpener::connect<\/a>"],[100,6,"<a href=\"Transport\/SocketOpener.php.html#91\">Ndrstmr\\Icap\\Transport\\SocketOpener::handshake<\/a>"],[100,1,"<a href=\"Transport\/SynchronousStreamTransport.php.html#79\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::request<\/a>"],[0,1,"<a href=\"Transport\/SynchronousStreamTransport.php.html#89\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::requestDiscardingBody<\/a>"],[94.44444444444444,10,"<a href=\"Transport\/SynchronousStreamTransport.php.html#105\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::exchange<\/a>"],[100,2,"<a href=\"Transport\/SynchronousStreamTransport.php.html#204\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::connectTimeout<\/a>"],[50,2,"<a href=\"Transport\/SynchronousStreamTransport.php.html#215\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::look<\/a>"],[100,4,"<a href=\"Transport\/SynchronousStreamTransport.php.html#234\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::splitTimeout<\/a>"],[25,3,"<a href=\"Transport\/SynchronousStreamTransport.php.html#249\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::setBlocking<\/a>"],[100,7,"<a href=\"Transport\/SynchronousStreamTransport.php.html#267\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::writeAll<\/a>"],[66.66666666666666,4,"<a href=\"Transport\/SynchronousStreamTransport.php.html#312\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::awaitWritable<\/a>"],[86.36363636363636,12,"<a href=\"Transport\/SynchronousStreamTransport.php.html#346\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::readChunk<\/a>"],[100,1,"<a href=\"Transport\/SynchronousStreamTransport.php.html#388\">Ndrstmr\\Icap\\Transport\\SynchronousStreamTransport::timeout<\/a>"]], 'Method Complexity'))
+      .transition()
+      .duration(500)
+      .call(chart);
+
+    nv.utils.windowResize(chart.update);
+
+    return chart;
+  });
+
+  function getComplexityData(data, label) {
+    var values = [];
+    $.each(data, function(key) {
+      var value = Math.round(data[key][0]*100) / 100;
+      values.push({
+        x: value,
+        y: data[key][1],
+        class: data[key][2],
+        size: 0.05,
+        shape: 'diamond'
+      });
+    });
+
+    return [
+      {
+        key: label,
+        values: values,
+        color: "#4572A7"
+      }
+    ];
+  }
+});
+  </script>
+ </body>
+</html>

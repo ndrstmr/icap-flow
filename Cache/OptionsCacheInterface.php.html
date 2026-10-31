@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <meta charset="UTF-8">
+  <title>Code Coverage for /home/runner/work/icap-flow/icap-flow/src/Cache/OptionsCacheInterface.php</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="../_css/bootstrap.min.css?v=11.0.12" rel="stylesheet" type="text/css">
+  <link href="../_css/octicons.css?v=11.0.12" rel="stylesheet" type="text/css">
+  <link href="../_css/style.css?v=11.0.12" rel="stylesheet" type="text/css">
+  <link href="../_css/custom.css" rel="stylesheet" type="text/css">
+ </head>
+ <body>
+  <header>
+   <div class="container-fluid">
+    <div class="row">
+     <div class="col-md-12">
+      <nav aria-label="breadcrumb">
+       <ol class="breadcrumb">
+         <li class="breadcrumb-item"><a href="../index.html">/home/runner/work/icap-flow/icap-flow/src</a></li>
+         <li class="breadcrumb-item"><a href="index.html">Cache</a></li>
+         <li class="breadcrumb-item active">OptionsCacheInterface.php</li>
+
+       </ol>
+      </nav>
+     </div>
+    </div>
+   </div>
+  </header>
+  <div class="container-fluid">
+   <div class="table-responsive">
+    <table class="table table-bordered">
+     <thead>
+      <tr>
+       <td>&nbsp;</td>
+       <td colspan="10"><div align="center"><strong>Code Coverage</strong></div></td>
+      </tr>
+      <tr>
+       <td>&nbsp;</td>
+       <td colspan="3"><div align="center"><strong>Lines</strong></div></td>
+       <td colspan="4"><div align="center"><strong>Functions and Methods</strong></div></td>
+       <td colspan="3"><div align="center"><strong>Classes and Traits</strong></div></td>
+      </tr>
+     </thead>
+     <tbody>
+      <tr>
+       <td class="">Total</td>
+       <td class=" big"></td>
+       <td class=" small"><div align="right">n/a</div></td>
+       <td class=" small"><div align="right">0&nbsp;/&nbsp;0</div></td>
+       <td class=" big"></td>
+       <td class=" small"><div align="right">n/a</div></td>
+       <td class=" small"><div align="right">0&nbsp;/&nbsp;0</div></td>
+       <td class=" small"><abbr title="Change Risk Anti-Patterns (CRAP) Index">CRAP</abbr></td>
+       <td class=" big"></td>
+       <td class=" small"><div align="right">n/a</div></td>
+       <td class=" small"><div align="right">0&nbsp;/&nbsp;0</div></td>
+      </tr>
+
+
+     </tbody>
+    </table>
+   </div>
+<table id="code" class="table table-borderless table-condensed">
+<tbody>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="1" href="#1">1</a></td><td class="col-11 codeLine"><span class="default">&lt;?php</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="2" href="#2">2</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="3" href="#3">3</a></td><td class="col-11 codeLine"><span class="comment">/**</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="4" href="#4">4</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;SPDX-License-Identifier:&nbsp;EUPL-1.2</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="5" href="#5">5</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="6" href="#6">6</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;This&nbsp;file&nbsp;is&nbsp;part&nbsp;of&nbsp;icap-flow.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="7" href="#7">7</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="8" href="#8">8</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;Licensed&nbsp;under&nbsp;the&nbsp;EUPL,&nbsp;Version&nbsp;1.2&nbsp;only&nbsp;(the&nbsp;&quot;Licence&quot;);</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="9" href="#9">9</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;you&nbsp;may&nbsp;not&nbsp;use&nbsp;this&nbsp;work&nbsp;except&nbsp;in&nbsp;compliance&nbsp;with&nbsp;the&nbsp;Licence.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="10" href="#10">10</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;You&nbsp;may&nbsp;obtain&nbsp;a&nbsp;copy&nbsp;of&nbsp;the&nbsp;Licence&nbsp;at:</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="11" href="#11">11</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="12" href="#12">12</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="13" href="#13">13</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="14" href="#14">14</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;Unless&nbsp;required&nbsp;by&nbsp;applicable&nbsp;law&nbsp;or&nbsp;agreed&nbsp;to&nbsp;in&nbsp;writing,&nbsp;software</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="15" href="#15">15</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;distributed&nbsp;under&nbsp;the&nbsp;Licence&nbsp;is&nbsp;distributed&nbsp;on&nbsp;an&nbsp;&quot;AS&nbsp;IS&quot;&nbsp;basis,</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="16" href="#16">16</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;WITHOUT&nbsp;WARRANTIES&nbsp;OR&nbsp;CONDITIONS&nbsp;OF&nbsp;ANY&nbsp;KIND,&nbsp;either&nbsp;express&nbsp;or&nbsp;implied.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="17" href="#17">17</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*/</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="18" href="#18">18</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="19" href="#19">19</a></td><td class="col-11 codeLine"><span class="keyword">declare</span><span class="keyword">(</span><span class="default">strict_types</span><span class="keyword">=</span><span class="default">1</span><span class="keyword">)</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="20" href="#20">20</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="21" href="#21">21</a></td><td class="col-11 codeLine"><span class="keyword">namespace</span><span class="default">&nbsp;</span><span class="default">Ndrstmr\Icap\Cache</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="22" href="#22">22</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="23" href="#23">23</a></td><td class="col-11 codeLine"><span class="keyword">use</span><span class="default">&nbsp;</span><span class="default">Ndrstmr\Icap\DTO\IcapResponse</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="24" href="#24">24</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="25" href="#25">25</a></td><td class="col-11 codeLine"><span class="comment">/**</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="26" href="#26">26</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;Storage&nbsp;for&nbsp;cached&nbsp;ICAP&nbsp;OPTIONS&nbsp;responses&nbsp;(RFC&nbsp;3507&nbsp;§4.10.2).</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="27" href="#27">27</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="28" href="#28">28</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;The&nbsp;library&nbsp;ships&nbsp;a&nbsp;process-local&nbsp;implementation&nbsp;({@see&nbsp;InMemoryOptionsCache})&nbsp;and&nbsp;adapters&nbsp;for&nbsp;PSR-6&nbsp;and&nbsp;PSR-16</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="29" href="#29">29</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;({@see&nbsp;Psr6OptionsCache},&nbsp;{@see&nbsp;Psr16OptionsCache})&nbsp;for&nbsp;caches&nbsp;that&nbsp;processes&nbsp;share.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="30" href="#30">30</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="31" href="#31">31</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;The&nbsp;contract:</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="32" href="#32">32</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;-&nbsp;An&nbsp;entry&nbsp;is&nbsp;valid&nbsp;for&nbsp;the&nbsp;`$ttlSeconds`&nbsp;of&nbsp;{@see&nbsp;set()},&nbsp;counted&nbsp;from&nbsp;when&nbsp;it&nbsp;is&nbsp;stored,&nbsp;for&nbsp;at&nbsp;most&nbsp;the</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="33" href="#33">33</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;`Options-TTL`&nbsp;of&nbsp;the&nbsp;response&nbsp;if&nbsp;it&nbsp;has&nbsp;one,&nbsp;and&nbsp;for&nbsp;at&nbsp;most&nbsp;{@see&nbsp;MAX_TTL_SECONDS}.&nbsp;Reading&nbsp;never&nbsp;extends&nbsp;it;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="34" href="#34">34</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;{@see&nbsp;get()}&nbsp;returns&nbsp;null&nbsp;once&nbsp;it&nbsp;ended.&nbsp;A&nbsp;change&nbsp;of&nbsp;the&nbsp;service</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="35" href="#35">35</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;(its&nbsp;ISTag,&nbsp;`Preview`,&nbsp;`Allow`)&nbsp;shows&nbsp;when&nbsp;the&nbsp;entry&nbsp;ends&nbsp;at&nbsp;the&nbsp;latest,&nbsp;which&nbsp;is&nbsp;the&nbsp;only&nbsp;consistency&nbsp;promised:</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="36" href="#36">36</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;nothing&nbsp;invalidates&nbsp;an&nbsp;entry&nbsp;earlier,&nbsp;and&nbsp;processes&nbsp;that&nbsp;share&nbsp;a&nbsp;backend&nbsp;are&nbsp;not&nbsp;told.&nbsp;Writers&nbsp;of&nbsp;one&nbsp;key&nbsp;replace</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="37" href="#37">37</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;the&nbsp;entry&nbsp;as&nbsp;a&nbsp;whole;&nbsp;the&nbsp;last&nbsp;one&nbsp;wins.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="38" href="#38">38</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;-&nbsp;The&nbsp;client&nbsp;stores&nbsp;a&nbsp;response&nbsp;only&nbsp;if&nbsp;it&nbsp;has&nbsp;status&nbsp;200,&nbsp;fits&nbsp;a&nbsp;budget&nbsp;(64&nbsp;KiB&nbsp;of&nbsp;fields&nbsp;and&nbsp;body&nbsp;in&nbsp;at&nbsp;most&nbsp;100</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="39" href="#39">39</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;field&nbsp;values)&nbsp;and&nbsp;does&nbsp;not&nbsp;contradict&nbsp;itself&nbsp;(`Options-TTL`,&nbsp;`ISTag`,&nbsp;`Preview`).&nbsp;It&nbsp;uses&nbsp;what&nbsp;{@see&nbsp;get()}</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="40" href="#40">40</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;returns&nbsp;only&nbsp;if&nbsp;that&nbsp;passes&nbsp;the&nbsp;same&nbsp;check&nbsp;and&nbsp;the&nbsp;limits&nbsp;of&nbsp;the&nbsp;client&nbsp;(`maxResponseSize`,&nbsp;`maxHeaderCount`,</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="41" href="#41">41</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;`maxHeaderLineLength`)&nbsp;would&nbsp;have&nbsp;taken&nbsp;it&nbsp;from&nbsp;the&nbsp;server.&nbsp;An&nbsp;entry&nbsp;that&nbsp;is&nbsp;none,&nbsp;however&nbsp;a&nbsp;custom&nbsp;cache&nbsp;came</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="42" href="#42">42</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;by&nbsp;it,&nbsp;is&nbsp;a&nbsp;miss.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="43" href="#43">43</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;-&nbsp;The&nbsp;ISTag&nbsp;(RFC&nbsp;3507&nbsp;§4.7)&nbsp;belongs&nbsp;to&nbsp;the&nbsp;service&nbsp;that&nbsp;`$key`&nbsp;names.&nbsp;It&nbsp;never&nbsp;invalidates&nbsp;the&nbsp;entry&nbsp;of&nbsp;another&nbsp;key,</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="44" href="#44">44</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;and&nbsp;an&nbsp;implementation&nbsp;must&nbsp;not&nbsp;use&nbsp;it&nbsp;for&nbsp;that.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="45" href="#45">45</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;-&nbsp;The&nbsp;key&nbsp;names&nbsp;the&nbsp;endpoint,&nbsp;the&nbsp;service&nbsp;(path&nbsp;and&nbsp;query)&nbsp;and&nbsp;the&nbsp;TLS&nbsp;profile&nbsp;of&nbsp;the&nbsp;client,&nbsp;so&nbsp;that&nbsp;a&nbsp;plain&nbsp;and</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="46" href="#46">46</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;a&nbsp;TLS&nbsp;client,&nbsp;or&nbsp;clients&nbsp;with&nbsp;other&nbsp;TLS&nbsp;settings,&nbsp;do&nbsp;not&nbsp;share&nbsp;an&nbsp;entry.&nbsp;It&nbsp;does&nbsp;not&nbsp;know&nbsp;a&nbsp;tenant,&nbsp;a&nbsp;proxy&nbsp;or</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="47" href="#47">47</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;anything&nbsp;else&nbsp;your&nbsp;transport&nbsp;does:&nbsp;give&nbsp;each&nbsp;security&nbsp;domain&nbsp;its&nbsp;own&nbsp;cache,&nbsp;or&nbsp;its&nbsp;own&nbsp;prefix&nbsp;with&nbsp;the&nbsp;PSR</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="48" href="#48">48</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;adapters.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="49" href="#49">49</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;-&nbsp;How&nbsp;many&nbsp;entries&nbsp;a&nbsp;cache&nbsp;holds&nbsp;is&nbsp;the&nbsp;cache's&nbsp;to&nbsp;bound&nbsp;({@see&nbsp;InMemoryOptionsCache}&nbsp;does;&nbsp;the&nbsp;PSR&nbsp;adapters&nbsp;bound</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="50" href="#50">50</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;&nbsp;&nbsp;&nbsp;the&nbsp;lifetime&nbsp;and&nbsp;size&nbsp;of&nbsp;an&nbsp;entry,&nbsp;and&nbsp;leave&nbsp;the&nbsp;total&nbsp;to&nbsp;the&nbsp;backend).</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="51" href="#51">51</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="52" href="#52">52</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;A&nbsp;failure&nbsp;of&nbsp;the&nbsp;backend&nbsp;is&nbsp;reported&nbsp;as&nbsp;an&nbsp;{@see&nbsp;\Ndrstmr\Icap\Exception\IcapStorageException}&nbsp;with&nbsp;the&nbsp;cause&nbsp;as&nbsp;its</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="53" href="#53">53</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;previous&nbsp;exception,&nbsp;as&nbsp;the&nbsp;PSR&nbsp;adapters&nbsp;do;&nbsp;anything&nbsp;else&nbsp;passes&nbsp;unchanged.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="54" href="#54">54</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="55" href="#55">55</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;The&nbsp;client&nbsp;names&nbsp;an&nbsp;entry&nbsp;with&nbsp;a&nbsp;key&nbsp;of&nbsp;64&nbsp;hex&nbsp;digits&nbsp;({@see&nbsp;OptionsCacheKey::forService()}).&nbsp;Treat&nbsp;the&nbsp;key&nbsp;as</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="56" href="#56">56</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*&nbsp;opaque:&nbsp;it&nbsp;holds&nbsp;nothing&nbsp;a&nbsp;PSR-6&nbsp;or&nbsp;PSR-16&nbsp;backend,&nbsp;a&nbsp;file&nbsp;name&nbsp;or&nbsp;a&nbsp;Redis&nbsp;key&nbsp;space&nbsp;could&nbsp;refuse.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="57" href="#57">57</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;*/</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="58" href="#58">58</a></td><td class="col-11 codeLine"><span class="keyword">interface</span><span class="default">&nbsp;</span><span class="default">OptionsCacheInterface</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="59" href="#59">59</a></td><td class="col-11 codeLine"><span class="keyword">{</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="60" href="#60">60</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="comment">/**</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="61" href="#61">61</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;The&nbsp;longest&nbsp;time&nbsp;in&nbsp;seconds&nbsp;that&nbsp;an&nbsp;entry&nbsp;is&nbsp;valid,&nbsp;whatever&nbsp;the&nbsp;server&nbsp;says:&nbsp;its&nbsp;`Options-TTL`&nbsp;can&nbsp;only&nbsp;shorten</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="62" href="#62">62</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;it.&nbsp;An&nbsp;hour&nbsp;is&nbsp;the&nbsp;value&nbsp;of&nbsp;the&nbsp;example&nbsp;in&nbsp;RFC&nbsp;3507&nbsp;§4.10.2&nbsp;and&nbsp;the&nbsp;longest&nbsp;a&nbsp;changed&nbsp;service&nbsp;goes&nbsp;unnoticed.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="63" href="#63">63</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*/</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="64" href="#64">64</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="keyword">public</span><span class="default">&nbsp;</span><span class="keyword">const</span><span class="default">&nbsp;</span><span class="default">int</span><span class="default">&nbsp;</span><span class="default">MAX_TTL_SECONDS</span><span class="default">&nbsp;</span><span class="keyword">=</span><span class="default">&nbsp;</span><span class="default">3600</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="65" href="#65">65</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="66" href="#66">66</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="comment">/**</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="67" href="#67">67</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;Return&nbsp;the&nbsp;cached&nbsp;response&nbsp;for&nbsp;$key,&nbsp;or&nbsp;null&nbsp;on&nbsp;cache&nbsp;miss</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="68" href="#68">68</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;(entry&nbsp;absent&nbsp;or&nbsp;expired).</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="69" href="#69">69</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*/</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="70" href="#70">70</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="keyword">public</span><span class="default">&nbsp;</span><span class="keyword">function</span><span class="default">&nbsp;</span><span class="default">get</span><span class="keyword">(</span><span class="default">string</span><span class="default">&nbsp;</span><span class="default">$key</span><span class="keyword">)</span><span class="keyword">:</span><span class="default">&nbsp;</span><span class="keyword">?</span><span class="default">IcapResponse</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="71" href="#71">71</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="72" href="#72">72</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="comment">/**</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="73" href="#73">73</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;Store&nbsp;$response&nbsp;under&nbsp;$key&nbsp;for&nbsp;at&nbsp;most&nbsp;$ttlSeconds,&nbsp;and&nbsp;never&nbsp;for&nbsp;longer&nbsp;than&nbsp;its&nbsp;`Options-TTL`&nbsp;or</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="74" href="#74">74</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;{@see&nbsp;MAX_TTL_SECONDS}.&nbsp;A&nbsp;value&nbsp;&lt;=&nbsp;0&nbsp;means&nbsp;&quot;do&nbsp;not&nbsp;cache&quot;.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="75" href="#75">75</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="76" href="#76">76</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;$istag&nbsp;is&nbsp;the&nbsp;ISTag&nbsp;of&nbsp;the&nbsp;service&nbsp;$key&nbsp;names,&nbsp;if&nbsp;the&nbsp;response&nbsp;has&nbsp;one.&nbsp;It&nbsp;informs;&nbsp;it&nbsp;invalidates&nbsp;nothing.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="77" href="#77">77</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*/</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="78" href="#78">78</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="keyword">public</span><span class="default">&nbsp;</span><span class="keyword">function</span><span class="default">&nbsp;</span><span class="default">set</span><span class="keyword">(</span><span class="default">string</span><span class="default">&nbsp;</span><span class="default">$key</span><span class="keyword">,</span><span class="default">&nbsp;</span><span class="default">IcapResponse</span><span class="default">&nbsp;</span><span class="default">$response</span><span class="keyword">,</span><span class="default">&nbsp;</span><span class="default">int</span><span class="default">&nbsp;</span><span class="default">$ttlSeconds</span><span class="keyword">,</span><span class="default">&nbsp;</span><span class="keyword">?</span><span class="default">string</span><span class="default">&nbsp;</span><span class="default">$istag</span><span class="default">&nbsp;</span><span class="keyword">=</span><span class="default">&nbsp;</span><span class="default">null</span><span class="keyword">)</span><span class="keyword">:</span><span class="default">&nbsp;</span><span class="default">void</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="79" href="#79">79</a></td><td class="col-11 codeLine"></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="80" href="#80">80</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="comment">/**</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="81" href="#81">81</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*&nbsp;Remove&nbsp;the&nbsp;cached&nbsp;entry&nbsp;for&nbsp;$key.&nbsp;Idempotent.</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="82" href="#82">82</a></td><td class="col-11 codeLine"><span class="comment">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;*/</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="83" href="#83">83</a></td><td class="col-11 codeLine"><span class="default">&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="keyword">public</span><span class="default">&nbsp;</span><span class="keyword">function</span><span class="default">&nbsp;</span><span class="default">delete</span><span class="keyword">(</span><span class="default">string</span><span class="default">&nbsp;</span><span class="default">$key</span><span class="keyword">)</span><span class="keyword">:</span><span class="default">&nbsp;</span><span class="default">void</span><span class="keyword">;</span></td></tr>
+    <tr class=" d-flex"><td  class="col-1 text-end"><a id="84" href="#84">84</a></td><td class="col-11 codeLine"><span class="keyword">}</span></td></tr>
+
+</tbody>
+</table>
+
+
+   <footer>
+    <hr/>
+    <h4>Legend</h4>
+    <p><span class="legend covered-by-small-tests">Covered by small (and larger) tests</span><span class="legend covered-by-medium-tests">Covered by medium (and large) tests</span><span class="legend covered-by-large-tests">Covered by large tests (and tests of unknown size)</span><span class="legend not-covered">Not covered</span><span class="legend not-coverable">Not coverable</span></p>
+    <p>
+     <small>Generated by <a href="https://github.com/sebastianbergmann/php-code-coverage" target="_top">php-code-coverage 11.0.12</a> using <a href="https://www.php.net/" target="_top">PHP 8.5.12</a> and <a href="https://phpunit.de/">PHPUnit 11.5.50</a> at Sat Oct 31 12:34:59 UTC 2026.</small>
+    </p>
+    <a title="Back to the top" id="toplink" href="#">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="16" viewBox="0 0 12 16"><path fill-rule="evenodd" d="M12 11L6 5l-6 6h12z"/></svg>
+    </a>
+   </footer>
+  </div>
+  <script src="../_js/jquery.min.js?v=11.0.12" type="text/javascript"></script>
+  <script src="../_js/bootstrap.bundle.min.js?v=11.0.12" type="text/javascript"></script>
+  <script src="../_js/file.js?v=11.0.12" type="text/javascript"></script>
+ </body>
+</html>
