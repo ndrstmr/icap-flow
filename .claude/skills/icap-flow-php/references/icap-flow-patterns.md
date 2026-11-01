@@ -1,6 +1,6 @@
 # icap-flow-spezifische Invarianten
 
-Die verbindliche Fassung steht in [CLAUDE.md](../../../../CLAUDE.md) („Tragende Designregeln“); diese Referenz zeigt die Muster dazu. Wer sie aufweicht, bricht eine Audit-Erkenntnis (`docs/review/`) oder RFC 3507.
+Die verbindlichen Arbeitsregeln stehen in [AGENTS.md](../../../../AGENTS.md); diese Referenz beschreibt bestehende Muster.
 
 ## Fail-Secure-Statuscode-Auswertung
 

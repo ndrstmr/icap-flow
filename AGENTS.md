@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a PHP 8.4 Composer library for an async-ready ICAP client. Production code lives in `src/` under the `Ndrstmr\Icap\` PSR-4 namespace. Key areas are `src/DTO/`, `src/Exception/`, `src/Transport/`, and `src/Cache/`. Tests live in `tests/`; integration tests are isolated in `tests/Integration/`. Examples are in `examples/` and `examples/cookbook/`. Design notes, audits, and roadmap material are in `docs/`; treat review task lists as historical unless confirmed by `CHANGELOG.md` and Git tags. Current local tags include `v2.1.2`.
+This is a PHP 8.4 Composer library for an async-ready ICAP client. Production code lives in `src/` under the `Ndrstmr\Icap\` PSR-4 namespace. Key areas are `src/DTO/`, `src/Exception/`, `src/Transport/`, and `src/Cache/`. Tests live in `tests/`; integration tests are isolated in `tests/Integration/`. Examples are in `examples/` and `examples/cookbook/`. Design notes, audits, and roadmap material are in `docs/`; treat review task lists as historical unless confirmed by `CHANGELOG.md` and Git tags.
 
 ## Agent Worktrees
 
@@ -16,7 +16,9 @@ Before editing, verify `pwd`, `git rev-parse --show-toplevel`, `git worktree lis
 
 ## Engineering Standard
 
+- Communicate with the maintainer in German.
 - Follow the current authorised task and confirmed plan; historical roadmaps do not add work. Deliver the requested ICAP-client behaviour completely with the simplest robust design. The scan engine and application policy stay outside this library.
+- Read the relevant API documentation and RFC 3507 before changing ICAP protocol behavior.
 - Use clear, idiomatic modern PHP and the existing AMPHP/Revolt stack. Optimise for correctness, bounded resource use, performance and maintainability; preserve required security checks and public API contracts. Explicitly assess required API breaks against the authorised release scope.
 - Apply SOLID, separation of concerns, DRY, KISS and YAGNI together: cohesive responsibilities, extension through established contracts, substitutable implementations, narrow interfaces and dependency inversion at component boundaries. Simplicity must preserve sound design; extra layers alone do not establish compliance.
 - Add abstractions, configuration, dependencies and helpers only when they simplify a concrete requirement. Avoid speculative extensibility, parallel frameworks and automatic interface/DTO/exception layers.
@@ -48,10 +50,15 @@ The project uses Pest on PHPUnit 11. PHPUnit fails on risky tests, warnings, and
 Recent history uses Conventional Commit-style subjects such as `fix(v2.1): ...` and `docs(review): ...`. Keep subjects imperative, scoped when useful, and concise. Before opening a PR, run `composer test`, `composer stan`, and `composer cs-check`. PRs should describe behavior changes, link issues, mention integration-test needs, and update examples or docs for public API changes.
 
 Do not add AI attribution or AI co-author trailers without the maintainer's explicit authorization.
+Do not bypass Git hooks. Record user-visible changes in the `CHANGELOG.md` Unreleased section.
+
+Never approve, merge or enable auto-merge for a PR without the maintainer's explicit authorization for that specific action and PR. Each authorization is single-use. Authorization to commit, push or open a PR does not authorize approval or merge.
 
 ## Security & Configuration Tips
 
 Do not commit credentials, private ICAP endpoints, or generated coverage/build artifacts. Security-sensitive changes should review `SECURITY.md`, include negative-path tests, and preserve fail-secure handling for malformed responses, timeouts, parser limits, and streaming large files.
+
+Do not log payloads, personal data, hosts, service or file paths, raw protocol fields, exception messages or exception objects.
 
 ## Product Scope & Delivery
 
