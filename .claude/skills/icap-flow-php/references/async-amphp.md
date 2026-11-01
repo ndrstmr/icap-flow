@@ -1,6 +1,6 @@
 # Async — amphp v3 / Revolt — icap-flow
 
-icap-flow nutzt **amphp v3** (`amphp/socket: ^2.3`, `amphp/file` für Dateiquellen) und **Revolt EventLoop**. Symfony HttpClient kommt **nicht** zum Einsatz. Diese Datei erklärt die Patterns, die in `src/` aktiv sind; die verbindlichen Regeln stehen in [CLAUDE.md](../../../../CLAUDE.md).
+icap-flow nutzt **amphp v3** (`amphp/socket: ^2.3`, `amphp/file` für Dateiquellen) und **Revolt EventLoop**. Symfony HttpClient kommt **nicht** zum Einsatz. Diese Datei erklärt die Patterns, die in `src/` aktiv sind; die verbindlichen Regeln stehen in [AGENTS.md](../../../../AGENTS.md).
 
 ## Mental-Model
 
@@ -95,7 +95,7 @@ Opt-in über `new AsyncAmpTransport($pool)`; ohne Pool öffnet jeder Request ein
 
 ## Synchroner Pfad
 
-`SynchronousStreamTransport` nutzt `stream_socket_client` und blockt direkt. Jeder Chunk geht ganz hinaus oder der Aufruf wirft; ein abgelaufenes Stream-Timeout ist `IcapTimeoutException`, nie ein EOF. Der Request geht über einen nicht blockierenden Socket hinaus (`stream_select()`; bei `request()` mit Frist je Stillstand), das Lesen blockierend mit Stream-Timeout; ein laufender Wait ist durch den Cancel des Aufrufers nicht unterbrechbar (siehe CLAUDE.md). `SynchronousIcapClient` ist nur ein `await()`-Wrapper:
+`SynchronousStreamTransport` nutzt `stream_socket_client` und blockt direkt. Jeder Chunk geht ganz hinaus oder der Aufruf wirft; ein abgelaufenes Stream-Timeout ist `IcapTimeoutException`, nie ein EOF. Der Request geht über einen nicht blockierenden Socket hinaus (`stream_select()`; bei `request()` mit Frist je Stillstand), das Lesen blockierend mit Stream-Timeout; ein laufender Wait ist durch den Cancel des Aufrufers nicht unterbrechbar. `SynchronousIcapClient` ist nur ein `await()`-Wrapper:
 
 ```php
 public function scanFile(

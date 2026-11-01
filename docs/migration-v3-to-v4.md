@@ -1,7 +1,7 @@
 # Migrating from 3.0 to 4.0
 
-This guide describes the unreleased 4.0 changes on `main`. See the
-[`CHANGELOG.md`](../CHANGELOG.md#unreleased) for the complete list.
+This guide describes the changes in 4.0. See the
+[`CHANGELOG.md`](../CHANGELOG.md) for the complete list.
 
 ## Verify the service and fail closed
 

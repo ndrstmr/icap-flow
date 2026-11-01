@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Changes since 3.0.0, for the next major release, 4.0.0 (not released).
+## [4.0.0]
 
 ### Security
 - **Behaviour change:** Custom preview strategies no longer receive error or unexpected statuses; decisions
@@ -30,7 +30,7 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   with other control characters got through. `Host` and `Encapsulated` always
   come from the formatter and `Preview`/`Allow` from the preview flow: caller
   values for them are ignored in any spelling instead of replacing them or
-  going out twice, also in the full request after `100 Continue`. `scanFile()`
+  going out twice. `scanFile()`
   sends no preview and drops a caller `Preview` the same way; `Allow` and
   other extra headers pass (in the verified mode the helpers set `Allow: 204`,
   see M01). *(B04)*
@@ -75,11 +75,12 @@ Changes since 3.0.0, for the next major release, 4.0.0 (not released).
   of announcing `Content-Length: 0`, and send `ieof` only after the end of the
   file was observed at the length the handle reported. A file that grew or
   shrank behind that size now fails the scan before the final chunk, in the
-  preview, in the rest of a strict preview flow and in the whole body of
-  `scanFile()` and of the full request after a preview, instead of ending as a
-  complete body of another size with a clean result. The check lives in
-  `RequestFormatter`: a stream body whose message announces a single plain
-  `Content-Length` has to deliver exactly that many bytes, so it holds for a
+  preview, in the rest of a preview flow and in the whole body of
+  `scanFile()`, instead of ending as a complete body of another size with a
+  clean result. `RequestFormatter` checks full bodies and complete previews;
+  `ChunkedBodyEncoder` checks the preview continuation. A stream body whose
+  message announces a single plain `Content-Length` has to deliver exactly
+  that many bytes, so it holds for a
   stream passed to `request()` as well, and for a preview that ends in `ieof`;
   a preview that carries only the start of the body is exempt, since its
   `Content-Length` still describes the whole body, and a body without such a

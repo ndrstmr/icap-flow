@@ -65,7 +65,7 @@ Out of scope:
 
 ## Security-relevant defaults & guarantees
 
-This file describes `main`, the unreleased 4.0.0; the changes since 3.0.0 are listed under *Unreleased* in the [`CHANGELOG.md`](CHANGELOG.md).
+This file describes version 4.0; changes since 3.0.0 are listed in the [`CHANGELOG.md`](CHANGELOG.md).
 
 - **Fail-secure on protocol errors.** ICAP `100 Continue` outside a preview exchange raises `IcapProtocolException` — never a clean scan result.
 - **CRLF / NUL / control-character validation** on `$service` and on every user-supplied request header (name + value), enforced before any byte hits the socket.
