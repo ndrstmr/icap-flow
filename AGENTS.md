@@ -47,6 +47,8 @@ The project uses Pest on PHPUnit 11. PHPUnit fails on risky tests, warnings, and
 
 Recent history uses Conventional Commit-style subjects such as `fix(v2.1): ...` and `docs(review): ...`. Keep subjects imperative, scoped when useful, and concise. Before opening a PR, run `composer test`, `composer stan`, and `composer cs-check`. PRs should describe behavior changes, link issues, mention integration-test needs, and update examples or docs for public API changes.
 
+Do not add AI attribution or AI co-author trailers without the maintainer's explicit authorization.
+
 ## Security & Configuration Tips
 
 Do not commit credentials, private ICAP endpoints, or generated coverage/build artifacts. Security-sensitive changes should review `SECURITY.md`, include negative-path tests, and preserve fail-secure handling for malformed responses, timeouts, parser limits, and streaming large files.

@@ -55,7 +55,7 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 - Fail-Secure-Statuscode-Auswertung **ausschließlich** in `IcapClient::interpretResponse()`. Externe Aufrufer rufen `request()` / `scanFile*()`, niemals direkt `executeRaw()`.
 - Header- und URI-Eingaben prüfen, bevor irgendein Byte das Socket erreicht: URIs über `IcapUri` (`forService()`, `authority()`, `tcp()`), Header über `HeaderFields::validated()`. `RequestFormatter::format()` prüft jeden Request, bevor der erste Chunk entsteht.
 - Verwaltete Header in jeder Schreibweise aus Caller-Input entfernen (`HeaderFields::without()`): `Host`/`Encapsulated` setzt immer der Formatter, `Preview`/`Allow` der Preview-Flow über `mergeHeaders()`; `scanFile()` verwirft `Preview`, `Allow` geht dort mit (im verifizierten Modus setzt der Client `Allow: 204`).
-- BC: Die öffentliche API (Klassen, Interfaces, DTOs und Exceptions ohne `@internal`) folgt SemVer. `main` ist das unveröffentlichte 4.0.0 (`[Unreleased]` im CHANGELOG); ein BC-Break geht nur im freigegebenen Umfang dorthin und ist dort markiert.
+- BC: Die öffentliche API (Klassen, Interfaces, DTOs und Exceptions ohne `@internal`) folgt SemVer. Ein BC-Break gehört in die nächste Major-Version, geht nur im freigegebenen Umfang dorthin und ist im CHANGELOG markiert.
 
 ### DARF NICHT
 - `mixed` ohne `@var`/`@param`-Eingrenzung in PHPDoc.

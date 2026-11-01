@@ -26,23 +26,16 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, 
 
 ## Versions
 
-`v3.0.0`, the current release, is a small breaking release of the v2 API: `executeRaw()` is `protected` (nothing outside the `final` `IcapClient` reaches it), `options()` returns `Future<IcapResponse>`, `IcapResponseException` is gone ([migration](docs/migration-v2-to-v3.md)). `v2.0.0` made the wire format RFC 3507 compliant; v1 is deprecated ([migration](docs/migration-v1-to-v2.md)).
-
-This README, its examples included, describes `main`, the next major release 4.0.0, which is not released yet. See the [v3-to-v4 migration guide](docs/migration-v3-to-v4.md) and the *Unreleased* section of the [`CHANGELOG.md`](CHANGELOG.md).
+This README and its examples describe version 4.0. See the [v3-to-v4 migration guide](docs/migration-v3-to-v4.md) and the [`CHANGELOG.md`](CHANGELOG.md) for the changes from 3.0.0. For older releases, see the [v3.0.0 README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md) and the migration guides for [v2 to v3](docs/migration-v2-to-v3.md) and [v1 to v2](docs/migration-v1-to-v2.md).
 
 ## Installation
 
-**Release 3.0.0**, documented by its [README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md). It has no `CicapVerdict` and none of the later changes; the quickstarts below do not run on it.
-
 ```bash
-composer require ndrstmr/icap-flow:^3.0
+composer require ndrstmr/icap-flow:^4.0
 ```
 
-**Development: `main`, the unreleased 4.0.0**, which this README and its quickstarts describe. `dev-main` follows the branch and is not a release; `composer.lock` records the commit you got.
-
-```bash
-composer require ndrstmr/icap-flow:dev-main
-```
+If 4.0 is not yet available on Packagist, these examples need `ndrstmr/icap-flow:dev-main`.
+For version 3.0, use its [README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md).
 
 ## Quickstart — synchronous
 

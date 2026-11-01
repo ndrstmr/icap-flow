@@ -154,4 +154,4 @@ Klassen mit `@internal` gehören nicht dazu.
 | Public-Method entfernen | ❌ Breaking |
 | Return-Type spezialisieren | ❌ Breaking |
 
-Ein ❌-Item geht nur in eine Major-Version, derzeit das unveröffentlichte 4.0.0 (`[Unreleased]` im CHANGELOG, dort markiert), und nur mit ausdrücklicher Freigabe im Auftrag (AGENTS.md).
+Ein ❌-Item geht nur in eine Major-Version, ist im CHANGELOG markiert und braucht eine ausdrückliche Freigabe im Auftrag (AGENTS.md).
