@@ -25,9 +25,12 @@ below before opening an issue or submitting a pull request.
    ```
 3. Open a pull request against the `main` branch and reference any related issues.
 
-CI runs the unit and reference-service integration suites on PHP 8.4 and 8.5,
+CI runs the unit and reference-service integration suites on PHP 8.3, 8.4 and 8.5,
 plus mutation testing. It checks PHPUnit's verdict separately: Pest 3 can exit
-successfully even when tests are skipped, risky, incomplete or missing. See
+successfully even when tests are skipped, risky, incomplete or missing. On each
+version it first checks the syntax of `src/` and `examples/`, and after the suites
+it installs without development dependencies, checks their symbols and runs the
+quickstarts. See
 [`tests/Integration/README.md`](tests/Integration/README.md) for the service setup.
 
 ## Commit Convention
@@ -80,6 +83,7 @@ causing spurious CancelledException on slow but legitimate scans.
 ## Coding Standards
 
 - [PSR-12](https://www.php-fig.org/psr/psr-12/) enforced via `composer cs-fix` (php-cs-fixer).
-- PHP 8.4 minimum. Prefer `final` classes unless inheritance is needed. Use `#[\Override]` on interface implementations.
+- PHP 8.3 minimum, until its end of life on 31 December 2027. No syntax, functions, classes, constants, class members or parameters of later versions and no fiber switch during a destructor. Polyfills of the development tools can hide such a use from the tests and from PHPStan. [`.github/check-symbols.php`](.github/check-symbols.php) finds functions, classes and constants named directly in the code. A declaration counts only in its own file, and elsewhere only for a class Composer's autoloader finds in that file. The check evaluates neither a condition around a declaration nor a `require`, and it does not see names in strings, members and parameters of built-in classes, of which PHPStan reports only part, or a fiber switch during a destructor. Check those in review.
+- Prefer `final` classes unless inheritance is needed. Use `#[\Override]` on interface implementations.
 - PHPStan Level 9 + bleedingEdge — no baseline. Keep exceptions narrowly scoped and justified.
 - EUPL-1.2 license header required in every PHP file (applied automatically by cs-fix).

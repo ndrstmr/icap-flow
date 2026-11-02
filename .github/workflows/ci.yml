@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        php-version: ['8.4', '8.5']
+        php-version: ['8.3', '8.4', '8.5']
       fail-fast: false
     env:
       # The gigabyte tests in tests/ResponseStreamingTest.php run at full size.
@@ -57,6 +57,10 @@ jobs:
             echo "### Quality checks, PHP $(php -r 'echo PHP_VERSION;') on $ImageOS $ImageVersion"
             echo "- Commit \`$(git rev-parse HEAD)\`${PR_HEAD:+ (merge of pull request head \`$PR_HEAD\`)}; gigabyte tests at $ICAP_STREAM_MIB MiB"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check syntax on this PHP
+        # Before the tests: after a parse error they can wait for the time limit of the job instead of reporting it.
+        run: find src examples -name '*.php' -print0 | xargs -0 -n1 php -d display_errors=stderr -l > /dev/null
 
       - name: Install dependencies
         run: composer install --prefer-dist --no-progress --no-interaction
@@ -98,7 +102,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        php-version: ['8.4', '8.5']
+        php-version: ['8.3', '8.4', '8.5']
       fail-fast: false
 
     steps:
@@ -158,6 +162,23 @@ jobs:
       - name: Check the verdict of PHPUnit
         if: always()
         run: bash .github/phpunit-verdict.sh build/events.txt 'Integration suite'
+
+      - name: List the symbols of the code
+        # With the parser of the development dependencies, before they go.
+        run: php .github/list-symbols.php src examples > build/symbols.json
+
+      # From here on what a consumer installs. The tests above cannot show what it misses on this PHP: development tools
+      # bring polyfills, see .github/check-symbols.php.
+      - name: Install without development dependencies
+        run: composer install --no-dev --prefer-dist --no-progress --no-interaction
+
+      - name: Check symbols on this PHP
+        run: php .github/check-symbols.php build/symbols.json | sed 's/^/- /' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Scan with the quickstarts
+        run: |
+          php examples/01-sync-scan.php | grep Virus
+          php examples/02-async-scan.php | grep Virus
 
       - name: Dump service logs on failure
         if: failure()

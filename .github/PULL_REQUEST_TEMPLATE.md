@@ -44,7 +44,7 @@ welche Edge-Cases sie absichern, ob Mutation-Score betroffen ist.
 - [ ] `composer stan` — PHPStan Level 9 + bleedingEdge clean
 - [ ] `composer test` — Pest Unit-Suite grün
 - [ ] `composer test:integration` — gegen den gesunden Referenzdienst (falls relevant)
-- [ ] CI-Matrix (PHP 8.4 + 8.5)
+- [ ] CI-Matrix (PHP 8.3 + 8.4 + 8.5)
 
 ## Closes
 

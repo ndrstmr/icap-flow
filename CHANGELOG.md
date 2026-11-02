@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PHP 8.3 support (`php: ^8.3`), prepared on `main` for version 4.1 and not released yet: 4.0.0 requires PHP 8.4. From
+  4.1 on it lasts until the end of life of PHP 8.3 on 31 December 2027, and `composer require ndrstmr/icap-flow` on
+  PHP 8.3 no longer falls back to the deprecated 1.0.0. The client itself is unchanged.
+- CI runs the unit and integration suites on PHP 8.3 as well. On each PHP version it first checks the syntax of `src/`
+  and `examples/`, and after the suites an install without development dependencies, whose polyfills can hide missing
+  symbols from the tests and PHPStan: the functions, classes and constants named directly in those directories
+  (`.github/check-symbols.php`), and the quickstarts.
+
 ## [4.0.0]
 
 ### Security
