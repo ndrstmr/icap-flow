@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a PHP 8.4 Composer library for an async-ready ICAP client. Production code lives in `src/` under the `Ndrstmr\Icap\` PSR-4 namespace. Key areas are `src/DTO/`, `src/Exception/`, `src/Transport/`, and `src/Cache/`. Tests live in `tests/`; integration tests are isolated in `tests/Integration/`. Examples are in `examples/` and `examples/cookbook/`. Design notes, audits, and roadmap material are in `docs/`; treat review task lists as historical unless confirmed by `CHANGELOG.md` and Git tags.
+This is a PHP 8.3+ Composer library for an async-ready ICAP client. Production code lives in `src/` under the `Ndrstmr\Icap\` PSR-4 namespace. Key areas are `src/DTO/`, `src/Exception/`, `src/Transport/`, and `src/Cache/`. Tests live in `tests/`; integration tests are isolated in `tests/Integration/`. Examples are in `examples/` and `examples/cookbook/`. Design notes, audits, and roadmap material are in `docs/`; treat review task lists as historical unless confirmed by `CHANGELOG.md` and Git tags.
 
 ## Agent Worktrees
 
@@ -40,6 +40,8 @@ Before editing, verify `pwd`, `git rev-parse --show-toplevel`, `git worktree lis
 ## Coding Style & Naming Conventions
 
 Follow PSR-12 with `declare(strict_types=1);`, 4-space indentation, typed properties and parameters, and explicit return types where practical. Class names use `PascalCase`; methods and variables use `camelCase`; test files end in `Test.php`. Keep namespaces aligned with paths, for example `src/Transport/AmpConnectionPool.php` maps to `Ndrstmr\Icap\Transport\AmpConnectionPool`. New PHP files in `src/` and `tests/` must keep the EUPL-1.2 header enforced by php-cs-fixer.
+
+`src/` and `examples/` must run on PHP 8.3, the lowest supported version until its end of life on 31 December 2027: no syntax, functions, classes, constants, class members or parameters of later versions, and no fiber switch during a destructor, which throws before 8.4. Polyfills of the development tools can hide such a use from the tests and from PHPStan. CI checks the syntax and, in an install without them, the functions, classes and constants named directly in the code (`.github/check-symbols.php`); the limits are in `CONTRIBUTING.md`.
 
 ## Testing Guidelines
 

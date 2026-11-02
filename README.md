@@ -11,7 +11,7 @@
 
 # icap-flow
 
-An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+, focused on RFC 3507 correctness, fail-secure semantics and a small surface area that is comfortable to drop into a Symfony / Laravel / framework-less code base.
+An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.4+ (PHP 8.3+ from the upcoming version 4.1), focused on RFC 3507 correctness, fail-secure semantics and a small surface area that is comfortable to drop into a Symfony / Laravel / framework-less code base.
 
 > [!WARNING]
 > **AI-assisted origin & production-use disclaimer.** Large parts of this library — code, tests, docs and CI plumbing — were authored with substantial AI assistance and reviewed in independent audits ([`docs/review/`](docs/review/)). This client sends uploads to an ICAP service and interprets its response; it sits in the security-critical path of any application that uses it. **Do not deploy this in production without a deep, independent review and an integration-test bake-out against the ICAP server you actually use.** A non-exhaustive checklist:
@@ -34,7 +34,7 @@ This README and its examples describe version 4.0. See the [v3-to-v4 migration g
 composer require ndrstmr/icap-flow:^4.0
 ```
 
-If 4.0 is not yet available on Packagist, these examples need `ndrstmr/icap-flow:dev-main`.
+Version 4.0.0 requires PHP 8.4. Support for PHP 8.3 is prepared on `main` and not released yet; from version 4.1 on it lasts until the end of life of PHP 8.3 on 31 December 2027.
 For version 3.0, use its [README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md).
 
 ## Quickstart — synchronous
@@ -221,7 +221,7 @@ The `examples/` directory has runnable demos and a cookbook:
 
 ## Integration tests
 
-`docker compose up -d` brings up the reference service ([`mnemoshare/clamav-icap`](https://hub.docker.com/r/mnemoshare/clamav-icap), pinned by digest) on port 1344. The tests in `tests/Integration/` skip when `ICAP_HOST` is unset, so contributors without Docker get a green `composer test:integration`; a skipped test verifies nothing. CI runs them on PHP 8.4 and 8.5 for pull requests and pushes to `main` and `release/**`, nightly and on demand; there a skipped test fails the run. Variables and the service: [`tests/Integration/README.md`](tests/Integration/README.md).
+`docker compose up -d` brings up the reference service ([`mnemoshare/clamav-icap`](https://hub.docker.com/r/mnemoshare/clamav-icap), pinned by digest) on port 1344. The tests in `tests/Integration/` skip when `ICAP_HOST` is unset, so contributors without Docker get a green `composer test:integration`; a skipped test verifies nothing. CI runs them on PHP 8.3, 8.4 and 8.5 for pull requests and pushes to `main` and `release/**`, nightly and on demand; there a skipped test fails the run. Variables and the service: [`tests/Integration/README.md`](tests/Integration/README.md).
 
 ## Provenance & due diligence
 
@@ -238,7 +238,7 @@ composer cs-fix         # apply fixes
 composer audit          # composer + roave/security-advisories
 ```
 
-CI matrix: PHP 8.4 + 8.5. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the PR workflow.
+CI matrix: PHP 8.3, 8.4 and 8.5. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the PR workflow.
 
 ## Licence
 

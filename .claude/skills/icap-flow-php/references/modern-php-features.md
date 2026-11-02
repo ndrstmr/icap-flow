@@ -1,6 +1,6 @@
-# Modern PHP 8.4 / 8.5 — icap-flow-Konventionen
+# Modernes PHP bis 8.3 — icap-flow-Konventionen
 
-Quelle für Versions-Minimum: `composer.json` (`"php": "^8.4"`), CI-Matrix in `.github/workflows/ci.yml` (PHP 8.4 + 8.5). Was hier gezeigt wird, ist in der Codebase bereits aktiv oder darf in neuem Code verwendet werden.
+Quelle für Versions-Minimum: `composer.json` (`"php": "^8.3"`), CI-Matrix in `.github/workflows/ci.yml` (PHP 8.3 + 8.4 + 8.5). Was hier gezeigt wird, ist in der Codebase bereits aktiv oder darf in neuem Code verwendet werden.
 
 ## Strikte Typen & Datei-Header
 
@@ -151,7 +151,7 @@ private function rejectInjection(string $service): never
 
 ## Property Hooks, Asymmetric Visibility (PHP 8.4)
 
-In `src/` derzeit nicht verwendet. Header werden nicht über eine normalisierte Map gelesen, sondern über `HeaderFields::values()` in jeder Schreibweise: ein `array_change_key_case()` verlöre Werte, die der Server in zwei Schreibweisen sendet.
+In `src/` nicht erlaubt, solange PHP 8.3 unterstützt wird, ebenso wenig wie Funktionen, Klassen, Konstanten, Klassenmitglieder und Parameter ab 8.4 oder ein Fiber-Wechsel im Destruktor. Header werden nicht über eine normalisierte Map gelesen, sondern über `HeaderFields::values()` in jeder Schreibweise: ein `array_change_key_case()` verlöre Werte, die der Server in zwei Schreibweisen sendet.
 
 ## DNF-Types & Intersection-Types
 
@@ -179,8 +179,8 @@ In `src/` nur `#[\Override]`.
 | `match` (Statement + Expression) | 8.0+ | `DefaultPreviewStrategy` |
 | First-Class Callables | 8.1+ | Connector-Defaults (`SocketOpener::open(...)`) |
 | `never` | 8.1+ | Verfügbar für Throw-Helfer, in `src/` derzeit ungenutzt |
-| Property Hooks | 8.4 | nicht verwendet |
-| Asymmetric Visibility | 8.4 | nicht verwendet |
+| Property Hooks | 8.4 | nicht erlaubt (Minimum 8.3) |
+| Asymmetric Visibility | 8.4 | nicht erlaubt (Minimum 8.3) |
 | Intersection-Types | 8.1+ | Mockery-Test-Hints |
 | DNF-Types | 8.2+ | Verfügbar, in `src/` derzeit ungenutzt |
 | `\Throwable` als param | überall | `try/catch/finally` mit `\Throwable` (siehe `IcapClient::requestWith()`) |

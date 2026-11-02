@@ -1,12 +1,12 @@
 ---
 name: icap-flow-php
-description: Use when working in the ndrstmr/icap-flow library — PHP 8.4/8.5, amphp v3, Pest 3, RFC 3507 ICAP wire format. Activates fail-secure semantics, BC-stable interface design, PHPStan level 9 + bleedingEdge, EUPL-1.2 file headers, SOLID/TDD discipline. Anwenden bei Arbeit an icap-flow — also bei Transport-Code, IcapClient-Facade, Preview-Strategy, verifiziertem Modus (CicapVerdict), ConnectionPool, Wire-Formatter/Parser, RetryingIcapClient, DTOs oder OPTIONS-Cache.
+description: Use when working in the ndrstmr/icap-flow library — PHP 8.3 to 8.5, amphp v3, Pest 3, RFC 3507 ICAP wire format. Activates fail-secure semantics, BC-stable interface design, PHPStan level 9 + bleedingEdge, EUPL-1.2 file headers, SOLID/TDD discipline. Anwenden bei Arbeit an icap-flow — also bei Transport-Code, IcapClient-Facade, Preview-Strategy, verifiziertem Modus (CicapVerdict), ConnectionPool, Wire-Formatter/Parser, RetryingIcapClient, DTOs oder OPTIONS-Cache.
 license: EUPL-1.2
 metadata:
   author: https://github.com/ndrstmr
   version: "1.0.0"
   domain: language
-  triggers: PHP, PHP 8.4, PHP 8.5, ICAP, RFC 3507, amphp, Revolt, Pest, PHPStan, PSR-12, EUPL, fail-secure, RESPMOD, REQMOD, OPTIONS, Preview, Encapsulated, Connection Pool, CicapVerdict, readonly, value object, Fail-Secure, Strategy, Decorator, Facade, ChunkedBodyEncoder, ResponseFrameReader
+  triggers: PHP, PHP 8.3, PHP 8.4, PHP 8.5, ICAP, RFC 3507, amphp, Revolt, Pest, PHPStan, PSR-12, EUPL, fail-secure, RESPMOD, REQMOD, OPTIONS, Preview, Encapsulated, Connection Pool, CicapVerdict, readonly, value object, Fail-Secure, Strategy, Decorator, Facade, ChunkedBodyEncoder, ResponseFrameReader
   role: specialist
   scope: implementation
   output-format: code
@@ -14,7 +14,7 @@ metadata:
 
 # icap-flow PHP Pro
 
-Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8.4/8.5, RFC 3507 ICAP-Wire-Format, amphp/Revolt-Async, Fail-Secure-Disziplin und BC-stabile Library-API. Deutsche Kommunikation, englische Identifier und Code-Kommentare — exakt wie der Rest der Codebase.
+Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8.3 bis 8.5, RFC 3507 ICAP-Wire-Format, amphp/Revolt-Async, Fail-Secure-Disziplin und BC-stabile Library-API. Deutsche Kommunikation, englische Identifier und Code-Kommentare — exakt wie der Rest der Codebase.
 
 ## Kern-Workflow
 
@@ -35,7 +35,7 @@ Senior-PHP-Engineer für die `ndrstmr/icap-flow`-Library: state-of-the-art PHP 8
 
 | Thema | Referenz | Laden, wenn … |
 |---|---|---|
-| PHP 8.4 / 8.5 Features | `references/modern-php-features.md` | readonly classes, enums, property hooks, asymmetric visibility, never type, attributes anstehen |
+| PHP-Features bis 8.3 | `references/modern-php-features.md` | readonly classes, enums, never type, attributes anstehen |
 | SOLID, TDD & Architektur-Patterns | `references/architecture-patterns.md` | Strategy / Decorator / Facade / Factory / Pool / DI in dieser Codebase angefasst werden |
 | amphp v3 / Revolt / Async | `references/async-amphp.md` | `Future<T>`, `Cancellation`, `\Amp\async()`, Sockets, Sessions oder Connection-Pool berührt werden |
 | icap-flow-spezifische Invarianten | `references/icap-flow-patterns.md` | Fail-Secure, Wire-Format, Preview-§4.5, Header-/URI-Validation, Pool-Key-TLS, OPTIONS-Cache |
@@ -73,7 +73,7 @@ Für Umsetzung, Tests, Dokumentation und Übergabe gilt [AGENTS.md — Engineeri
 
 ## Wissens-Stack
 
-- **Sprache:** PHP 8.4 (Min) / 8.5 (CI). Property Hooks, Asymmetric Visibility, `never`, DNF-Types, First-Class-Callables, Match-Expressions, Enums-mit-Methoden, Readonly-Klassen, `\Override`.
+- **Sprache:** PHP 8.3 (Min) / 8.4 / 8.5 (CI), nichts aus 8.4+ in `src/`. `never`, DNF-Types, First-Class-Callables, Match-Expressions, Enums-mit-Methoden, Readonly-Klassen, `\Override`.
 - **Async:** amphp v3 (`amphp/socket`), Revolt EventLoop, `Amp\Future`, `Amp\Cancellation`, `Amp\CompositeCancellation`, `Amp\TimeoutCancellation`. Fibers indirekt via amphp.
 - **Wire:** RFC 3507 (ICAP), RFC 7230 §4.1 (Chunked Transfer), TLS 1.2/1.3 via `Amp\Socket\ClientTlsContext`. Wire-Tests rechnen Byte-Streams von Hand vor — keine Mock-Shortcuts.
 - **Tests:** Pest 3 (PHPUnit 11 darunter), Mockery (Intersection-Type-Hints `Foo&\Mockery\MockInterface`), `pestphp/pest --mutate`.
