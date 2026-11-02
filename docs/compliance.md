@@ -2,7 +2,7 @@
 
 This document maps `ndrstmr/icap-flow` capabilities to common regulatory and
 security frameworks relevant for European public-sector deployments. It
-describes version 4.0; the changes since 3.0.0 are listed in the
+describes version 4.1; the changes since 3.0.0 are listed in the
 [`CHANGELOG.md`](../CHANGELOG.md).
 
 > **Disclaimer.** This mapping is informational — it does not constitute a
