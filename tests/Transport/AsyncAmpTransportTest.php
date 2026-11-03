@@ -61,32 +61,41 @@ it('connects to an IPv6 literal host, with and without a pool (N04)', function (
     } catch (Socket\SocketException) {
         Assert::markTestSkipped('IPv6 loopback is not available.');
     }
-    $address = $server->getAddress();
-    \assert($address instanceof Socket\InternetAddress);
-    $config = new Config('::1', $address->getPort());
-
-    // One connection per transport, each answered with a bare 204.
-    $answering = async(function () use ($server): void {
-        while (($peer = $server->accept()) !== null) {
-            $head = '';
-            while (!str_contains($head, "\r\n\r\n") && ($chunk = $peer->read()) !== null) {
-                $head .= $chunk;
-            }
-            $peer->write("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
-        }
-    });
-
-    $pool = new AmpConnectionPool();
+    $peers = [];
+    $answering = null;
+    $pool = null;
     try {
+        $address = $server->getAddress();
+        \assert($address instanceof Socket\InternetAddress);
+        $config = new Config('::1', $address->getPort());
+
+        // One connection per transport, each answered with a bare 204.
+        $answering = async(function () use ($server, &$peers): void {
+            while (($peer = $server->accept()) !== null) {
+                $peers[] = $peer;
+                $head = '';
+                while (!str_contains($head, "\r\n\r\n") && ($chunk = $peer->read()) !== null) {
+                    $head .= $chunk;
+                }
+                if (!$peer->isClosed()) {
+                    $peer->write("ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n");
+                }
+            }
+        });
+
+        $pool = new AmpConnectionPool();
         foreach ([new AsyncAmpTransport(), new AsyncAmpTransport(new NullConnectionPool()), new AsyncAmpTransport($pool)] as $transport) {
             $response = $transport->request($config, ["OPTIONS icap://[::1]/scan ICAP/1.0\r\nEncapsulated: null-body=0\r\n\r\n"])->await();
             expect($response)->toStartWith('ICAP/1.0 204 No Content');
         }
     } finally {
-        $pool->close();
+        $pool?->close();
         $server->close();
+        foreach ($peers as $peer) {
+            $peer->close();
+        }
+        $answering?->await();
     }
-    $answering->await();
 });
 
 /**
@@ -1690,6 +1699,7 @@ it('lets an answer arrive in parts as long as it arrives within the stream timeo
  * connection is closed, with the room it held.
  */
 it('ends a TLS handshake that the server never answers at the limit of its own, and closes the connection', function () {
+    $pool = new AmpConnectionPool();
     $server = Socket\listen('127.0.0.1:0');
     $address = $server->getAddress();
     \assert($address instanceof Socket\InternetAddress);
@@ -1699,7 +1709,6 @@ it('ends a TLS handshake that the server never answers at the limit of its own, 
             $accepted[] = $peer;
         }
     });
-    $pool = new AmpConnectionPool();
 
     try {
         $config = new Config(
@@ -1801,6 +1810,7 @@ it('gives a TLS handshake the limit of its own where it is longer than the strea
  * connection was opened and wherever in the exchange it failed.
  */
 it('reports a TLS handshake that fails as IcapConnectionException with its cause, and closes the connection', function () {
+    $pool = new AmpConnectionPool(maxConnectionsPerHost: 1);
     $server = Socket\listen('127.0.0.1:0');
     $address = $server->getAddress();
     \assert($address instanceof Socket\InternetAddress);
@@ -1811,7 +1821,6 @@ it('reports a TLS handshake that fails as IcapConnectionException with its cause
             $peer->write("ICAP/1.0 400 Bad Request\r\n\r\n");
         }
     });
-    $pool = new AmpConnectionPool(maxConnectionsPerHost: 1);
     // The exceptions are held, and with them the arguments of their frames: only an explicit close() ends a connection.
     $keepArgs = ini_set('zend.exception_ignore_args', '0');
     $held = [];

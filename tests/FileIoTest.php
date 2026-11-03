@@ -128,16 +128,19 @@ it('keeps the event loop running while the file to scan is opened', function () 
     $timer = EventLoop::repeat(0.02, static function () use (&$ticks): void {
         $ticks++;
     });
-    $transport = new ScriptedTransport();
-
-    // The driver answers after 0.6 s, like a file system that is slow to open a file.
-    FileWorkers::stop($pid);
-    $resume = EventLoop::delay(0.6, static fn () => FileWorkers::resume($pid));
+    $resume = null;
     try {
+        $transport = new ScriptedTransport();
+
+        // The driver answers after 0.6 s, like a file system that is slow to open a file.
+        FileWorkers::stop($pid);
+        $resume = EventLoop::delay(0.6, static fn () => FileWorkers::resume($pid));
         fileIoClient($transport)->scanFile('/svc', $path)->await();
     } finally {
         EventLoop::cancel($timer);
-        EventLoop::cancel($resume);
+        if ($resume !== null) {
+            EventLoop::cancel($resume);
+        }
         FileWorkers::resume($pid);
     }
 
@@ -260,15 +263,15 @@ it('ends at the operation timeout while the file driver does not answer and clos
             }
         });
 
-        if ($when === 'before the file is opened') {
-            FileWorkers::stop($pid);
-        }
         $ticks = 0;
         $timer = EventLoop::repeat(0.02, static function () use (&$ticks): void {
             $ticks++;
         });
         $started = hrtime(true);
         try {
+            if ($when === 'before the file is opened') {
+                FileWorkers::stop($pid);
+            }
             $thrown = fileIoThrown(fn () => fileIoClient($transport, 0.4)->scanFile('/svc', $path)->await());
         } finally {
             EventLoop::cancel($timer);
@@ -292,9 +295,9 @@ it('keeps the cancellation of the caller a cancellation while the file driver do
     $cancel = new DeferredCancellation();
     $timer = EventLoop::delay(0.2, static fn () => $cancel->cancel());
 
-    FileWorkers::stop($pid);
     $started = hrtime(true);
     try {
+        FileWorkers::stop($pid);
         $thrown = fileIoThrown(fn () => fileIoClient(new ScriptedTransport())
             ->scanFile('/svc', $path, cancellation: $cancel->getCancellation())->await());
     } finally {
@@ -532,34 +535,38 @@ it('closes the file when the deadline ends a scan that is stuck writing to its s
     $path = FileWorkers::sparseFile(64 * 1024 * 1024);
 
     $server = Socket\listen('127.0.0.1:0');
-    $address = $server->getAddress();
-    \assert($address instanceof Socket\InternetAddress);
     $peers = [];
-    $accepting = async(static function () use ($server, &$peers): void {
-        while (($peer = $server->accept()) !== null) {
-            $peers[] = $peer;
-        }
-    });
-    $client = new IcapClient(
-        new Config('127.0.0.1', $address->getPort(), streamTimeout: 30.0, operationTimeout: 0.8),
-        new AsyncAmpTransport(),
-        new RequestFormatter(),
-        new ResponseParser(),
-    );
+    $accepting = null;
     $heldWhileStuck = null;
-    $look = EventLoop::delay(0.4, static function () use (&$heldWhileStuck, $path): void {
-        $heldWhileStuck = FileWorkers::holds($path);
-    });
-
+    $look = null;
     try {
+        $address = $server->getAddress();
+        \assert($address instanceof Socket\InternetAddress);
+        $accepting = async(static function () use ($server, &$peers): void {
+            while (($peer = $server->accept()) !== null) {
+                $peers[] = $peer;
+            }
+        });
+        $client = new IcapClient(
+            new Config('127.0.0.1', $address->getPort(), streamTimeout: 30.0, operationTimeout: 0.8),
+            new AsyncAmpTransport(),
+            new RequestFormatter(),
+            new ResponseParser(),
+        );
+        $look = EventLoop::delay(0.4, static function () use (&$heldWhileStuck, $path): void {
+            $heldWhileStuck = FileWorkers::holds($path);
+        });
+
         $thrown = fileIoThrown(fn () => $client->scanFile('/svc', $path)->await());
     } finally {
-        EventLoop::cancel($look);
+        if ($look !== null) {
+            EventLoop::cancel($look);
+        }
         $server->close();
         foreach ($peers as $peer) {
             $peer->close();
         }
-        $accepting->await();
+        $accepting?->await();
     }
 
     expect($thrown)->toBeInstanceOf(IcapTimeoutException::class)

@@ -209,8 +209,8 @@ it('refuses a response that is forged, cut or illegal at its end, however large,
 
     foreach ($variants as $label => [$response, $failure, $body, $reusable]) {
         // The rest of the file is answered with the response under test; the socket is the one of the preview.
-        $server = IcapTestServer::start(static fn (array $r) => $r['stage'] === 'preview' ? [IcapTestServer::CONTINUE] : $response);
         $pool = new AmpConnectionPool();
+        $server = IcapTestServer::start(static fn (array $r) => $r['stage'] === 'preview' ? [IcapTestServer::CONTINUE] : $response);
         try {
             $client = discardClient($server, new AsyncAmpTransport($pool));
             $path = FileWorkers::file(str_repeat('a', 5000));
@@ -363,8 +363,8 @@ it('ends the receipt of a large body with the cancellation of the caller, the ti
     ];
 
     foreach ($cases as $label => [$cancelAfter, $streamTimeout, $operationTimeout, $failure]) {
-        $server = IcapTestServer::start($answer);
         $pool = new AmpConnectionPool();
+        $server = IcapTestServer::start($answer);
         try {
             $client = discardClient($server, new AsyncAmpTransport($pool), $streamTimeout, $operationTimeout);
             $path = FileWorkers::file(str_repeat('a', 5000));
