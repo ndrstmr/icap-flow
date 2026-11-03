@@ -223,8 +223,8 @@ it('does not give a socket back after an answer that is not a verdict', function
         'a 100 that reports an infection' => cicapContinue("X-Infection-Found: Type=0; Resolution=2; Threat=Eicar-Test-Signature;\r\n"),
     ];
     foreach ($answers as $label => $answer) {
-        $server = IcapTestServer::start(static fn (array $r) => [$r['stage'] === 'preview' ? $answer : cicapAnswerBytes('clean-204')]);
         $pool = new \Ndrstmr\Icap\Transport\AmpConnectionPool();
+        $server = IcapTestServer::start(static fn (array $r) => [$r['stage'] === 'preview' ? $answer : cicapAnswerBytes('clean-204')]);
         try {
             $client = new IcapClient(
                 new Config('127.0.0.1', $server->port, streamTimeout: 10.0),

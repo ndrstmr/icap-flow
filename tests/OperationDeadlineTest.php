@@ -116,13 +116,15 @@ it('takes a huge but finite limit without overflowing', function () {
     $deadline = OperationDeadline::begin(null, PHP_FLOAT_MAX);
     $baseline = $this->loopTimers();
 
-    $deadline->subscribe(static function (): void {
-    });
-    expect(is_finite($deadline->remaining()))->toBeTrue()
-        ->and($deadline->remaining())->toBeGreaterThan(1.0e6)
-        ->and($deadline->hasEnded())->toBeFalse();
-
-    $deadline->close();
+    try {
+        $deadline->subscribe(static function (): void {
+        });
+        expect(is_finite($deadline->remaining()))->toBeTrue()
+            ->and($deadline->remaining())->toBeGreaterThan(1.0e6)
+            ->and($deadline->hasEnded())->toBeFalse();
+    } finally {
+        $deadline->close();
+    }
     expect($this->loopTimers())->toBe($baseline);
 });
 
@@ -235,18 +237,21 @@ it('forwards the cancellation of the caller to those who wait', function () {
 
     /** @var AsyncTestCase $this */
     $this->runAsyncTest(function () use ($deadline, $caller, $told) {
-        $deadline->subscribe(static function (CancelledException $e) use ($told): void {
-            $told->kept++;
-            $told->previous = $e->getPrevious();
-        });
+        try {
+            $deadline->subscribe(static function (CancelledException $e) use ($told): void {
+                $told->kept++;
+                $told->previous = $e->getPrevious();
+            });
 
-        $caller->cancel();
-        delay(0.01);
+            $caller->cancel();
+            delay(0.01);
 
-        expect($told->kept)->toBe(1)
-            // The caller's cancellation, not a timeout.
-            ->and($told->previous)->not->toBeInstanceOf(IcapTimeoutException::class);
-        $deadline->close();
+            expect($told->kept)->toBe(1)
+                // The caller's cancellation, not a timeout.
+                ->and($told->previous)->not->toBeInstanceOf(IcapTimeoutException::class);
+        } finally {
+            $deadline->close();
+        }
     });
 });
 
