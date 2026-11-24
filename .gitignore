@@ -1,16 +1,19 @@
-Composer
+# Composer: a library keeps no lock file
 /vendor/
-Logs and dumps
+/composer.lock
+# Logs and dumps
 /logs/
 *.log
-Development
+# Development
 .env
 .phpunit.cache/
 /build/
-IDE files
+# Agent worktrees
+/.worktrees/
+# IDE files
 .idea/
 .vscode/
-OS files
+# OS files
 .DS_Store
 Thumbs.db
 .php-cs-fixer.cache

@@ -28,7 +28,7 @@ Before editing, verify `pwd`, `git rev-parse --show-toplevel`, `git worktree lis
 
 ## Build, Test, and Development Commands
 
-- `composer install`: install runtime and development dependencies.
+- `composer update`: install the latest runtime and development dependencies; the repository keeps no lock file.
 - `composer test`: run the Pest unit suite.
 - `composer test:integration`: run integration tests; see `tests/Integration/README.md` and `docker-compose.yml` for local ICAP service setup.
 - `composer test:all`: run all Pest suites.
