@@ -8,6 +8,7 @@
 .env
 .phpunit.cache/
 /build/
+/tmp/
 # Agent worktrees
 /.worktrees/
 # IDE files
