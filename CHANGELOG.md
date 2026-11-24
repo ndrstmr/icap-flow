@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The Composer package leaves out the tests, `docs/` and the development files; they stay in the repository.
+
 ## [4.1.0]
 
 ### Added

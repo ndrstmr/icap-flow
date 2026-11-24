@@ -11,7 +11,7 @@ composer test                     # Pest Unit-Suite grün
 composer test:integration         # Pest Integration-Suite — env-gated, self-skip ohne ICAP_HOST
 ```
 
-`composer audit` läuft im CI auch — lokal sinnvoll, wenn `composer.lock` angefasst wurde.
+`composer audit` läuft im CI auch — lokal sinnvoll nach `composer update`.
 
 ## Pest 3 — Teststil in dieser Repo
 

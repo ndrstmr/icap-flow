@@ -1,2 +1,17 @@
 # Recorded wire bytes (CRLF, no final newline of their own) for the tests: no line-ending or whitespace changes.
 tests/Fixtures/cicap-virus-scan/* -text whitespace=cr-at-eol,-blank-at-eof
+
+# Not part of the Composer package
+/.claude                export-ignore
+/.github                export-ignore
+/docs                   export-ignore
+/tests                  export-ignore
+/.gitattributes         export-ignore
+/.gitignore             export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/AGENTS.md              export-ignore
+/CLAUDE.md              export-ignore
+/CONTRIBUTING.md        export-ignore
+/docker-compose.yml     export-ignore
+/phpstan.neon           export-ignore
+/phpunit.xml.dist       export-ignore

@@ -28,7 +28,7 @@
     "mockery/mockery": "^1.6",
     "nikic/php-parser": "^5.7",
     "pestphp/pest": "^3.8",
-    "phpstan/phpstan": "^2.1",
+    "phpstan/phpstan": "2.1.51",
     "phpunit/phpunit": "^11.2",
     "psr/cache": "^3.0",
     "psr/simple-cache": "^3.0",
@@ -60,7 +60,7 @@
   "config": {
     "sort-packages": true,
     "platform": {
-      "php": "8.3.36"
+      "php": "8.3.37"
     },
     "allow-plugins": {
       "pestphp/pest-plugin": true
