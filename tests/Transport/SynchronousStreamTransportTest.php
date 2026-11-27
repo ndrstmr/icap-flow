@@ -23,6 +23,7 @@ use Ndrstmr\Icap\Config;
 use Ndrstmr\Icap\Exception\IcapConnectionException;
 use Ndrstmr\Icap\Exception\IcapMalformedResponseException;
 use Ndrstmr\Icap\Exception\IcapTimeoutException;
+use Ndrstmr\Icap\Transport\BlockingTransport;
 use Ndrstmr\Icap\Transport\SynchronousStreamSession;
 use Ndrstmr\Icap\Transport\SynchronousStreamTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
@@ -48,8 +49,8 @@ const SYNC_FRAME = "ICAP/1.0 204 No Content\r\nEncapsulated: null-body=0\r\n\r\n
  * with "client" it is an IcapClient with "operationTimeout" that makes an
  * OPTIONS request, not the transport that is called. With "scan" it is an IcapClient
  * that scans the file of the job with a preview (the size, and whether the body of the
- * response is discarded), and says how it ended, how many sockets it still holds and
- * whether a worker still holds the file. A chunk is a
+ * response is discarded), and says how it ended, how many sockets it still holds,
+ * whether it still holds the file open and how many file workers were started. A chunk is a
  * string, or one of {"big": n} (n times a 1021 byte block), {"await": true}
  * (wait for the test to release it), {"cancel": true} and {"fail": "message"}
  * (producer behaviour). "descriptors" opens that many files first, so that the
@@ -223,11 +224,18 @@ try {
 }
 $out['elapsed'] = (hrtime(true) - $started) / 1e9;
 if ($job['scan'] !== null) {
-    // The workers of the file driver keep pipes of their own open; the connection to the server is the socket.
+    // The synchronous transport reads files in-process without file workers.
     $out['sockets'] = count(array_filter(get_resources('stream'), static fn ($resource): bool => str_starts_with((string) (stream_get_meta_data($resource)['stream_type'] ?? ''), 'tcp_socket')));
-    $out['fileHeld'] = \Ndrstmr\Icap\Tests\FileWorkers::canInspect()
-        ? !\Ndrstmr\Icap\Tests\FileWorkers::settles(static fn (): bool => !\Ndrstmr\Icap\Tests\FileWorkers::holds($job['scan']['file']))
-        : null;
+    $target = realpath($job['scan']['file']);
+    $out['fileHeld'] = $target !== false && array_filter(
+        get_resources('stream'),
+        static function ($resource) use ($target): bool {
+            $uri = stream_get_meta_data($resource)['uri'] ?? '';
+
+            return $uri !== '' && realpath($uri) === $target;
+        },
+    ) !== [];
+    $out['workers'] = count(\Ndrstmr\Icap\Tests\FileWorkers::pids());
 }
 $out['asked'] = $asked;
 $out['streams'] = count(get_resources('stream')) - $streams;
@@ -294,13 +302,13 @@ final class SyncChild
      * how many chunks were asked for, the streams it left open and the notices
      * that got past its own @. A client that does not answer in time is killed.
      *
-     * @return array{response?: string, status?: int, infected?: bool, virus?: string|null, discarded?: int|null, body?: string, error?: class-string, message?: string, sockets?: int, fileHeld?: bool|null, elapsed: float, asked: int, streams: int, leaked: list<string>}
+     * @return array{response?: string, status?: int, infected?: bool, virus?: string|null, discarded?: int|null, body?: string, error?: class-string, message?: string, sockets?: int, fileHeld?: bool, workers?: int, elapsed: float, asked: int, streams: int, leaked: list<string>}
      */
     public function outcome(float $within = 10.0): array
     {
         $outcome = $this->reply($within);
 
-        /** @var array{response?: string, status?: int, infected?: bool, virus?: string|null, discarded?: int|null, body?: string, error?: class-string, message?: string, sockets?: int, fileHeld?: bool|null, elapsed: float, asked: int, streams: int, leaked: list<string>} $outcome */
+        /** @var array{response?: string, status?: int, infected?: bool, virus?: string|null, discarded?: int|null, body?: string, error?: class-string, message?: string, sockets?: int, fileHeld?: bool, workers?: int, elapsed: float, asked: int, streams: int, leaked: list<string>} $outcome */
         return $outcome;
     }
 
@@ -669,9 +677,10 @@ function syncReadChunk($stream): mixed
         ->invoke(null, $stream, null, 0.5);
 }
 
-it('implements TransportInterface', function () {
+it('implements TransportInterface and BlockingTransport', function () {
     $t = new SynchronousStreamTransport();
-    expect($t)->toBeInstanceOf(TransportInterface::class);
+    expect($t)->toBeInstanceOf(TransportInterface::class)
+        ->and($t)->toBeInstanceOf(BlockingTransport::class);
 });
 
 it('throws connection exception on failure', function () {
@@ -1974,7 +1983,7 @@ function syncDechunk(string $wire): array
  * @param \Closure(resource, SyncChild, int): array<string, string>                                     $serve   gets the peer, the child and the port; says what it took in
  * @param array{timeout?: float, responseStart?: float, operationTimeout?: float, cancel?: 'on-signal'} $settings
  *
- * @return array{outcome: array{response?: string, status?: int, infected?: bool, virus?: string|null, discarded?: int|null, body?: string, error?: class-string, message?: string, sockets?: int, fileHeld?: bool|null, elapsed: float, asked: int, streams: int, leaked: list<string>}, seen: array<string, string>, behind: string, closed: bool, second: bool, port: int}
+ * @return array{outcome: array{response?: string, status?: int, infected?: bool, virus?: string|null, discarded?: int|null, body?: string, error?: class-string, message?: string, sockets?: int, fileHeld?: bool, workers?: int, elapsed: float, asked: int, streams: int, leaked: list<string>}, seen: array<string, string>, behind: string, closed: bool, second: bool, port: int}
  */
 function syncPreviewScan(array $scan, \Closure $serve, array $settings = []): array
 {
@@ -1990,7 +1999,6 @@ function syncPreviewScan(array $scan, \Closure $serve, array $settings = []): ar
     );
     $peer = null;
     try {
-        // The client starts the workers for the file before it connects.
         [$peer] = syncServe($server, 0, accept: 20.0);
         $seen = $serve($peer, $child, $port);
         $outcome = $child->outcome(20.0);
@@ -2054,7 +2062,9 @@ it('continues a preview on the connection it began on and sends only the rest of
                 ->and($run['closed'])->toBeTrue($how)
                 ->and($run['second'])->toBeFalse($how)
                 ->and($run['outcome']['sockets'] ?? null)->toBe(0, $how)
-                ->and($run['outcome']['fileHeld'] ?? false)->toBeFalse($how)
+                ->and($run['outcome']['fileHeld'] ?? true)->toBeFalse($how)
+                ->and($run['outcome']['workers'] ?? null)->toBe(0, $how)
+                ->and($run['outcome']['streams'])->toBe(0, $how)
                 ->and($run['outcome']['leaked'])->toBe([], $how);
         }
     }
@@ -2097,7 +2107,9 @@ it('needs no continuation for a preview that holds the file, and none for an ans
                 ->and($run['closed'])->toBeTrue($how)
                 ->and($run['second'])->toBeFalse($how)
                 ->and($run['outcome']['sockets'] ?? null)->toBe(0, $how)
-                ->and($run['outcome']['fileHeld'] ?? false)->toBeFalse($how);
+                ->and($run['outcome']['fileHeld'] ?? true)->toBeFalse($how)
+                ->and($run['outcome']['workers'] ?? null)->toBe(0, $how)
+                ->and($run['outcome']['streams'])->toBe(0, $how);
         }
     }
 });
@@ -2193,7 +2205,9 @@ it('ends a preview whose answer is cut, illegal or has bytes behind it without a
                 ->and($run['closed'])->toBeTrue($how)
                 ->and($run['second'])->toBeFalse($how)
                 ->and($run['outcome']['sockets'] ?? null)->toBe(0, $how)
-                ->and($run['outcome']['fileHeld'] ?? false)->toBeFalse($how)
+                ->and($run['outcome']['fileHeld'] ?? true)->toBeFalse($how)
+                ->and($run['outcome']['workers'] ?? null)->toBe(0, $how)
+                ->and($run['outcome']['streams'])->toBe(0, $how)
                 ->and($run['outcome']['leaked'])->toBe([], $how);
             // The rest of the file goes out after a 100 that stands alone, and after no other answer.
             $sent = $run['seen']['rest'] . $run['behind'];
@@ -2259,7 +2273,9 @@ it('ends a preview at the limit of its phase, at the end of the operation and at
                 ->and($run['closed'])->toBeTrue($how)
                 ->and($run['second'])->toBeFalse($how)
                 ->and($run['outcome']['sockets'] ?? null)->toBe(0, $how)
-                ->and($run['outcome']['fileHeld'] ?? false)->toBeFalse($how)
+                ->and($run['outcome']['fileHeld'] ?? true)->toBeFalse($how)
+                ->and($run['outcome']['workers'] ?? null)->toBe(0, $how)
+                ->and($run['outcome']['streams'])->toBe(0, $how)
                 ->and($run['outcome']['leaked'])->toBe([], $how);
         }
     }

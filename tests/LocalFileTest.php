@@ -64,7 +64,7 @@ function localFileHangingReads(string $path, int $count): array
 {
     $files = [];
     for ($i = 0; $i < $count; $i++) {
-        $files[] = LocalFile::open($path, new NullCancellation());
+        $files[] = LocalFile::open($path, new NullCancellation(), FileCalls::current());
     }
 
     $reads = [];
@@ -81,29 +81,31 @@ function localFileHangingReads(string $path, int $count): array
 }
 
 it('reads a file in bounded blocks to its confirmed end, on the size the open file has', function () {
-    $content = random_bytes(LocalFile::BLOCK_SIZE * 2 + 123);
-    $file = LocalFile::open(FileWorkers::file($content), new NullCancellation());
+    foreach (['workers' => FileCalls::current(), 'in-process' => FileCalls::blocking()] as $driver => $calls) {
+        $content = random_bytes(LocalFile::BLOCK_SIZE * 2 + 123);
+        $file = LocalFile::open(FileWorkers::file($content), new NullCancellation(), $calls);
 
-    expect($file->size)->toBe(strlen($content));
+        expect($file->size)->toBe(strlen($content), $driver);
 
-    // However much is asked for, a read brings at most one block.
-    $read = '';
-    $largest = 0;
-    while (($block = $file->read(PHP_INT_MAX)) !== null) {
-        $largest = max($largest, strlen($block));
-        $read .= $block;
+        // However much is asked for, a read brings at most one block.
+        $read = '';
+        $largest = 0;
+        while (($block = $file->read(PHP_INT_MAX)) !== null) {
+            $largest = max($largest, strlen($block));
+            $read .= $block;
+        }
+        expect($read)->toBe($content, $driver)
+            ->and($largest)->toBe(LocalFile::BLOCK_SIZE, $driver)
+            // The end stays the end.
+            ->and($file->read(1))->toBeNull($driver);
+
+        // A request has read the file once its end is confirmed.
+        $file->assertRead();
+
+        $file->close();
+        $file->close();
+        expect(fn () => $file->read(1))->toThrow(\LogicException::class);
     }
-    expect($read)->toBe($content)
-        ->and($largest)->toBe(LocalFile::BLOCK_SIZE)
-        // The end stays the end.
-        ->and($file->read(1))->toBeNull();
-
-    // A request has read the file once its end is confirmed.
-    $file->assertRead();
-
-    $file->close();
-    $file->close();
-    expect(fn () => $file->read(1))->toThrow(\LogicException::class);
 });
 
 it('begins no driver call for an operation that is over', function () {
@@ -111,7 +113,7 @@ it('begins no driver call for an operation that is over', function () {
     $cancel = new DeferredCancellation();
 
     try {
-        $file = LocalFile::open($path, $cancel->getCancellation());
+        $file = LocalFile::open($path, $cancel->getCancellation(), FileCalls::current());
         $cancel->cancel();
 
         $thrown = localFileThrown(static fn () => $file->read(10));
@@ -128,7 +130,7 @@ it('closes a file that the driver opens after the operation gave up on it', func
     $path = ScriptedSource::add('late', 'payload', openDelay: 0.2);
 
     try {
-        $thrown = localFileThrown(static fn () => LocalFile::open($path, new TimeoutCancellation(0.05)));
+        $thrown = localFileThrown(static fn () => LocalFile::open($path, new TimeoutCancellation(0.05), FileCalls::current()));
         delay(0.4);
 
         expect($thrown)->toBeInstanceOf(CancelledException::class)
@@ -141,21 +143,28 @@ it('closes a file that the driver opens after the operation gave up on it', func
 });
 
 it('reports what the driver cannot do as an IcapStorageException with the driver exception as its cause', function () {
-    $cases = [
+    $realPaths = [
         // label => [path, the cause]
-        'a file that does not exist'      => [sys_get_temp_dir() . '/icap-io-missing-' . bin2hex(random_bytes(6)), FilesystemException::class],
+        'a file that does not exist' => [sys_get_temp_dir() . '/icap-io-missing-' . bin2hex(random_bytes(6)), FilesystemException::class],
         // Whatever the operating system lets a seek do with it: a device is no regular file.
-        'a device'                        => ['/dev/null', FilesystemException::class],
-        'a file that has no size or end'  => [ScriptedSource::add('nosize', 'payload', statFails: true), StreamException::class],
+        'a device'                   => ['/dev/null', FilesystemException::class],
     ];
 
-    try {
-        foreach ($cases as $case => [$path, $cause]) {
-            $thrown = localFileThrown(static fn () => LocalFile::open($path, new NullCancellation()));
+    foreach (['workers' => FileCalls::current(), 'in-process' => FileCalls::blocking()] as $driver => $calls) {
+        foreach ($realPaths as $case => [$path, $cause]) {
+            $thrown = localFileThrown(static fn () => LocalFile::open($path, new NullCancellation(), $calls));
 
-            expect($thrown)->toBeInstanceOf(IcapStorageException::class, $case)
-                ->and($thrown?->getPrevious())->toBeInstanceOf($cause, $case);
+            expect($thrown)->toBeInstanceOf(IcapStorageException::class, "{$driver}, {$case}")
+                ->and($thrown?->getPrevious())->toBeInstanceOf($cause, "{$driver}, {$case}");
         }
+    }
+
+    try {
+        $noSize = ScriptedSource::add('nosize', 'payload', statFails: true);
+        $thrown = localFileThrown(static fn () => LocalFile::open($noSize, new NullCancellation(), FileCalls::current()));
+
+        expect($thrown)->toBeInstanceOf(IcapStorageException::class, 'a file that has no size or end')
+            ->and($thrown?->getPrevious())->toBeInstanceOf(StreamException::class, 'a file that has no size or end');
     } finally {
         FileWorkers::settles(static fn (): bool => ScriptedSource::$closed === ScriptedSource::$opened);
         ScriptedSource::reset();
@@ -169,7 +178,7 @@ it('ends the wait for a hung driver call at the cancellation and closes the file
 
     $pid = FileWorkers::own();
     $path = FileWorkers::file(str_repeat('A', 1000));
-    $file = LocalFile::open($path, new TimeoutCancellation(0.6));
+    $file = LocalFile::open($path, new TimeoutCancellation(0.6), FileCalls::current());
 
     // A call into an operating system that hangs: the worker does not answer.
     FileWorkers::stop($pid);
@@ -201,10 +210,10 @@ it('lets no more driver calls hang than it has places, and frees a place only wh
 
     try {
         // Opened while the places are free.
-        $later = LocalFile::open($path, $laterCancel->getCancellation());
+        $later = LocalFile::open($path, $laterCancel->getCancellation(), FileCalls::current());
         $files = [];
         for ($i = 0; $i < FileCalls::MAX_PENDING + 20; $i++) {
-            $files[] = LocalFile::open($path, $cancel->getCancellation());
+            $files[] = LocalFile::open($path, $cancel->getCancellation(), FileCalls::current());
         }
 
         // Every read hangs in the driver. The ones beyond the places wait for a place, and none of them reaches it.
@@ -230,7 +239,7 @@ it('lets no more driver calls hang than it has places, and frees a place only wh
         // The driver lets go of the calls, and the places come back with them.
         $hold->complete();
         delay(0.05);
-        $again = LocalFile::open($path, new NullCancellation());
+        $again = LocalFile::open($path, new NullCancellation(), FileCalls::current());
         expect($again->read(10))->toBe('payload');
 
         foreach ([...$files, $later, $again] as $file) {
@@ -264,7 +273,7 @@ it('begins no driver call for an operation that ended while its call waited for 
             delay(0.05);
             $lookups = ScriptedSource::$lookups;
 
-            $opening = async(static fn () => localFileThrown(static fn () => LocalFile::open($path, $operation)));
+            $opening = async(static fn () => localFileThrown(static fn () => LocalFile::open($path, $operation, FileCalls::current())));
             if ($taken) {
                 delay(0.005);
                 if ($ending === 'cancel') {
@@ -316,7 +325,7 @@ it('holds a place for the close of a file as well, until the driver has returned
     try {
         $files = [];
         for ($i = 0; $i < FileCalls::MAX_PENDING + 10; $i++) {
-            $files[] = LocalFile::open($path, new NullCancellation());
+            $files[] = LocalFile::open($path, new NullCancellation(), FileCalls::current());
         }
         foreach ($files as $file) {
             $file->discard();
@@ -375,7 +384,7 @@ it('gives the end of the operation precedence over a driver failure, and passes 
     foreach ($cases as $case => $build) {
         [$onRead, $cancellation, $expected] = $build();
         try {
-            $file = LocalFile::open(ScriptedSource::add('case', 'payload', onRead: $onRead), $cancellation);
+            $file = LocalFile::open(ScriptedSource::add('case', 'payload', onRead: $onRead), $cancellation, FileCalls::current());
             $thrown = localFileThrown(static fn () => $file->read(10));
             $file->discard();
 
@@ -399,10 +408,10 @@ it('reports a file that cannot be closed when the scan is done, and keeps quiet 
     });
 
     try {
-        $done = LocalFile::open($path, new NullCancellation());
+        $done = LocalFile::open($path, new NullCancellation(), FileCalls::current());
         $thrown = localFileThrown(static fn () => $done->close());
 
-        $letGo = LocalFile::open($path, new NullCancellation());
+        $letGo = LocalFile::open($path, new NullCancellation(), FileCalls::current());
         $letGo->discard();
         delay(0.05);
 

@@ -30,6 +30,8 @@ use Amp\File\Driver\StatusCachingFilesystemDriver;
 use Amp\File\FilesystemDriver;
 use Amp\Future;
 use Amp\NullCancellation;
+use Amp\Parallel\Context\ContextException;
+use Amp\Parallel\Context\StatusError;
 use Amp\Socket;
 use Mockery;
 use Ndrstmr\Icap\Config;
@@ -45,6 +47,7 @@ use Ndrstmr\Icap\RequestFormatter;
 use Ndrstmr\Icap\RequestFormatterInterface;
 use Ndrstmr\Icap\ResponseParser;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\BlockingTransport;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
 use Ndrstmr\Icap\Transport\TransportSession;
@@ -52,6 +55,7 @@ use PHPUnit\Framework\Assert;
 use Revolt\EventLoop;
 
 use function Amp\async;
+use function Amp\delay;
 use function Amp\File\createDefaultDriver;
 use function Amp\File\filesystem;
 use function Amp\Future\await;
@@ -237,12 +241,12 @@ it('looks up the type of a path without waiting for the workers that hold open f
     try {
         // Every open file holds a worker, up to the most the driver has.
         for ($i = 0; $i < ParallelFilesystemDriver::DEFAULT_WORKER_LIMIT; $i++) {
-            $files[] = LocalFile::open($path, new NullCancellation());
+            $files[] = LocalFile::open($path, new NullCancellation(), FileCalls::current());
         }
 
         // A lookup that waited for a worker would wait for one of these files to be closed.
         $started = hrtime(true);
-        $files[] = LocalFile::open($path, OperationDeadline::begin(null, 3.0));
+        $files[] = LocalFile::open($path, OperationDeadline::begin(null, 3.0), FileCalls::current());
 
         expect((hrtime(true) - $started) / 1e9)->toBeLessThan(1.0);
     } finally {
@@ -645,4 +649,265 @@ it('opens a relative path against the working directory of the call', function (
     }
 
     expect($transport->requests[0])->toContain('payload');
+});
+
+/**
+ * Runs a bounded PHP child process while the event loop of this process keeps serving (e.g. an {@see IcapTestServer}).
+ * The child receives the autoloader path as $argv[1] and a JSON payload as $argv[2], and writes one JSON line back.
+ *
+ * @param list<string>         $phpOptions
+ * @param array<string, mixed> $job
+ *
+ * @return array<string, mixed>
+ */
+function fileIoRunChild(array $phpOptions, string $code, array $job, float $within = 10.0): array
+{
+    $process = proc_open(
+        [
+            PHP_BINARY,
+            ...$phpOptions,
+            '-d', 'display_errors=stderr',
+            '-r', $code,
+            '--',
+            dirname(__DIR__) . '/vendor/autoload.php',
+            json_encode($job, JSON_THROW_ON_ERROR),
+        ],
+        [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes,
+    );
+    Assert::assertIsResource($process);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $stdout = '';
+    $stderr = '';
+    $until = hrtime(true) + $within * 1e9;
+    try {
+        while (true) {
+            $stdout .= (string) stream_get_contents($pipes[1]);
+            $stderr .= (string) stream_get_contents($pipes[2]);
+            if (!proc_get_status($process)['running']) {
+                break;
+            }
+            if (hrtime(true) > $until) {
+                Assert::fail("The child did not end within {$within} s and was killed. stderr: " . substr($stderr, 0, 500));
+            }
+            delay(0.02);
+        }
+        $stdout .= (string) stream_get_contents($pipes[1]);
+        $stderr .= (string) stream_get_contents($pipes[2]);
+    } finally {
+        proc_terminate($process, 9);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+    }
+
+    $line = trim($stdout);
+    Assert::assertNotSame('', $line, 'The child wrote no result: ' . substr($stderr, 0, 500));
+    $decoded = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+    Assert::assertIsArray($decoded);
+
+    /** @var array<string, mixed> $decoded */
+    return $decoded;
+}
+
+it('scans files in-process without file workers when using the synchronous transport', function () {
+    $server = IcapTestServer::start(static fn (array $request): array => [
+        $request['stage'] === 'preview' ? IcapTestServer::CONTINUE : IcapTestServer::CLEAN,
+    ]);
+    $path = FileWorkers::file(str_repeat('A', 4096));
+
+    $code = <<<'PHP'
+        require $argv[1];
+        $job = json_decode($argv[2], true);
+        $client = new Ndrstmr\Icap\IcapClient(
+            new Ndrstmr\Icap\Config('127.0.0.1', $job['port'], socketTimeout: 2.0, streamTimeout: 5.0, operationTimeout: 8.0),
+            new Ndrstmr\Icap\Transport\SynchronousStreamTransport(),
+            new Ndrstmr\Icap\RequestFormatter(),
+            new Ndrstmr\Icap\ResponseParser(),
+        );
+        try {
+            $single = $client->scanFile('/avscan', $job['file'])->await();
+            $preview = $client->scanFileWithPreview('/avscan', $job['file'], 1024)->await();
+            $device = null;
+            try {
+                $client->scanFile('/avscan', '/dev/null')->await();
+            } catch (Throwable $e) {
+                $device = $e::class;
+            }
+            $out = [
+                'single'  => ['infected' => $single->isInfected(), 'status' => $single->getOriginalResponse()->statusCode],
+                'preview' => ['infected' => $preview->isInfected(), 'status' => $preview->getOriginalResponse()->statusCode],
+                'device'  => $device,
+                'workers' => Ndrstmr\Icap\Tests\FileWorkers::pids(),
+            ];
+        } catch (Throwable $e) {
+            $out = ['error' => $e::class . ': ' . $e->getMessage()];
+        }
+        echo json_encode($out), "\n";
+        PHP;
+
+    try {
+        $run = fileIoRunChild(['-d', 'disable_functions=proc_open'], $code, ['port' => $server->port, 'file' => $path]);
+    } finally {
+        $server->stop();
+    }
+
+    expect($run['error'] ?? null)->toBeNull(is_string($run['error'] ?? null) ? $run['error'] : '')
+        ->and($run['single'] ?? null)->toBe(['infected' => false, 'status' => 204])
+        ->and($run['preview'] ?? null)->toBe(['infected' => false, 'status' => 204])
+        ->and($run['device'] ?? null)->toBe(IcapStorageException::class)
+        ->and($run['workers'] ?? null)->toBe([])
+        ->and(array_column($server->requests, 'stage'))->toBe(['single', 'preview', 'rest'])
+        ->and($server->requests[0]['bodyBytes'])->toBe(4096)
+        ->and($server->requests[2]['bodyBytes'])->toBe(4096);
+});
+
+it('translates file worker startup failures and pool shutdowns into IcapStorageException', function () {
+    $path = FileWorkers::file(str_repeat('A', 200000));
+
+    $code = <<<'PHP'
+        require $argv[1];
+        $job = json_decode($argv[2], true);
+        $capture = static function (Closure $call): array {
+            try {
+                $call();
+
+                return ['class' => null, 'chain' => []];
+            } catch (Throwable $e) {
+                $chain = [];
+                for ($x = $e; $x !== null; $x = $x->getPrevious()) {
+                    $chain[] = $x::class;
+                }
+
+                return ['class' => $e::class, 'chain' => $chain];
+            }
+        };
+
+        if ($job['case'] === 'inflight') {
+            $calls = Ndrstmr\Icap\FileCalls::current();
+            $open = Ndrstmr\Icap\LocalFile::open($job['file'], new Amp\NullCancellation(), $calls);
+            $firstRead = strlen((string) $open->read(10));
+            Amp\Parallel\Worker\workerFactory(new class () implements Amp\Parallel\Worker\WorkerFactory {
+                public function create(?Amp\Cancellation $cancellation = null): Amp\Parallel\Worker\Worker
+                {
+                    throw new RuntimeException('no more processes');
+                }
+            });
+            $steps = [
+                $capture(static fn () => Ndrstmr\Icap\LocalFile::open($job['file'], new Amp\NullCancellation(), $calls)),
+                $capture(static fn () => $open->read(10)),
+            ];
+            $close = $capture(static fn () => $open->close());
+            echo json_encode(['firstRead' => $firstRead, 'steps' => $steps, 'close' => $close]), "\n";
+            exit;
+        }
+
+        if ($job['case'] === 'binary') {
+            Amp\Parallel\Context\contextFactory(new Amp\Parallel\Context\ProcessContextFactory(binary: '/nonexistent/php'));
+        }
+        $client = new Ndrstmr\Icap\IcapClient(
+            new Ndrstmr\Icap\Config('127.0.0.1', 1, socketTimeout: 1.0, streamTimeout: 3.0, operationTimeout: 6.0),
+            new Ndrstmr\Icap\Transport\AsyncAmpTransport(),
+            new Ndrstmr\Icap\RequestFormatter(),
+            new Ndrstmr\Icap\ResponseParser(),
+        );
+        $steps = [
+            $capture(static fn () => $client->scanFile('/avscan', $job['file'])->await()),
+            $capture(static fn () => $client->scanFile('/avscan', $job['file'])->await()),
+        ];
+        echo json_encode(['steps' => $steps]), "\n";
+        PHP;
+
+    // label => [php options, case name, expected causes in each step's exception chain]
+    $cases = [
+        'proc_open disabled' => [
+            ['-d', 'disable_functions=proc_open'],
+            'proc_open',
+            [[ContextException::class], [ContextException::class]],
+        ],
+        'non-executable binary from contextFactory' => [
+            [],
+            'binary',
+            [[ContextException::class, \ValueError::class], [ContextException::class, \ValueError::class]],
+        ],
+        'open file after a failed worker start' => [
+            [],
+            'inflight',
+            [[ContextException::class, \RuntimeException::class], [StatusError::class]],
+        ],
+    ];
+
+    foreach ($cases as $label => [$phpOptions, $case, $expectedCauses]) {
+        $run = fileIoRunChild($phpOptions, $code, ['case' => $case, 'file' => $path]);
+        /** @var list<array{class: string|null, chain: list<string>}> $steps */
+        $steps = $run['steps'];
+
+        foreach ($expectedCauses as $i => $causes) {
+            expect($steps[$i]['class'])->toBe(IcapStorageException::class, "{$label}, step {$i}");
+            foreach ($causes as $cause) {
+                Assert::assertContains($cause, $steps[$i]['chain'], "{$label}, step {$i}");
+            }
+        }
+        if ($case === 'inflight') {
+            /** @var array{class: string|null, chain: list<string>} $close */
+            $close = $run['close'];
+            expect($run['firstRead'])->toBe(10)
+                ->and($steps[1]['chain'][1] ?? null)->toBe(StatusError::class)
+                ->and($close['class'])->toBeNull();
+        }
+    }
+});
+
+it('chooses in-process reads by transport capability, keeps file checks, and respects the test hook', function () {
+    $blocking = new class () implements BlockingTransport {
+        /** @var list<string> */
+        public array $requests = [];
+
+        #[\Override]
+        public function request(Config $config, iterable $rawRequest, ?Cancellation $cancellation = null): Future
+        {
+            $wire = '';
+            foreach ($rawRequest as $chunk) {
+                $wire .= $chunk;
+            }
+            $this->requests[] = $wire;
+
+            return Future::complete(FILE_IO_CLEAN);
+        }
+    };
+    $blockingClient = new IcapClient(new Config('icap.example'), $blocking, new RequestFormatter(), new ResponseParser());
+
+    $fifo = fileIoFifo();
+    $file = FileWorkers::file('in-process payload');
+    $link = sys_get_temp_dir() . '/icap-io-blocking-link-' . bin2hex(random_bytes(6));
+    symlink($file, $link);
+
+    try {
+        // Non-regular files are rejected before opening, even with the blocking driver.
+        foreach (['/dev/null', sys_get_temp_dir(), $fifo, 'data://text/plain;base64,' . base64_encode('x')] as $nonRegular) {
+            expect(fileIoThrown(fn () => $blockingClient->scanFile('/svc', $nonRegular)->await()))
+                ->toBeInstanceOf(IcapStorageException::class, $nonRegular);
+        }
+        expect($blocking->requests)->toBe([]);
+
+        // Regular file and symlink to a regular file scan cleanly via BlockingTransport.
+        $blockingClient->scanFile('/svc', $link)->await();
+        expect($blocking->requests)->toHaveCount(1)
+            ->and($blocking->requests[0])->toContain('in-process payload');
+
+        // FileCalls::use() takes precedence over BlockingTransport as well.
+        $scripted = ScriptedSource::add('blocking-hook', 'from scripted driver');
+        try {
+            $blockingClient->scanFile('/svc', $scripted)->await();
+            expect($blocking->requests)->toHaveCount(2)
+                ->and($blocking->requests[1])->toContain('from scripted driver');
+        } finally {
+            ScriptedSource::reset();
+        }
+    } finally {
+        fileIoDropFifo($fifo);
+        unlink($link);
+    }
 });

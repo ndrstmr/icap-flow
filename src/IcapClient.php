@@ -34,6 +34,7 @@ use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\Exception\IcapServerException;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Ndrstmr\Icap\Transport\AsyncAmpTransport;
+use Ndrstmr\Icap\Transport\BlockingTransport;
 use Ndrstmr\Icap\Transport\DiscardingTransport;
 use Ndrstmr\Icap\Transport\DiscardingTransportSession;
 use Ndrstmr\Icap\Transport\SessionAwareTransport;
@@ -368,7 +369,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
 
-            $file = LocalFile::open($filePath, $deadline);
+            $file = LocalFile::open($filePath, $deadline, $this->fileCalls());
             try {
                 $httpResponse = new HttpResponse(
                     statusCode: 200,
@@ -501,7 +502,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             // A cancellation that was already requested, or an operation that is over, opens no file.
             $deadline->checkpoint();
 
-            $file = LocalFile::open($filePath, $deadline);
+            $file = LocalFile::open($filePath, $deadline, $this->fileCalls());
 
             try {
                 $result = $this->scanFileWithPreviewStrict($transport, $service, $file, $previewSize, $extraHeaders, $deadline, $discardBudget);
@@ -860,6 +861,13 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         }
 
         return [$bytes, $complete];
+    }
+
+    private function fileCalls(): FileCalls
+    {
+        return $this->transport instanceof BlockingTransport
+            ? FileCalls::blocking()
+            : FileCalls::current();
     }
 
     /**

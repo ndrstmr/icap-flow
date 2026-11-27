@@ -27,10 +27,10 @@ use Amp\File\Whence;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 
 /**
- * A local file that the client opened once for one operation and reads through {@see FileCalls}, so that the event
- * loop keeps running while the file is read. The size is the end of the open file, and reads and the close go to that
- * same file; the path is not looked at again. Only a regular file is opened, and its size is what the
- * announced length of the body is checked against.
+ * A local file that the client opened once for one operation and reads through the {@see FileCalls} chosen for its
+ * transport (worker processes for non-blocking transports, in-process for blocking ones). The size is the end of the
+ * open file, and reads and the close go to that same file; the path is not looked at again. Only a regular file is
+ * opened, and its size is what the announced length of the body is checked against.
  *
  * The cancellation (the end of the operation) ends every wait for the driver. A scan ends with {@see close()} when it
  * went through, and with {@see discard()} otherwise.
@@ -59,7 +59,7 @@ final class LocalFile
      * @throws IcapStorageException When the file cannot be opened or measured
      * @throws CancelledException   When the cancellation ends the wait for the driver
      */
-    public static function open(string $path, Cancellation $cancellation): self
+    public static function open(string $path, Cancellation $cancellation, FileCalls $calls): self
     {
         // The worker has the working directory it started in, which is not necessarily this one.
         if (preg_match('~^(?:[\\\\/]|[A-Za-z]:[\\\\/])~', $path) !== 1) {
@@ -70,7 +70,6 @@ final class LocalFile
             $path = $directory . DIRECTORY_SEPARATOR . $path;
         }
 
-        $calls = FileCalls::current();
         $file = $calls->open($path, $cancellation);
 
         try {

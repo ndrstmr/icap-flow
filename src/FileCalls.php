@@ -23,6 +23,7 @@ namespace Ndrstmr\Icap;
 use Amp\ByteStream\StreamException;
 use Amp\Cancellation;
 use Amp\CancelledException;
+use Amp\File\Driver\BlockingFilesystemDriver;
 use Amp\File\Driver\ParallelFilesystemDriver;
 use Amp\File\File;
 use Amp\File\FilesystemDriver;
@@ -30,19 +31,27 @@ use Amp\File\FilesystemException;
 use Amp\Future;
 use Amp\NullCancellation;
 use Amp\Parallel\Context\ContextException;
+use Amp\Parallel\Context\StatusError;
 use Amp\Parallel\Worker\ContextWorkerPool;
+use Amp\Parallel\Worker\Worker;
 use Amp\Parallel\Worker\WorkerException;
+use Amp\Parallel\Worker\WorkerFactory;
 use Ndrstmr\Icap\Exception\IcapStorageException;
 use Revolt\EventLoop;
 use Revolt\EventLoop\Driver;
 use Revolt\EventLoop\Suspension;
 
 use function Amp\async;
+use function Amp\Parallel\Worker\workerFactory;
 
 /**
- * The calls of the client to its file driver: worker processes of amphp/parallel, one set per event loop, whatever
- * driver the application configured for its own files. Only these are known to give a regular file a size and an end;
- * a blocking driver would hold the event loop with the first open.
+ * The calls of the client to its file driver.
+ *
+ * For non-blocking transports ({@see current()}), files are read through worker processes of amphp/parallel, one set
+ * per event loop, whatever driver the application configured for its own files: a blocking driver would hold the event
+ * loop with the first open. For transports that implement {@see \Ndrstmr\Icap\Transport\BlockingTransport}
+ * ({@see blocking()}), files are read in-process via {@see BlockingFilesystemDriver}, without worker processes or
+ * `proc_open`.
  *
  * A worker that hangs in the operating system does not answer, and no cancellation reaches it. Each call therefore
  * runs in a fiber of its own and the operation only stops waiting for it; the call stays in the worker. It holds one
@@ -50,8 +59,10 @@ use function Amp\async;
  * file. A caller that finds no place waits for one as long as its operation lives, and sends nothing to the driver,
  * and a call whose operation ended while it waited or was scheduled does not start.
  *
- * The type of a path is looked up by a worker of its own. The workers of the files are leased to them for as long as
- * they are open, so a lookup that waited for one would wait for the end of scans that wait for the places it holds.
+ * For worker-backed calls, the type of a path is looked up by a worker of its own. The workers of the files are leased
+ * to them for as long as they are open, so a lookup that waited for one would wait for the end of scans that wait for
+ * the places it holds. A worker pool that has shut down (for example after a failed worker start) is replaced on the
+ * next call.
  *
  * @internal
  */
@@ -68,7 +79,11 @@ final class FileCalls
     /** @var \WeakMap<Driver, self>|null */
     private static ?\WeakMap $perLoop = null;
 
+    private static ?self $blocking = null;
+
     private static ?self $replacement = null;
+
+    private static ?WorkerFactory $workerFactory = null;
 
     private int $free = self::MAX_PENDING;
 
@@ -77,9 +92,13 @@ final class FileCalls
     /** @var array<int, Suspension<null>> callers waiting for a place, in the order they came */
     private array $waiting = [];
 
+    /**
+     * @param \Closure(): FilesystemDriver $files
+     * @param \Closure(): FilesystemDriver $paths
+     */
     private function __construct(
-        private readonly FilesystemDriver $files,
-        private readonly FilesystemDriver $paths,
+        private readonly \Closure $files,
+        private readonly \Closure $paths,
     ) {
     }
 
@@ -91,17 +110,83 @@ final class FileCalls
         self::$perLoop ??= new \WeakMap();
 
         return self::$perLoop[EventLoop::getDriver()] ??= new self(
-            new ParallelFilesystemDriver(),
-            new ParallelFilesystemDriver(new ContextWorkerPool(1)),
+            self::pooled(ParallelFilesystemDriver::DEFAULT_WORKER_LIMIT),
+            self::pooled(1),
         );
     }
 
+    public static function blocking(): self
+    {
+        if (self::$replacement !== null) {
+            return self::$replacement;
+        }
+
+        if (self::$blocking === null) {
+            $driver = new BlockingFilesystemDriver();
+            self::$blocking = new self(
+                static fn (): FilesystemDriver => $driver,
+                static fn (): FilesystemDriver => $driver,
+            );
+        }
+
+        return self::$blocking;
+    }
+
     /**
-     * For tests: serves the calls from another driver with places of its own; null puts the worker processes back.
+     * For tests: serves the calls from another driver with places of its own, taking precedence over both worker and
+     * in-process drivers; null restores the transport-selected drivers.
      */
     public static function use(?FilesystemDriver $driver): void
     {
-        self::$replacement = $driver === null ? null : new self($driver, $driver);
+        self::$replacement = $driver === null
+            ? null
+            : new self(
+                static fn (): FilesystemDriver => $driver,
+                static fn (): FilesystemDriver => $driver,
+            );
+    }
+
+    /**
+     * A worker-backed driver whose pool is replaced on the next call once it has shut down.
+     *
+     * @param positive-int $limit
+     *
+     * @return \Closure(): FilesystemDriver
+     */
+    private static function pooled(int $limit): \Closure
+    {
+        $pool = null;
+        $driver = null;
+
+        return static function () use ($limit, &$pool, &$driver): FilesystemDriver {
+            if ($driver === null || $pool === null || !$pool->isRunning()) {
+                $pool = new ContextWorkerPool($limit, self::reportingWorkerFactory());
+                $driver = new ParallelFilesystemDriver($pool);
+            }
+
+            return $driver;
+        };
+    }
+
+    /**
+     * Delegates to the application's {@see workerFactory()} and turns unexpected startup failures (such as
+     * {@see \ValueError} or {@see \Error} from binary lookup) into {@see ContextException} where they arise.
+     */
+    private static function reportingWorkerFactory(): WorkerFactory
+    {
+        return self::$workerFactory ??= new class () implements WorkerFactory {
+            #[\Override]
+            public function create(?Cancellation $cancellation = null): Worker
+            {
+                try {
+                    return workerFactory()->create($cancellation);
+                } catch (CancelledException|ContextException|WorkerException $e) {
+                    throw $e;
+                } catch (\Throwable $e) {
+                    throw new ContextException('Unable to start a file worker.', 0, $e);
+                }
+            }
+        };
     }
 
     /**
@@ -112,14 +197,14 @@ final class FileCalls
     public function open(string $path, Cancellation $cancellation): File
     {
         $opening = $this->begin(function () use ($path, $cancellation): File {
-            $mode = $this->paths->getStatus($path)['mode'] ?? null;
+            $mode = ($this->paths)()->getStatus($path)['mode'] ?? null;
             if (!is_int($mode) || ($mode & self::TYPE_MASK) !== self::REGULAR) {
                 throw new FilesystemException('Not a regular file: ' . $path);
             }
             // The lookup may have outlived the operation.
             $cancellation->throwIfRequested();
 
-            return $this->files->openFile($path, 'r');
+            return ($this->files)()->openFile($path, 'r');
         }, $cancellation);
 
         try {
@@ -206,8 +291,9 @@ final class FileCalls
     }
 
     /**
-     * Waits for the call as long as the operation lives. What the file driver reports as a failure of the file is an
-     * {@see IcapStorageException}, unless the operation is over by then; anything else passes as it is.
+     * Waits for the call as long as the operation lives. What the file driver reports as a failure of the file or of
+     * its worker (including a worker shut down after another start failed) is an {@see IcapStorageException}, unless
+     * the operation is over by then; anything else passes as it is.
      *
      * @template T
      *
@@ -219,7 +305,7 @@ final class FileCalls
     {
         try {
             return $call->await($cancellation);
-        } catch (FilesystemException|StreamException|WorkerException|ContextException $e) {
+        } catch (FilesystemException|StreamException|WorkerException|ContextException|StatusError $e) {
             // The end of the operation outranks the failure that came in with it.
             $cancellation->throwIfRequested();
 

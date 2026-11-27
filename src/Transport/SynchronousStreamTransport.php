@@ -34,7 +34,7 @@ use Ndrstmr\Icap\DTO\IcapResponse;
  * out for an exchange of more than one round trip, such as a preview that the server answers with `100 Continue`
  * (RFC 3507 §4.5); each of its writes has one window for the whole call ({@see TransportSession::write()}).
  */
-final class SynchronousStreamTransport implements SessionAwareTransport, DiscardingTransport
+final class SynchronousStreamTransport implements SessionAwareTransport, DiscardingTransport, BlockingTransport
 {
     /**
      * @param iterable<string> $rawRequest

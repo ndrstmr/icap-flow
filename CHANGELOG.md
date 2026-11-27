@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Transport\BlockingTransport`: a transport that blocks the process while it waits for the network; `SynchronousStreamTransport` implements it.
+
 ### Changed
 - The Composer package leaves out the tests, `docs/` and the development files; they stay in the repository.
+- With a `BlockingTransport`, `scanFile*()` reads the file in the process (`BlockingFilesystemDriver` of amphp/file), without worker processes or `proc_open`. This includes `IcapClient::forServer()` and `SynchronousIcapClient::create()`.
+
+### Fixed
+- A failed start of a file worker ends the affected scans with `IcapStorageException`, the cause in `previous`, and the next scan starts new workers. Before, the start error or an `Amp\Parallel\Context\StatusError` passed through.
 
 ## [4.1.0]
 
