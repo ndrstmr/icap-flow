@@ -26,8 +26,9 @@ use Ndrstmr\Icap\HeaderFields;
  * Immutable data object representing an ICAP request.
  *
  * An ICAP request is an ICAP envelope (method/URI/ICAP-headers) that
- * optionally carries a single encapsulated HTTP request (REQMOD) or a
- * single encapsulated HTTP response (RESPMOD), per RFC 3507 §4.4.
+ * optionally carries an encapsulated HTTP request (REQMOD), an encapsulated
+ * HTTP response (RESPMOD), or both (RESPMOD with `req-hdr` before `res-hdr`,
+ * per RFC 3507 §4.4.1 and §4.9.1).
  *
  * Rendering into wire bytes is the {@see \Ndrstmr\Icap\RequestFormatter}'s
  * job; this class is a pure value object.
@@ -45,7 +46,7 @@ final readonly class IcapRequest
      *                                                       refused. Host (from $uri) and Encapsulated are always
      *                                                       computed by the formatter: caller values for them are
      *                                                       ignored in any spelling
-     * @param HttpRequest|null        $encapsulatedRequest  Encapsulated HTTP request (REQMOD)
+     * @param HttpRequest|null        $encapsulatedRequest  Encapsulated HTTP request (REQMOD, or `req-hdr` in RESPMOD)
      * @param HttpResponse|null       $encapsulatedResponse Encapsulated HTTP response (RESPMOD)
      * @param bool                    $previewIsComplete    When true, the body attached to the encapsulated HTTP
      *                                                      message represents the complete payload in a preview

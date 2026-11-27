@@ -85,6 +85,8 @@ echo $result->isInfected()
 
 `scanFile()` and `scanFileWithPreview()` read the file through amphp/file: in-process without `proc_open` when using a blocking transport (`SynchronousStreamTransport`), and in worker processes (`proc_open` is needed) for non-blocking transports so the event loop keeps running. Keep the file and path stable during the scan and release only the same unchanged object. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
 
+For ICAP servers that reject `RESPMOD` without an encapsulated HTTP request header (`req-hdr`, RFC 3507 §4.9.1), pass a fixed, header-only `HttpRequest` via `encapsulatedRequest` to `IcapClient` — it then applies to every file scan of that client. Because an uploaded file has no original HTTP request, use a synthetic, neutral `GET` such as `new HttpRequest('GET', '/upload', ['Host' => ['localhost']])` and keep filenames and personal data out of path and headers, as the server may log them ([`docs/file-sources.md`](docs/file-sources.md#encapsulated-request-header)).
+
 Without a verdict the client applies the default rules: a `204`, and a `200` or `206` without a header of `Config::getVirusFoundHeaders()` (default `X-Virus-Name`), are clean. They are verified against no product, and with c-icap they are wrong: they report an infected file as clean, and with c-icap's infection headers in the list they still take the `204` or the unchanged message it sends for a file it did not scan for a clean one. Use the verified mode there.
 
 ## Configuration

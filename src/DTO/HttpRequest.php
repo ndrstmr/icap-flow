@@ -22,7 +22,8 @@ namespace Ndrstmr\Icap\DTO;
 
 /**
  * Encapsulated HTTP request carried inside an ICAP REQMOD request
- * (RFC 3507 §4.8). The {@see \Ndrstmr\Icap\RequestFormatter} renders its
+ * (RFC 3507 §4.8) or as the request header block (`req-hdr`) of a RESPMOD
+ * request (RFC 3507 §4.9.1). The {@see \Ndrstmr\Icap\RequestFormatter} renders its
  * request-line + headers into the `req-hdr` section and streams the body
  * into the `req-body` section. A stream passed in stays the caller's: it is
  * read, never closed. When the headers announce a `Content-Length`, the
