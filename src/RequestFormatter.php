@@ -270,25 +270,41 @@ final class RequestFormatter implements RequestFormatterInterface
             . "\r\n";
     }
 
-    private function renderHttpRequestHeaders(HttpRequest $req): string
+    /**
+     * Check the request line and headers of an encapsulated HTTP request without formatting a full ICAP message.
+     *
+     * @internal
+     *
+     * @return array<string, list<string>>
+     *
+     * @throws \InvalidArgumentException When the request line or a header field cannot be sent
+     */
+    public static function validatedHttpRequestHeaders(HttpRequest $req): array
     {
         // request-line = method SP request-target SP HTTP-version (RFC 7230 §3.1.1)
         if (!HeaderFields::isToken($req->method)
             || preg_match('/^[^\x00-\x20\x7F]+\z/', $req->requestTarget) !== 1
-            || !$this->isHttpVersion($req->httpVersion)
+            || !self::isHttpVersion($req->httpVersion)
         ) {
             throw new \InvalidArgumentException('Encapsulated HTTP request line is invalid (RFC 7230 §3.1.1).');
         }
 
+        return HeaderFields::validated($req->headers, 'HTTP');
+    }
+
+    private function renderHttpRequestHeaders(HttpRequest $req): string
+    {
+        $headers = self::validatedHttpRequestHeaders($req);
+
         return sprintf('%s %s %s', $req->method, $req->requestTarget, $req->httpVersion) . "\r\n"
-            . $this->renderFields(HeaderFields::validated($req->headers, 'HTTP'))
+            . $this->renderFields($headers)
             . "\r\n";
     }
 
     private function renderHttpResponseHeaders(HttpResponse $res): string
     {
         // status-line = HTTP-version SP status-code SP reason-phrase (RFC 7230 §3.1.2)
-        if (!$this->isHttpVersion($res->httpVersion)
+        if (!self::isHttpVersion($res->httpVersion)
             || $res->statusCode < 100
             || $res->statusCode > 999
             || !HeaderFields::isText($res->reasonPhrase)
@@ -319,7 +335,7 @@ final class RequestFormatter implements RequestFormatterInterface
     /**
      * HTTP-version = HTTP-name "/" DIGIT "." DIGIT (RFC 7230 §2.6).
      */
-    private function isHttpVersion(string $version): bool
+    private static function isHttpVersion(string $version): bool
     {
         return preg_match('#^HTTP/[0-9]\.[0-9]\z#', $version) === 1;
     }

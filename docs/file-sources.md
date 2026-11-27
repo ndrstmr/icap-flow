@@ -10,6 +10,29 @@
 - Supported are regular files of the local file system (a link counts as its target). A device, a FIFO, a directory and a path that does not exist are refused with an `IcapStorageException` before anything is opened. A path is no stream-wrapper URL. A relative path is taken from the working directory of the call. Network file systems and FUSE are not qualified.
 - The request has to read the whole file. A custom `RequestFormatterInterface` receives it as the body of the encapsulated response (a `LocalFile`, internal) and passes it to `ChunkedBodyEncoder`. A scan whose request did not read the file to its end fails with an `IcapStorageException`; the answer of the server is no verdict on a body that is not the file. A file that cannot be closed after a clean scan fails the scan as well.
 
+## Encapsulated request header
+
+For `RESPMOD`, RFC 3507 §4.9.1 states: "If available, the header of the original client request SHOULD also be included" (`req-hdr` before `res-hdr`). Some ICAP servers require `req-hdr` and reject `RESPMOD` requests without it (for example with `418 Bad composition`).
+
+Pass an optional, header-only `HttpRequest` as the `encapsulatedRequest` parameter of `IcapClient`:
+
+```php
+use Ndrstmr\Icap\DTO\HttpRequest;
+
+$client = new IcapClient(
+    $config,
+    $transport,
+    new RequestFormatter(),
+    new ResponseParser(),
+    encapsulatedRequest: new HttpRequest('GET', '/upload', ['Host' => ['localhost']]),
+);
+```
+
+- The request header applies to all file scans of that client (`scanFile()`, `scanFileWithPreview()` and the `DiscardingBody` variants). `request()` and `options()` are not changed, and continuation chunks after `100 Continue` still carry only the remainder of the body.
+- For a file upload there is no original HTTP request (`RESPMOD` wraps a synthesized HTTP response), so the request header is synthetic; a plain `GET` with a neutral path and `Host` as above suffices.
+- Its request line and headers are sent to the ICAP server and may appear in server logs; do not put user filenames or personal data in the path or headers.
+- The constructor validates the request line and headers and rejects a request that carries a body (`\InvalidArgumentException`), before any scan starts.
+
 ## Large responses
 
 A server that is not offered `Allow: 204` returns the whole message (RFC 3507 §4.6), so the answer to a large file is as large as the file. `scanFile()` keeps the body of the response and refuses a response over `Config::getMaxResponseSize()` (10 MiB by default). A caller that needs only the verdict and the metadata of the response uses the discarding scans:

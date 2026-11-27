@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 use Ndrstmr\Icap\CicapVerdict;
 use Ndrstmr\Icap\Config;
+use Ndrstmr\Icap\DTO\HttpRequest;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\ScanResult;
@@ -69,14 +70,20 @@ function cicapLiveService(string $variable = 'ICAP_CLAMAV_SERVICE'): array
     return ['host' => $host, 'port' => (int) (cicapLiveEnv('ICAP_PORT') ?? '1344'), 'service' => $service];
 }
 
-function cicapLiveClient(string $host, int $port, string $service, ?TransportInterface $transport = null): IcapClient
-{
+function cicapLiveClient(
+    string $host,
+    int $port,
+    string $service,
+    ?TransportInterface $transport = null,
+    ?HttpRequest $encapsulatedRequest = null,
+): IcapClient {
     return new IcapClient(
         new Config($host, $port, streamTimeout: 60.0, operationTimeout: 120.0),
         $transport ?? new AsyncAmpTransport(),
         new RequestFormatter(),
         new ResponseParser(),
         verdict: new CicapVerdict($service),
+        encapsulatedRequest: $encapsulatedRequest,
     );
 }
 
@@ -153,7 +160,7 @@ it('finds EICAR with the default Config and the default factory, which the defau
     expect($default->scanFile($service, $eicar)->await()->isInfected())->toBeFalse();
 });
 
-it('gives the same verdict through every helper and both transports, with the infection in and beyond the preview', function () {
+it('gives the same verdict through every helper and both transports, with and without a request head, with the infection in and beyond the preview', function () {
     ['host' => $host, 'port' => $port, 'service' => $service] = cicapLiveService();
     $filler = str_repeat('0123456789abcdef', 192);
     // [content, the verdict: a name (matched as a pattern) or null for clean]
@@ -165,21 +172,28 @@ it('gives the same verdict through every helper and both transports, with the in
         'EICAR first in an archive that is more than the preview' => [cicapZip(['eicar.com' => cicapEicar(), 'filler.txt' => $filler]), '/^Eicar-(Test-)?Signature$/'],
         'EICAR beyond the preview of an archive' => [cicapZip(['filler.txt' => $filler, 'eicar.com' => cicapEicar()]), '/^Eicar-(Test-)?Signature$/'],
     ];
+    $heads = [
+        'without request head' => null,
+        'with request head' => new HttpRequest('GET', '/upload', ['Host' => ['localhost']]),
+    ];
 
     foreach (['async transport' => new AsyncAmpTransport(), 'synchronous transport' => new SynchronousStreamTransport()] as $flow => $transport) {
-        $client = cicapLiveClient($host, $port, $service, $transport);
-        foreach ($samples as $label => [$content, $threat]) {
-            $path = FileWorkers::file($content);
-            foreach (cicapLiveHelpers() as $helper => $scan) {
-                $result = $scan($client, $service, $path);
-                $how = "{$flow}, {$helper}: {$label}";
+        foreach ($heads as $headLabel => $head) {
+            $client = cicapLiveClient($host, $port, $service, $transport, $head);
+            foreach ($samples as $label => [$content, $threat]) {
+                $path = FileWorkers::file($content);
+                foreach (cicapLiveHelpers() as $helper => $scan) {
+                    $result = $scan($client, $service, $path);
+                    $how = "{$flow}, {$headLabel}, {$helper}: {$label}";
 
-                expect($result->isInfected())->toBe($threat !== null, $how);
-                if ($threat === null) {
-                    expect($result->getVirusName())->toBeNull($how);
-                } else {
-                    expect($result->getVirusName())->toMatch($threat, $how);
+                    expect($result->isInfected())->toBe($threat !== null, $how);
+                    if ($threat === null) {
+                        expect($result->getVirusName())->toBeNull($how);
+                    } else {
+                        expect($result->getVirusName())->toMatch($threat, $how);
+                    }
                 }
+                FileWorkers::removeFiles();
             }
         }
     }

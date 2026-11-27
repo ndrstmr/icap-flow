@@ -166,8 +166,9 @@ final class IcapTestServer
             }
         }
 
-        // The encapsulated header section, if any, is not chunked.
-        $this->skip($peer, $buffer, isset($layout['res-hdr'], $layout['res-body']) ? $layout['res-body'] - $layout['res-hdr'] : 0);
+        // The encapsulated header sections (req-hdr, res-hdr), if any, are not chunked; the body or null-body offset marks their end.
+        $headerBytes = $layout['res-body'] ?? $layout['req-body'] ?? $layout['opt-body'] ?? $layout['null-body'] ?? 0;
+        $this->skip($peer, $buffer, $headerBytes);
 
         return [
             'stage'     => isset($headers['preview']) ? 'preview' : 'single',

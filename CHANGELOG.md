@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `Transport\BlockingTransport`: a transport that blocks the process while it waits for the network; `SynchronousStreamTransport` implements it.
+- Optional `encapsulatedRequest` parameter on `IcapClient::__construct()` to send a fixed, header-only `HttpRequest` (`req-hdr`, RFC 3507 §4.9.1) with all `scanFile*()` requests of that client.
 
 ### Changed
 - The Composer package leaves out the tests, `docs/` and the development files; they stay in the repository.

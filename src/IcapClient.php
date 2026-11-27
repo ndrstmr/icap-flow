@@ -25,6 +25,7 @@ use Amp\Future;
 use Ndrstmr\Icap\Cache\OptionsCacheInterface;
 use Ndrstmr\Icap\Cache\OptionsCacheKey;
 use Ndrstmr\Icap\Cache\OptionsEntry;
+use Ndrstmr\Icap\DTO\HttpRequest;
 use Ndrstmr\Icap\DTO\HttpResponse;
 use Ndrstmr\Icap\DTO\IcapRequest;
 use Ndrstmr\Icap\DTO\IcapResponse;
@@ -58,11 +59,15 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     private LoggerInterface $logger;
 
     /**
-     * @param CicapVerdict|null $verdict Turns the verified mode on, for the service the verdict is made for. It decides
-     *                                   every answer, so a preview strategy of your own, which could decide before it,
-     *                                   is refused.
+     * @param CicapVerdict|null $verdict             Turns the verified mode on, for the service the verdict is made for. It decides
+     *                                               every answer, so a preview strategy of your own, which could decide before it,
+     *                                               is refused.
+     * @param HttpRequest|null  $encapsulatedRequest Optional fixed, header-only HTTP request (`req-hdr`, RFC 3507 §4.9.1)
+     *                                               sent before `res-hdr` in all `scanFile*()` requests of this client, for
+     *                                               servers that reject RESPMOD without `req-hdr`. Checked here before any scan.
      *
-     * @throws \InvalidArgumentException When a verdict is combined with a preview strategy other than the default one
+     * @throws \InvalidArgumentException When a verdict is combined with a preview strategy other than the default one,
+     *                                   or when `$encapsulatedRequest` carries a body or invalid request-line/header metadata
      */
     public function __construct(
         private Config $config,
@@ -73,11 +78,18 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?LoggerInterface $logger = null,
         private ?OptionsCacheInterface $optionsCache = null,
         private readonly ?CicapVerdict $verdict = null,
+        private readonly ?HttpRequest $encapsulatedRequest = null,
     ) {
         if ($verdict !== null && $previewStrategy !== null && !$previewStrategy instanceof DefaultPreviewStrategy) {
             throw new \InvalidArgumentException(
                 $previewStrategy::class . ' would decide on the answer to a preview before the verified mode does; use one of the two.',
             );
+        }
+        if ($encapsulatedRequest !== null) {
+            if ($encapsulatedRequest->body !== null) {
+                throw new \InvalidArgumentException('The encapsulated HTTP request for file scans must not carry a body.');
+            }
+            RequestFormatter::validatedHttpRequestHeaders($encapsulatedRequest);
         }
         $this->previewStrategy = $previewStrategy ?? new DefaultPreviewStrategy(
             $config->getVirusFoundHeaders(),
@@ -387,6 +399,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
                     // caller Preview would announce one that never happens; it stays
                     // out in any spelling. Allow, e.g. 204, is valid here.
                     headers: $this->wholeFileHeaders($extraHeaders),
+                    encapsulatedRequest: $this->encapsulatedRequest,
                     encapsulatedResponse: $httpResponse,
                 );
 
@@ -549,6 +562,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             method: 'RESPMOD',
             uri: $this->buildServiceUri($service),
             headers: $headers,
+            encapsulatedRequest: $this->encapsulatedRequest,
             encapsulatedResponse: $previewEnvelope,
             previewIsComplete: $previewIsComplete,
         );
