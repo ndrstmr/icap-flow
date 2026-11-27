@@ -83,7 +83,7 @@ echo $result->isInfected()
 
 ## Scanning files
 
-`scanFile()` and `scanFileWithPreview()` read the file through amphp/file in worker processes (`proc_open` is needed), so the event loop keeps running. Keep the file and path stable during the scan and release only the same unchanged object. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
+`scanFile()` and `scanFileWithPreview()` read the file through amphp/file: in-process without `proc_open` when using a blocking transport (`SynchronousStreamTransport`), and in worker processes (`proc_open` is needed) for non-blocking transports so the event loop keeps running. Keep the file and path stable during the scan and release only the same unchanged object. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
 
 Without a verdict the client applies the default rules: a `204`, and a `200` or `206` without a header of `Config::getVirusFoundHeaders()` (default `X-Virus-Name`), are clean. They are verified against no product, and with c-icap they are wrong: they report an infected file as clean, and with c-icap's infection headers in the list they still take the `204` or the unchanged message it sends for a file it did not scan for a clean one. Use the verified mode there.
 
