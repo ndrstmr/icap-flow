@@ -38,9 +38,10 @@ use function Amp\async;
  *
  * A request is described to the callback as: `stage` (`single`, `preview` or `rest`), `headers` (ICAP headers, names in
  * lower case), `layout` (the offsets of its Encapsulated header), `bodyBytes` (the decoded body bytes so far, preview
- * and rest together) and `continued` (the server answered the preview with `100 Continue`).
+ * and rest together), `continued` (the server answered the preview with `100 Continue`) and `rawHead` (the wire bytes
+ * of the ICAP head and the encapsulated header sections, without the body).
  *
- * @phpstan-type Request array{stage: string, headers: array<string, string>, layout: array<string, int>, bodyBytes: int, continued: bool}
+ * @phpstan-type Request array{stage: string, headers: array<string, string>, layout: array<string, int>, bodyBytes: int, continued: bool, rawHead: string}
  */
 final class IcapTestServer
 {
@@ -124,10 +125,10 @@ final class IcapTestServer
         try {
             while (!$peer->isClosed()) {
                 // The request line; blank lines between requests are skipped.
-                if ($this->line($peer, $buffer) === '') {
+                if (($requestLine = $this->line($peer, $buffer)) === '') {
                     continue;
                 }
-                $request = $this->head($peer, $buffer);
+                $request = $this->head($peer, $buffer, $requestLine);
 
                 // An OPTIONS request has no body to take in.
                 if (array_intersect(array_keys($request['layout']), ['req-body', 'res-body', 'opt-body']) !== []) {
@@ -151,13 +152,16 @@ final class IcapTestServer
     /**
      * @return Request
      */
-    private function head(SocketPeer $peer, string &$buffer): array
+    private function head(SocketPeer $peer, string &$buffer, string $requestLine): array
     {
+        $rawHead = $requestLine . "\r\n";
         $headers = [];
         while (($line = $this->line($peer, $buffer)) !== '') {
+            $rawHead .= $line . "\r\n";
             [$name, $value] = explode(':', $line, 2) + [1 => ''];
             $headers[strtolower($name)] = trim($value);
         }
+        $rawHead .= "\r\n";
 
         $layout = [];
         foreach (explode(',', $headers['encapsulated'] ?? '') as $entry) {
@@ -168,7 +172,7 @@ final class IcapTestServer
 
         // The encapsulated header sections (req-hdr, res-hdr), if any, are not chunked; the body or null-body offset marks their end.
         $headerBytes = $layout['res-body'] ?? $layout['req-body'] ?? $layout['opt-body'] ?? $layout['null-body'] ?? 0;
-        $this->skip($peer, $buffer, $headerBytes);
+        $rawHead .= $this->readBytes($peer, $buffer, $headerBytes, keep: true);
 
         return [
             'stage'     => isset($headers['preview']) ? 'preview' : 'single',
@@ -176,6 +180,7 @@ final class IcapTestServer
             'layout'    => $layout,
             'bodyBytes' => 0,
             'continued' => false,
+            'rawHead'   => $rawHead,
         ];
     }
 
@@ -189,7 +194,7 @@ final class IcapTestServer
         do {
             $length = (int) hexdec(trim(explode(';', $this->line($peer, $buffer), 2)[0]));
             if ($length > 0) {
-                $this->skip($peer, $buffer, $length + 2);
+                $this->readBytes($peer, $buffer, $length + 2);
                 $request['bodyBytes'] += $length;
             }
         } while ($length > 0);
@@ -236,16 +241,22 @@ final class IcapTestServer
     }
 
     /**
-     * Passes over the next $length bytes without keeping them.
+     * Consumes the next $length bytes from the stream, returning them only when $keep is true.
      */
-    private function skip(SocketPeer $peer, string &$buffer, int $length): void
+    private function readBytes(SocketPeer $peer, string &$buffer, int $length, bool $keep = false): string
     {
+        $out = '';
         while ($length > 0) {
             $buffer = $buffer === '' ? $this->more($peer) : $buffer;
             $take = min($length, strlen($buffer));
+            if ($keep) {
+                $out .= substr($buffer, 0, $take);
+            }
             $buffer = substr($buffer, $take);
             $length -= $take;
         }
+
+        return $out;
     }
 
     private function more(SocketPeer $peer): string

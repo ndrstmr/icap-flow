@@ -129,37 +129,7 @@ final readonly class Config
             throw new \InvalidArgumentException('maxHeaderLineLength must be >= 1, got: ' . $maxHeaderLineLength);
         }
 
-        $this->virusFoundHeaders = self::checkedHeaderNames($virusFoundHeaders ?? [$virusFoundHeader]);
-    }
-
-    /**
-     * The virus header names as an ordered list of tokens, or an error that
-     * names what is wrong. The names come from callers no static analysis
-     * checks, so every entry is tested, not just the first.
-     *
-     * @param  array<mixed>  $names
-     * @return list<string>
-     *
-     * @throws \InvalidArgumentException When the names are not a non-empty list of tokens
-     */
-    private static function checkedHeaderNames(array $names): array
-    {
-        if ($names === [] || !array_is_list($names)) {
-            throw new \InvalidArgumentException('virusFoundHeaders must be a non-empty list of header names.');
-        }
-
-        $checked = [];
-        foreach ($names as $name) {
-            if (!is_string($name) || !HeaderFields::isToken($name)) {
-                throw new \InvalidArgumentException(sprintf(
-                    'virusFoundHeaders must contain only header names that are tokens (RFC 7230 §3.2.6), got: %s',
-                    is_string($name) ? var_export($name, true) : get_debug_type($name),
-                ));
-            }
-            $checked[] = $name;
-        }
-
-        return $checked;
+        $this->virusFoundHeaders = HeaderFields::checkedNames($virusFoundHeaders ?? [$virusFoundHeader], 'virusFoundHeaders');
     }
 
     public function getSocketTimeout(): float

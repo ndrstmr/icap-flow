@@ -16,7 +16,7 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+, 
 > [!WARNING]
 > **AI-assisted origin & production-use disclaimer.** Large parts of this library — code, tests, docs and CI plumbing — were authored with substantial AI assistance and reviewed in independent audits ([`docs/review/`](docs/review/)). This client sends uploads to an ICAP service and interprets its response; it sits in the security-critical path of any application that uses it. **Do not deploy this in production without a deep, independent review and an integration-test bake-out against the ICAP server you actually use.** A non-exhaustive checklist:
 >
-> - End-to-end test against the ICAP service you use. Only c-icap `virus_scan` with ClamAV is verified ([verified mode](docs/cicap-clamav.md)); any other service is read by the default rules, which have not been verified against a product.
+> - End-to-end test against the ICAP service you use. Only c-icap `virus_scan` with ClamAV is verified ([verified mode](docs/cicap-clamav.md)); `VirusHeaderVerdict` ([docs](docs/virus-header-verdict.md)) enforces fail-closed header rules without verifying any server, and without a verdict the default rules apply — neither is verified against a product.
 > - Fail-secure verification: confirm an unreachable / 5xx / malformed-response server makes your application **block the upload**, not silently pass it through.
 > - TLS configuration review (cipher policy, hostname verification, cert pinning where appropriate).
 > - Resource limits (`Config::withLimits(...)`) tuned to your traffic profile.
@@ -87,7 +87,17 @@ echo $result->isInfected()
 
 For ICAP servers that reject `RESPMOD` without an encapsulated HTTP request header (`req-hdr`, RFC 3507 §4.9.1), pass a fixed, header-only `HttpRequest` via `encapsulatedRequest` to `IcapClient` — it then applies to every file scan of that client. Because an uploaded file has no original HTTP request, use a synthetic, neutral `GET` such as `new HttpRequest('GET', '/upload', ['Host' => ['localhost']])` and keep filenames and personal data out of path and headers, as the server may log them ([`docs/file-sources.md`](docs/file-sources.md#encapsulated-request-header)).
 
-Without a verdict the client applies the default rules: a `204`, and a `200` or `206` without a header of `Config::getVirusFoundHeaders()` (default `X-Virus-Name`), are clean. They are verified against no product, and with c-icap they are wrong: they report an infected file as clean, and with c-icap's infection headers in the list they still take the `204` or the unchanged message it sends for a file it did not scan for a clean one. Use the verified mode there.
+### Evaluation modes
+
+`IcapClient` accepts an optional `VerdictInterface` (`verdict:` parameter, also on `IcapClient::forServer()`). Choose one of three modes:
+
+| Mode | Clean answer | What is tested |
+|---|---|---|
+| Default rules (no verdict) | `204`, or `200`/`206` without a header of `Config::getVirusFoundHeaders()` (default `X-Virus-Name`) | Protocol parsing only; not verified against any product (wrong for c-icap: infected and skipped files appear clean) |
+| `CicapVerdict` (verified mode, [`docs/cicap-clamav.md`](docs/cicap-clamav.md)) | Only `204` after the whole file | Verified in CI against the reference c-icap + ClamAV service |
+| `VirusHeaderVerdict` ([`docs/virus-header-verdict.md`](docs/virus-header-verdict.md)) | Only `204` after the whole file; configured virus headers are findings, optional block headers are policy blocks (`isInfected() === true`, `getBlockReason()`) | Verdict rules tested in unit/wire tests; the operator must verify the actual ICAP server |
+
+Implement `VerdictInterface` for custom fail-closed response rules bound to a single service.
 
 ## Configuration
 
@@ -189,7 +199,7 @@ $result = $icap->scanFile('/avscan', '/path/to/upload.bin', [
 ]);
 ```
 
-Header names and values are validated against CR / LF / NUL / control characters — injection attempts raise `InvalidArgumentException` before any byte hits the socket. The client sets `Host` and `Encapsulated` itself, and in `scanFileWithPreview()` also `Preview` / `Allow`; caller values for these are dropped in any spelling. `scanFile()` sends no preview, so it drops a caller `Preview` too, while `Allow` (e.g. `Allow: 204`) and all other headers pass through. In the verified mode the scan helpers set `Allow: 204` themselves.
+Header names and values are validated against CR / LF / NUL / control characters — injection attempts raise `InvalidArgumentException` before any byte hits the socket. The client sets `Host` and `Encapsulated` itself, and in `scanFileWithPreview()` also `Preview` / `Allow`; caller values for these are dropped in any spelling. `scanFile()` sends no preview, so it drops a caller `Preview` too, while `Allow` (e.g. `Allow: 204`) and all other headers pass through. With a verdict the scan helpers set `Allow: 204` themselves.
 
 ## Exception taxonomy
 
@@ -199,7 +209,7 @@ The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInter
 |---|---|
 | `IcapConnectionException` | TCP-level failure (refused, connect timeout, failed TLS handshake, a socket that breaks) |
 | `IcapTimeoutException` | A limit of the client passed: the `operationTimeout` of the whole operation, or the limit of a phase (acquiring the connection, the TLS handshake, writing the request, the answer beginning or arriving; the synchronous transport reports a read that waited that long, or a write that made no progress for that long). A cancellation by the caller is not mapped; it stays `Amp\CancelledException` |
-| `IcapProtocolException` | RFC-3507 violation or unexpected status (e.g. status 100 outside preview); in the verified mode also an answer that does not show a scan |
+| `IcapProtocolException` | RFC-3507 violation or unexpected status (e.g. status 100 outside preview); with a verdict also an answer that does not show a scan |
 | `IcapMalformedResponseException` (extends `IcapProtocolException`) | Server response can't be parsed (no separator, header line without `:`, oversize lines) |
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |
 | `IcapServerException` | ICAP 5xx response — server failed, code is the real status |
@@ -220,6 +230,7 @@ The `examples/` directory has runnable demos and a cookbook:
 - `examples/cookbook/05-retry-decorator.php` — exponential-backoff retry of OPTIONS on 5xx
 - `examples/cookbook/06-pool-tuning.php` — connection-pool idle eviction and Max-Connections
 - `examples/cookbook/07-cancellation-from-upload.php` — timeout and user-initiated cancellation
+- `examples/cookbook/08-virus-header-verdict.php` — fail-closed header verdict with block headers and encapsulated request head
 
 ## Integration tests
 

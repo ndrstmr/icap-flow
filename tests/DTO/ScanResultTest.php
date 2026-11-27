@@ -25,6 +25,7 @@ it('stores infection state and original response', function () {
 
     expect($result->isInfected())->toBeFalse()
         ->and($result->getVirusName())->toBeNull()
+        ->and($result->getBlockReason())->toBeNull()
         ->and($result->getOriginalResponse())->toBe($resp);
 });
 
@@ -34,5 +35,16 @@ it('can store virus name', function () {
 
     expect($result->isInfected())->toBeTrue()
         ->and($result->getVirusName())->toBe('EICAR')
+        ->and($result->getBlockReason())->toBeNull()
+        ->and($result->getOriginalResponse())->toBe($resp);
+});
+
+it('can store a policy block reason without a virus name while staying infected', function () {
+    $resp = new IcapResponse(200, ['X-Block-Reason' => ['Media type blocked']]);
+    $result = new ScanResult(true, null, $resp, 'Media type blocked');
+
+    expect($result->isInfected())->toBeTrue()
+        ->and($result->getVirusName())->toBeNull()
+        ->and($result->getBlockReason())->toBe('Media type blocked')
         ->and($result->getOriginalResponse())->toBe($resp);
 });

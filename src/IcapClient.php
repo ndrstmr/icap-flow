@@ -48,10 +48,10 @@ use Psr\Log\NullLogger;
 /**
  * Core asynchronous ICAP client used by the synchronous wrapper.
  *
- * With a {@see CicapVerdict} the client runs in the verified mode for the c-icap `virus_scan` service with ClamAV: every
- * answer to a scan, to a preview and to the rest of the file, whichever helper asked for it, is read by that verdict, and
- * the client scans with the service of the verdict only. Without one, the default rules apply (a 204, and a 200 or 206
- * without a header of the {@see Config} list, are clean).
+ * With a {@see VerdictInterface} — such as {@see CicapVerdict} (verified mode for the c-icap `virus_scan` service
+ * with ClamAV) or {@see VirusHeaderVerdict} — every answer to a scan, to a preview and to the rest of the file,
+ * whichever helper asked for it, is read by that verdict, and the client scans with the service of the verdict only.
+ * Without one, the default rules apply (a 204, and a 200 or 206 without a header of the {@see Config} list, are clean).
  */
 final class IcapClient implements IcapClientInterface, DiscardingIcapClient
 {
@@ -59,12 +59,13 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     private LoggerInterface $logger;
 
     /**
-     * @param CicapVerdict|null $verdict             Turns the verified mode on, for the service the verdict is made for. It decides
-     *                                               every answer, so a preview strategy of your own, which could decide before it,
-     *                                               is refused.
-     * @param HttpRequest|null  $encapsulatedRequest Optional fixed, header-only HTTP request (`req-hdr`, RFC 3507 §4.9.1)
-     *                                               sent before `res-hdr` in all `scanFile*()` requests of this client, for
-     *                                               servers that reject RESPMOD without `req-hdr`. Checked here before any scan.
+     * @param VerdictInterface|null $verdict             Fail-closed verdict bound to one service (for example {@see CicapVerdict}
+     *                                                   for the verified mode or {@see VirusHeaderVerdict}). It decides every
+     *                                                   answer, so a preview strategy of your own, which could decide before it,
+     *                                                   is refused.
+     * @param HttpRequest|null      $encapsulatedRequest Optional fixed, header-only HTTP request (`req-hdr`, RFC 3507 §4.9.1)
+     *                                                   sent before `res-hdr` in all `scanFile*()` requests of this client, for
+     *                                                   servers that reject RESPMOD without `req-hdr`. Checked here before any scan.
      *
      * @throws \InvalidArgumentException When a verdict is combined with a preview strategy other than the default one,
      *                                   or when `$encapsulatedRequest` carries a body or invalid request-line/header metadata
@@ -77,12 +78,12 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?PreviewStrategyInterface $previewStrategy = null,
         ?LoggerInterface $logger = null,
         private ?OptionsCacheInterface $optionsCache = null,
-        private readonly ?CicapVerdict $verdict = null,
+        private readonly ?VerdictInterface $verdict = null,
         private readonly ?HttpRequest $encapsulatedRequest = null,
     ) {
         if ($verdict !== null && $previewStrategy !== null && !$previewStrategy instanceof DefaultPreviewStrategy) {
             throw new \InvalidArgumentException(
-                $previewStrategy::class . ' would decide on the answer to a preview before the verified mode does; use one of the two.',
+                $previewStrategy::class . ' would decide on the answer to a preview before the verdict does; use one of the two.',
             );
         }
         if ($encapsulatedRequest !== null) {
@@ -100,7 +101,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     /**
      * Convenience factory for synchronous environments.
      */
-    public static function forServer(string $host, int $port = 1344, ?CicapVerdict $verdict = null): self
+    public static function forServer(string $host, int $port = 1344, ?VerdictInterface $verdict = null): self
     {
         $config = new Config($host, $port);
         return new self(
@@ -136,14 +137,14 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     }
 
     /**
-     * @throws \InvalidArgumentException In the verified mode, when the request is for another service than the one of the
+     * @throws \InvalidArgumentException With a verdict, when the request is for another service than the one of the
      *                                   verdict
      */
     #[\Override]
     public function request(IcapRequest $request, ?Cancellation $cancellation = null): Future
     {
         if ($this->verdict !== null) {
-            $this->assertVerifiedService(IcapUri::serviceOf($request->uri));
+            $this->assertVerdictService(IcapUri::serviceOf($request->uri));
         }
 
         return $this->requestWith($request, $cancellation, null);
@@ -370,7 +371,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?Cancellation $cancellation,
         ?int $discardBudget,
     ): Future {
-        $this->assertVerifiedService($service);
+        $this->assertVerdictService($service);
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
         // Validate first so injection attempts never reach the socket.
@@ -497,7 +498,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
         ?Cancellation $cancellation,
         ?int $discardBudget,
     ): Future {
-        $this->assertVerifiedService($service);
+        $this->assertVerdictService($service);
         $transport = $this->sessionTransport();
         $deadline = OperationDeadline::begin($cancellation, $this->config->getOperationTimeout());
 
@@ -629,7 +630,7 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * What the answer to a preview that holds only the start of the file decides: the verdict if the answer is one,
      * null if the service wants the rest.
      *
-     * @throws IcapProtocolException When the verified mode finds that the service did not scan the file
+     * @throws IcapProtocolException When the verdict finds that the service did not scan the file
      */
     private function previewResult(IcapResponse $answer, OperationDeadline $deadline): ?ScanResult
     {
@@ -672,25 +673,25 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
     }
 
     /**
-     * The verified mode holds for the service of its verdict and for no other: the answers of another one, say a service
-     * that skips a type, look like those of a scan. Checked at the call, before a file or a connection is touched.
+     * A verdict holds for its configured service and for no other: the answers of another one, say a service that
+     * skips a type, look like those of a scan. Checked at the call, before a file or a connection is touched.
      *
-     * @throws \InvalidArgumentException When the mode is on and the service is not the one of the verdict
+     * @throws \InvalidArgumentException When a verdict is configured and the service is not the one of the verdict
      */
-    private function assertVerifiedService(string $service): void
+    private function assertVerdictService(string $service): void
     {
-        if ($this->verdict !== null && $service !== $this->verdict->service) {
+        if ($this->verdict !== null && $service !== $this->verdict->service()) {
             throw new \InvalidArgumentException(sprintf(
-                'The verified mode is made for the service %s; it does not scan with another one.',
-                $this->verdict->service,
+                'The verdict is bound to the service %s; this client does not scan with another one.',
+                $this->verdict->service(),
             ));
         }
     }
 
     /**
-     * The headers of a request that carries the whole file without a preview, so `Preview` is not the caller's. In the
-     * verified mode the request offers 204: only a 204 shows that the service scanned the file, a clean file would
-     * otherwise come back as a message that looks like one it did not scan.
+     * The headers of a request that carries the whole file without a preview, so `Preview` is not the caller's. With a
+     * verdict the request offers 204: only a 204 shows that the service scanned the file, a clean file would otherwise
+     * come back as a message that looks like one it did not scan.
      *
      * @param array<string, string|string[]> $extraHeaders
      *
@@ -948,18 +949,26 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
      * via the {@see PreviewStrategyInterface} before this method sees
      * the response.
      *
-     * In the verified mode the rules of the {@see CicapVerdict} apply to what is
-     * left after that; `$complete` says whether the service had the whole file when
-     * it answered.
+     * With a {@see VerdictInterface} its rules apply to what is left after that;
+     * `$complete` says whether the service had the whole file when it answered.
      */
     private function interpretResponse(IcapResponse $response, Config $config, bool $complete = true): ScanResult
     {
         $code = $response->statusCode;
 
-        if ($this->verdict !== null) {
-            // 100 outside a preview, 4xx and 5xx are what they are in every mode; the rest is the verdict's.
+        if ($code !== 200 && $code !== 204 && $code !== 206) {
             $this->assertSuccessfulStatus($code);
 
+            // Fail-secure backstop: any status that is neither a clean-scan
+            // signal (204/200/206) nor a recognised failure (100/4xx/5xx) —
+            // e.g. 1xx other than 100, 3xx, 6xx+ — is a protocol violation.
+            throw new IcapProtocolException(
+                'Unexpected ICAP status: ' . $code,
+                $code,
+            );
+        }
+
+        if ($this->verdict !== null) {
             return $this->verdict->interpret($response, $complete);
         }
 
@@ -967,26 +976,15 @@ final class IcapClient implements IcapClientInterface, DiscardingIcapClient
             return new ScanResult(false, null, $response);
         }
 
-        if ($code === 200 || $code === 206) {
-            // 206 Partial Content — some vendors return this when the
-            // encapsulated response was modified but not fully rewritten
-            // (RFC 3507 §4.3.3). Virus signalling is the same as 200.
-            $virus = $this->extractVirusName($response, $config);
-            if ($virus !== null) {
-                return new ScanResult(true, $virus, $response);
-            }
-            return new ScanResult(false, null, $response);
+        // 200 OK or 206 Partial Content — some vendors return 206 when the
+        // encapsulated response was modified but not fully rewritten
+        // (RFC 3507 §4.3.3). Virus signalling is the same as 200.
+        $virus = $this->extractVirusName($response, $config);
+        if ($virus !== null) {
+            return new ScanResult(true, $virus, $response);
         }
 
-        $this->assertSuccessfulStatus($code);
-
-        // Fail-secure backstop: any status that is neither a clean-scan
-        // signal (204/200/206) nor a recognised failure (100/4xx/5xx) —
-        // e.g. 1xx other than 100, 3xx, 6xx+ — is a protocol violation.
-        throw new IcapProtocolException(
-            'Unexpected ICAP status: ' . $code,
-            $code,
-        );
+        return new ScanResult(false, null, $response);
     }
 
     /**

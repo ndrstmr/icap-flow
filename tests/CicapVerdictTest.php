@@ -22,6 +22,7 @@ use Ndrstmr\Icap\CicapVerdict;
 use Ndrstmr\Icap\DTO\IcapResponse;
 use Ndrstmr\Icap\Exception\IcapProtocolException;
 use Ndrstmr\Icap\ResponseParser;
+use Ndrstmr\Icap\VerdictInterface;
 
 /*
  * AP-16 (M01): the answers of the c-icap `virus_scan` service with ClamAV, recorded from the reference service
@@ -169,8 +170,14 @@ it('names no part of the response in what it throws', function () {
 });
 
 it('is made for one service, which has to be a service of the form the client sends', function () {
-    expect((new CicapVerdict('/avscan'))->service)->toBe('/avscan')
-        ->and((new CicapVerdict('/avscan?mode=simple'))->service)->toBe('/avscan?mode=simple');
+    $plain = new CicapVerdict('/avscan');
+    $query = new CicapVerdict('/avscan?mode=simple');
+
+    expect($plain)->toBeInstanceOf(VerdictInterface::class)
+        ->and($plain->service)->toBe('/avscan')
+        ->and($plain->service())->toBe('/avscan')
+        ->and($query->service)->toBe('/avscan?mode=simple')
+        ->and($query->service())->toBe('/avscan?mode=simple');
 
     foreach (['', 'avscan', '/avscan#fragment', "/avscan\r\nHost: evil", '/av scan', 'icap://localhost/avscan'] as $service) {
         expect(fn () => new CicapVerdict($service))->toThrow(\InvalidArgumentException::class, '', var_export($service, true));
