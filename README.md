@@ -26,12 +26,12 @@ An async-ready ICAP (Internet Content Adaptation Protocol) client for PHP 8.3+, 
 
 ## Versions
 
-This README and its examples describe version 4.1. See the [v3-to-v4 migration guide](docs/migration-v3-to-v4.md) and the [`CHANGELOG.md`](CHANGELOG.md) for the changes from 3.0.0. For older releases, see the [v3.0.0 README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md) and the migration guides for [v2 to v3](docs/migration-v2-to-v3.md) and [v1 to v2](docs/migration-v1-to-v2.md).
+This README and its examples describe version 4.2. See the [v3-to-v4 migration guide](docs/migration-v3-to-v4.md) and the [`CHANGELOG.md`](CHANGELOG.md) for the changes from 3.0.0. For older releases, see the [v3.0.0 README](https://github.com/ndrstmr/icap-flow/blob/v3.0.0/README.md) and the migration guides for [v2 to v3](docs/migration-v2-to-v3.md) and [v1 to v2](docs/migration-v1-to-v2.md).
 
 ## Installation
 
 ```bash
-composer require ndrstmr/icap-flow:^4.1
+composer require ndrstmr/icap-flow:^4.2
 ```
 
 PHP 8.3 is supported from version 4.1 until its end of life on 31 December 2027. Version 4.0.0 requires PHP 8.4.
@@ -83,7 +83,7 @@ echo $result->isInfected()
 
 ## Scanning files
 
-`scanFile()` and `scanFileWithPreview()` read the file through amphp/file: in-process without `proc_open` when using a blocking transport (`SynchronousStreamTransport`), and in worker processes (`proc_open` is needed) for non-blocking transports so the event loop keeps running. Keep the file and path stable during the scan and release only the same unchanged object. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
+The `scanFile*()` helpers read the file through amphp/file: in-process without `proc_open` when using a blocking transport (`SynchronousStreamTransport`), and in worker processes (`proc_open` is needed) for non-blocking transports so the event loop keeps running. Keep the file and path stable during the scan and release only the same unchanged object. See [`docs/file-sources.md`](docs/file-sources.md), also for `scanFileDiscardingBody()`: a server that echoes a large file back does not make the client hold the response.
 
 For ICAP servers that reject `RESPMOD` without an encapsulated HTTP request header (`req-hdr`, RFC 3507 §4.9.1), pass a fixed, header-only `HttpRequest` via `encapsulatedRequest` to `IcapClient` — it then applies to every file scan of that client. Because an uploaded file has no original HTTP request, use a synthetic, neutral `GET` such as `new HttpRequest('GET', '/upload', ['Host' => ['localhost']])` and keep filenames and personal data out of path and headers, as the server may log them ([`docs/file-sources.md`](docs/file-sources.md#encapsulated-request-header)).
 
@@ -155,7 +155,7 @@ $config = (new Config(host: 'icap.example.com', port: 1344, streamTimeout: 120.0
     ->withTimeouts(operationTimeout: 300.0, responseStartTimeout: 120.0);
 ```
 
-The end of the operation is an `IcapTimeoutException`; your own cancellation stays an `Amp\CancelledException`. An expired call closes its socket and its file handle; a file call that hangs in the operating system keeps its worker, and the handle is closed when that call returns ([`docs/file-sources.md`](docs/file-sources.md#deadline-and-cancellation)). A request-body producer or a cache that holds the event loop and does not return cannot be interrupted, only noticed afterwards; the synchronous transport bounds its native waits only.
+The end of the operation is an `IcapTimeoutException`; your own cancellation stays an `Amp\CancelledException`. An expired call closes its socket and its file handle. A file call that hangs in the operating system keeps its worker, and the handle is closed when that call returns; with a blocking transport there is no worker, and the call holds the process past `operationTimeout` ([`docs/file-sources.md`](docs/file-sources.md#deadline-and-cancellation)). A request-body producer or a cache that holds the event loop and does not return cannot be interrupted, only noticed afterwards; the synchronous transport bounds its native waits only.
 
 ### Connection pool
 
@@ -213,7 +213,7 @@ The failures of an exchange implement `Ndrstmr\Icap\Exception\IcapExceptionInter
 | `IcapMalformedResponseException` (extends `IcapProtocolException`) | Server response can't be parsed (no separator, header line without `:`, oversize lines) |
 | `IcapClientException` | ICAP 4xx response — request rejected by server, code is the real status |
 | `IcapServerException` | ICAP 5xx response — server failed, code is the real status |
-| `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable or changed size, or the OPTIONS cache backend fails |
+| `IcapStorageException` (extends `RuntimeException`) | The file or stream to scan is unreadable or changed size, a file worker does not start, or the OPTIONS cache backend fails |
 
 For a partial preview, the client rejects ICAP 4xx and 5xx responses as `IcapClientException` and `IcapServerException`, and unexpected statuses as `IcapProtocolException`, before calling a custom strategy. A strategy must continue on `100` and stop on final `200`, `204` or `206`; a conflicting decision is a protocol error. The strategy remains responsible for interpreting allowed final responses for the actual service: a `204` alone does not prove that a file was scanned.
 

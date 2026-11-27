@@ -7,16 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0]
+
 ### Added
 - `Transport\BlockingTransport`: a transport that blocks the process while it waits for the network; `SynchronousStreamTransport` implements it.
 - Optional `encapsulatedRequest` parameter on `IcapClient::__construct()` to send a fixed, header-only `HttpRequest` (`req-hdr`, RFC 3507 §4.9.1) with all `scanFile*()` requests of that client.
-- `VerdictInterface` contract for pluggable, service-bound fail-closed verdicts (`CicapVerdict` implements it; `IcapClient::__construct()` and `IcapClient::forServer()` now accept `?VerdictInterface`).
+- `VerdictInterface` contract for pluggable, service-bound fail-closed verdicts (`CicapVerdict` implements it; `IcapClient::__construct()` and `IcapClient::forServer()` now accept `?VerdictInterface`). A verdict receives only `200`, `204` and `206`, and `100` on a partial preview; the client rejects every other status first.
 - `VirusHeaderVerdict` (`docs/virus-header-verdict.md`): fail-closed verdict evaluating configured virus headers and optional policy-block headers across all occurrences, accepting only `204` after the whole file as clean.
 - Optional `$blockReason` parameter and `getBlockReason()` on `DTO\ScanResult` for policy blocks without a virus name (`isInfected()` stays `true`, `getVirusName()` is `null`, server text is never logged).
 
 ### Changed
 - The Composer package leaves out the tests, `docs/` and the development files; they stay in the repository.
-- With a `BlockingTransport`, `scanFile*()` reads the file in the process (`BlockingFilesystemDriver` of amphp/file), without worker processes or `proc_open`. This includes `IcapClient::forServer()` and `SynchronousIcapClient::create()`.
+- With a `BlockingTransport`, `scanFile*()` reads the file in the process (`BlockingFilesystemDriver` of amphp/file), without worker processes or `proc_open`. This includes `IcapClient::forServer()` and `SynchronousIcapClient::create()`. A filesystem call that hangs then holds the process past `operationTimeout`.
 
 ### Fixed
 - A failed start of a file worker ends the affected scans with `IcapStorageException`, the cause in `previous`, and the next scan starts new workers. Before, the start error or an `Amp\Parallel\Context\StatusError` passed through.
