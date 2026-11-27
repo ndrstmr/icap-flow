@@ -50,7 +50,7 @@ use Ndrstmr\Icap\Exception\IcapProtocolException;
  * answers a file that the preview holds, and sometimes a file sent without a preview, with the same 204 as for a clean
  * scan. That is for the configuration of the service.
  */
-final readonly class CicapVerdict
+final readonly class CicapVerdict implements VerdictInterface
 {
     /**
      * @param string $service The service the mode is for: an absolute path with an optional query, as a scan names it
@@ -62,6 +62,12 @@ final readonly class CicapVerdict
         IcapUri::assertService($service);
     }
 
+    #[\Override]
+    public function service(): string
+    {
+        return $this->service;
+    }
+
     /**
      * The result of the final answer to a message that was sent whole, or of an answer that ends a preview that holds
      * only the start of the file.
@@ -70,6 +76,7 @@ final readonly class CicapVerdict
      *
      * @throws IcapProtocolException When the answer does not show that the file was scanned, or contradicts itself
      */
+    #[\Override]
     public function interpret(IcapResponse $response, bool $complete): ScanResult
     {
         $status = $response->statusCode;
@@ -113,6 +120,7 @@ final readonly class CicapVerdict
      *
      * @throws IcapProtocolException When the 100 contradicts itself
      */
+    #[\Override]
     public function assertContinuation(IcapResponse $response): void
     {
         if ($this->threats($response) !== []) {

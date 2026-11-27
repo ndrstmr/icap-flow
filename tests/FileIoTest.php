@@ -55,7 +55,6 @@ use PHPUnit\Framework\Assert;
 use Revolt\EventLoop;
 
 use function Amp\async;
-use function Amp\delay;
 use function Amp\File\createDefaultDriver;
 use function Amp\File\filesystem;
 use function Amp\Future\await;
@@ -651,67 +650,6 @@ it('opens a relative path against the working directory of the call', function (
     expect($transport->requests[0])->toContain('payload');
 });
 
-/**
- * Runs a bounded PHP child process while the event loop of this process keeps serving (e.g. an {@see IcapTestServer}).
- * The child receives the autoloader path as $argv[1] and a JSON payload as $argv[2], and writes one JSON line back.
- *
- * @param list<string>         $phpOptions
- * @param array<string, mixed> $job
- *
- * @return array<string, mixed>
- */
-function fileIoRunChild(array $phpOptions, string $code, array $job, float $within = 10.0): array
-{
-    $process = proc_open(
-        [
-            PHP_BINARY,
-            ...$phpOptions,
-            '-d', 'display_errors=stderr',
-            '-r', $code,
-            '--',
-            dirname(__DIR__) . '/vendor/autoload.php',
-            json_encode($job, JSON_THROW_ON_ERROR),
-        ],
-        [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-        $pipes,
-    );
-    Assert::assertIsResource($process);
-    stream_set_blocking($pipes[1], false);
-    stream_set_blocking($pipes[2], false);
-
-    $stdout = '';
-    $stderr = '';
-    $until = hrtime(true) + $within * 1e9;
-    try {
-        while (true) {
-            $stdout .= (string) stream_get_contents($pipes[1]);
-            $stderr .= (string) stream_get_contents($pipes[2]);
-            if (!proc_get_status($process)['running']) {
-                break;
-            }
-            if (hrtime(true) > $until) {
-                Assert::fail("The child did not end within {$within} s and was killed. stderr: " . substr($stderr, 0, 500));
-            }
-            delay(0.02);
-        }
-        $stdout .= (string) stream_get_contents($pipes[1]);
-        $stderr .= (string) stream_get_contents($pipes[2]);
-    } finally {
-        proc_terminate($process, 9);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        proc_close($process);
-    }
-
-    $line = trim($stdout);
-    Assert::assertNotSame('', $line, 'The child wrote no result: ' . substr($stderr, 0, 500));
-    $decoded = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
-    Assert::assertIsArray($decoded);
-
-    /** @var array<string, mixed> $decoded */
-    return $decoded;
-}
-
 it('scans files in-process without file workers when using the synchronous transport', function () {
     $server = IcapTestServer::start(static fn (array $request): array => [
         $request['stage'] === 'preview' ? IcapTestServer::CONTINUE : IcapTestServer::CLEAN,
@@ -749,7 +687,7 @@ it('scans files in-process without file workers when using the synchronous trans
         PHP;
 
     try {
-        $run = fileIoRunChild(['-d', 'disable_functions=proc_open'], $code, ['port' => $server->port, 'file' => $path]);
+        $run = ChildProcess::run(['-d', 'disable_functions=proc_open'], $code, ['port' => $server->port, 'file' => $path]);
     } finally {
         $server->stop();
     }
@@ -840,7 +778,7 @@ it('translates file worker startup failures and pool shutdowns into IcapStorageE
     ];
 
     foreach ($cases as $label => [$phpOptions, $case, $expectedCauses]) {
-        $run = fileIoRunChild($phpOptions, $code, ['case' => $case, 'file' => $path]);
+        $run = ChildProcess::run($phpOptions, $code, ['case' => $case, 'file' => $path]);
         /** @var list<array{class: string|null, chain: list<string>}> $steps */
         $steps = $run['steps'];
 

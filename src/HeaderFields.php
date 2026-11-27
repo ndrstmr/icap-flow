@@ -202,6 +202,41 @@ final class HeaderFields
     }
 
     /**
+     * Validate a caller-supplied list of header names (tokens, RFC 7230 §3.2.6).
+     * Every entry is checked because callers without static analysis can pass untyped arrays.
+     *
+     * @param  array<mixed> $names
+     * @return list<string>
+     *
+     * @throws \InvalidArgumentException When the list is empty (unless allowed), not a list, or contains a non-token
+     */
+    public static function checkedNames(array $names, string $parameter, bool $allowEmpty = false): array
+    {
+        if (!$allowEmpty && $names === []) {
+            throw new \InvalidArgumentException($parameter . ' must be a non-empty list of header names.');
+        }
+        if (!array_is_list($names)) {
+            throw new \InvalidArgumentException($parameter . ($allowEmpty
+                ? ' must be a list of header names.'
+                : ' must be a non-empty list of header names.'));
+        }
+
+        $checked = [];
+        foreach ($names as $name) {
+            if (!is_string($name) || !self::isToken($name)) {
+                throw new \InvalidArgumentException(sprintf(
+                    '%s must contain only header names that are tokens (RFC 7230 §3.2.6), got: %s',
+                    $parameter,
+                    is_string($name) ? var_export($name, true) : get_debug_type($name),
+                ));
+            }
+            $checked[] = $name;
+        }
+
+        return $checked;
+    }
+
+    /**
      * The map without the named fields, in any spelling. For fields the
      * library computes itself: a caller value must neither replace them
      * nor go out next to them under another spelling.

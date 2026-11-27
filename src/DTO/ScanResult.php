@@ -29,11 +29,16 @@ final readonly class ScanResult
         private bool $isInfected,
         private ?string $virusName,
         private IcapResponse $originalResponse,
+        private ?string $blockReason = null,
     ) {
     }
 
     /**
-     * Whether the scanned content was infected.
+     * Whether the scanned content was rejected as infected or blocked by policy.
+     *
+     * For a policy block without a virus header ({@see \Ndrstmr\Icap\VirusHeaderVerdict} with configured block
+     * headers), this method returns `true` so callers that only check `isInfected()` stay fail-closed;
+     * {@see getVirusName()} is then `null` and {@see getBlockReason()} returns the server's reason.
      */
     public function isInfected(): bool
     {
@@ -42,10 +47,22 @@ final readonly class ScanResult
 
     /**
      * Name of the detected virus, if any.
+     *
+     * Returns `null` for a clean scan and for a policy block without a virus header (see {@see getBlockReason()}).
      */
     public function getVirusName(): ?string
     {
         return $this->virusName;
+    }
+
+    /**
+     * Policy block reason reported by a configured block header when no virus header was present, or `null`.
+     *
+     * This text comes from the ICAP server and is untrusted input; icap-flow never logs it.
+     */
+    public function getBlockReason(): ?string
+    {
+        return $this->blockReason;
     }
 
     /**

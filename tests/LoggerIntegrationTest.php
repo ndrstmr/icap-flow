@@ -38,6 +38,7 @@ use Ndrstmr\Icap\Tests\AsyncTestCase;
 use Ndrstmr\Icap\Tests\ScriptedSource;
 use Ndrstmr\Icap\Tests\ScriptedTransport;
 use Ndrstmr\Icap\Transport\TransportInterface;
+use Ndrstmr\Icap\VirusHeaderVerdict;
 use Psr\Log\AbstractLogger;
 use Psr\Log\LoggerInterface;
 
@@ -193,6 +194,7 @@ const LOG_SECRETS = [
     'exception' => 'SECRET-EXCEPTION-5c1e',
     'method'    => 'SECRETMETHOD5c1e',
     'virus'     => 'SECRET-VIRUS-5c1e',
+    'block'     => 'SECRET-BLOCK-5c1e',
 ];
 
 final class RecordingLogger extends AbstractLogger
@@ -335,6 +337,32 @@ it('logs the events of request() without URI, host, server text or exception mes
         expectOnlySafeLogs($logger, $events, $case);
         expect(end($logger->records)['context'] ?? null)->toEqual($context, $case);
     }
+
+    // A policy block from VirusHeaderVerdict must never leak the server's block reason into the log either.
+    $blockLogger = new RecordingLogger();
+    $blockClient = new IcapClient(
+        new Config($s['host']),
+        new ScriptedTransport(["ICAP/1.0 200 OK\r\nX-Block-Reason: {$s['block']}\r\nEncapsulated: null-body=0\r\n\r\n"]),
+        new RequestFormatter(),
+        new ResponseParser(),
+        logger: $blockLogger,
+        verdict: new VirusHeaderVerdict("/svc-{$s['service']}?user={$s['uri']}", ['X-Virus-Name'], ['X-Block-Reason']),
+    );
+    $blockResult = null;
+    /** @var AsyncTestCase $this */
+    $this->runAsyncTest(function () use ($blockClient, $respmod, &$blockResult) {
+        $blockResult = $blockClient->request($respmod)->await();
+    });
+    expect($blockResult?->isInfected())->toBeTrue()
+        ->and($blockResult?->getVirusName())->toBeNull()
+        ->and($blockResult?->getBlockReason())->toBe($s['block']);
+    expectOnlySafeLogs($blockLogger, [$started, $completed], 'blocked by policy');
+    expect(end($blockLogger->records)['context'] ?? null)->toEqual([
+        'method' => 'RESPMOD',
+        'port' => 1344,
+        'statusCode' => 200,
+        'infected' => true,
+    ]);
 });
 
 it('logs the events of options() without URI, host, service or exception message', function () {

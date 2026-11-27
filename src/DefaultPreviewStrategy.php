@@ -32,8 +32,8 @@ use Ndrstmr\Icap\Exception\IcapServerException;
  * 204 No Content (no change) or a final response, which may come before the
  * rest of the body was sent. This class applies the standard rules, which
  * are verified against no ICAP product: 204 counts as clean, and a 200/206
- * is infected when it carries one of the configured virus headers. The
- * verified mode ({@see CicapVerdict}) does not ask this class.
+ * is infected when it carries one of the configured virus headers. A client
+ * with a {@see VerdictInterface} does not ask this class.
  */
 final class DefaultPreviewStrategy implements PreviewStrategyInterface
 {
