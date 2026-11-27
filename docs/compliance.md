@@ -2,7 +2,7 @@
 
 This document maps `ndrstmr/icap-flow` capabilities to common regulatory and
 security frameworks relevant for European public-sector deployments. It
-describes version 4.1; the changes since 3.0.0 are listed in the
+describes version 4.2; the changes since 3.0.0 are listed in the
 [`CHANGELOG.md`](../CHANGELOG.md).
 
 > **Disclaimer.** This mapping is informational — it does not constitute a
@@ -18,8 +18,8 @@ describes version 4.1; the changes since 3.0.0 are listed in the
 | Requirement | Coverage |
 |---|---|
 | Malware scanning of uploaded content | Core purpose — `scanFile()` / `scanFileWithPreview()` via ICAP (RFC 3507); the ICAP service scans |
-| Scan engines | Verified for c-icap `virus_scan` with ClamAV only (verified mode, [`cicap-clamav.md`](cicap-clamav.md)); other services are read by the default rules (virus header list of `Config::withVirusFoundHeaders()`), which have not been verified against a product |
-| Fail-secure on unknown status codes | `IcapClient::interpretResponse()` throws typed exceptions for anything that is not a clear clean signal (204, or 200/206 without a virus header; in the verified mode only a 204 to the whole file) |
+| Scan engines | Verified for c-icap `virus_scan` with ClamAV only (verified mode, [`cicap-clamav.md`](cicap-clamav.md)); other services are read by the default rules (virus header list of `Config::withVirusFoundHeaders()`) or by `VirusHeaderVerdict`, neither verified against a product |
+| Fail-secure on unknown status codes | `IcapClient::interpretResponse()` throws typed exceptions for anything that is not a clear clean signal (204, or 200/206 without a virus header; with `CicapVerdict` or `VirusHeaderVerdict` only a 204 to the whole file) |
 | Logging of scan results | PSR-3 structured logging with `method`, `port`, `statusCode`, `infected` and `exception_class` context keys; no URI, host, exception message or server text |
 | Retry on transient failures | `RetryingIcapClient` decorator: `options()` is repeated after a 5xx with exponential backoff and jitter; uploads and scans get one attempt (a 5xx does not prove the bytes were not processed) |
 
